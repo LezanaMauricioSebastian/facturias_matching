@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FacturIA → CSV (Proceso)</title>
+    <link rel="stylesheet" href="/css/styles.css">
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="grid">
+        <div class="card">
+          <div class="title">CSV generado desde datos consultados y editados, listo para usar en Odoo.</div>
+          <div class="controlsRow">
+            <div class="field">
+              <label>Número de proceso</label>
+              <input id="processNumber" type="text" placeholder="Ej: 185">
+            </div>
+            <div class="btnGroup">
+              <button id="btnBuscar" type="button">Buscar</button>
+              <button id="btnOdooImportTest" class="secondary" type="button" disabled>Importar a Odoo TEST</button>
+              <button id="btnAddOtroImpuesto" class="secondary" type="button" disabled>Agregar otro impuesto</button>
+              <button id="btnDescargar" class="downloadBtn" type="button" disabled>
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                Descargar CSV
+              </button>
+            </div>
+          </div>
+          <div class="hint">Ingresá el número de proceso, revisá/ajustá los campos editables y descargá el CSV final.</div>
+          <div id="status" class="status"></div>
+        </div>
+
+        <div class="card processCard">
+          <div class="hint summaryHint" id="summary"></div>
+          <div class="tableScroll">
+            <div id="tableWrap"></div>
+          </div>
+          <div class="footerBar footerInside">
+            <div></div>
+            <div class="totalBox">
+              Total General: <strong id="totalGeneral">$0.00</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>

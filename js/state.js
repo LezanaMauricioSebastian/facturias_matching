@@ -1,0 +1,22 @@
+export function createState() {
+  return {
+    columns: [],
+    padronLoading: false,
+    productosLoading: false,
+    options: {
+      proveedores: [],
+      productos: [],
+      rubros: [],
+      journals: [],
+      cuentas: [],
+      document_types: [],
+      facturas_c_type_ids: [],
+      etiquetas: [],
+      iva_options: [],
+      otros_impuestos_options: [],
+    },
+    rows: [],
+    output_headers: [],
+  };
+}
+
