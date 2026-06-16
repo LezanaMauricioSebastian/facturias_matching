@@ -1,0 +1,9 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile', '-t', '${_IMAGE_URI}', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE_URI}']
+images:
+  - '${_IMAGE_URI}'
+substitutions:
+  _IMAGE_URI: 'REPLACE_ME'
