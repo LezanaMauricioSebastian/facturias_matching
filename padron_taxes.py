@@ -37,6 +37,7 @@ IVA_TAX_ID_TO_PCT: Dict[int, str] = {
 }
 
 _TAX_PADRON_CACHE: Optional[List[Dict[str, Any]]] = None
+_TAX_PADRON_BY_CUIT: Optional[Dict[str, List[int]]] = None
 _TAX_NAME_BY_ID: Optional[Dict[int, str]] = None
 _TAX_ID_BY_NAME: Optional[Dict[str, int]] = None
 
@@ -124,20 +125,55 @@ def _tax_padron_rows(limit: Optional[int] = None) -> List[Dict[str, Any]]:
 
 
 def get_tax_padron_cached() -> List[Dict[str, Any]]:
-    global _TAX_PADRON_CACHE
+    global _TAX_PADRON_CACHE, _TAX_PADRON_BY_CUIT
     if _TAX_PADRON_CACHE is None:
         try:
             _TAX_PADRON_CACHE = _tax_padron_rows()
         except Exception:
             _TAX_PADRON_CACHE = []
+        _TAX_PADRON_BY_CUIT = None
     return _TAX_PADRON_CACHE
 
 
+def get_tax_padron_by_cuit() -> Dict[str, List[int]]:
+    """Índice CUIT → tax_ids (O(1) vs scan lineal del padrón)."""
+    global _TAX_PADRON_BY_CUIT
+    if _TAX_PADRON_BY_CUIT is None:
+        by_cuit: Dict[str, List[int]] = {}
+        for r in get_tax_padron_cached():
+            doc = _digits_only(r.get("doc") or "")
+            if doc and r.get("tax_ids"):
+                by_cuit[doc] = list(r["tax_ids"])
+        _TAX_PADRON_BY_CUIT = by_cuit
+    return _TAX_PADRON_BY_CUIT
+
+
 def clear_tax_padron_cache() -> None:
-    global _TAX_PADRON_CACHE, _TAX_NAME_BY_ID, _TAX_ID_BY_NAME
+    global _TAX_PADRON_CACHE, _TAX_PADRON_BY_CUIT, _TAX_NAME_BY_ID, _TAX_ID_BY_NAME
     _TAX_PADRON_CACHE = None
+    _TAX_PADRON_BY_CUIT = None
     _TAX_NAME_BY_ID = None
     _TAX_ID_BY_NAME = None
+
+
+def padron_tax_match_key(nombre: str, cuit: str) -> str:
+    cuit_n = _digits_only(cuit)
+    if cuit_n:
+        return f"cuit:{cuit_n}"
+    return f"name:{_normalize(nombre).upper()}"
+
+
+class PadronTaxMatchCache:
+    """Cache por request: un match de impuestos por proveedor/comprobante."""
+
+    def __init__(self) -> None:
+        self._matches: Dict[str, Tuple[List[int], float]] = {}
+
+    def get(self, nombre: str, cuit: str) -> Tuple[List[int], float]:
+        key = padron_tax_match_key(nombre, cuit)
+        if key not in self._matches:
+            self._matches[key] = match_padron_taxes(nombre, cuit)
+        return self._matches[key]
 
 
 def _label_key(name: str) -> str:
@@ -205,16 +241,15 @@ def _parse_row_padron_tax_ids(row: Dict[str, Any]) -> List[int]:
 
 def match_padron_taxes(nombre: str, cuit: str) -> Tuple[List[int], float]:
     """Devuelve (tax_ids, score). Score 100 si match por CUIT."""
-    padron = get_tax_padron_cached()
     nombre_n = _normalize(nombre)
     cuit_n = _digits_only(cuit)
 
     if cuit_n:
-        for r in padron:
-            doc = _digits_only(r.get("doc") or "")
-            if doc and doc == cuit_n and r.get("tax_ids"):
-                return (list(r["tax_ids"]), 100.0)
+        tax_ids = get_tax_padron_by_cuit().get(cuit_n)
+        if tax_ids:
+            return (list(tax_ids), 100.0)
 
+    padron = get_tax_padron_cached()
     names = [(_normalize(r.get("name")), r) for r in padron if r.get("tax_ids")]
     choices = [n for n, _ in names]
     if not nombre_n or not choices:
@@ -274,6 +309,8 @@ def apply_padron_taxes_to_row(
     nombre: str,
     cuit: str,
     *,
+    tax_match: Optional[Tuple[List[int], float]] = None,
+    name_by_id: Optional[Dict[int, str]] = None,
     overwrite_iva: bool = False,
     overwrite_otros: bool = False,
 ) -> None:
@@ -281,7 +318,10 @@ def apply_padron_taxes_to_row(
     Enriquece fila con impuestos del padrón nuevo si hay match.
     Guarda _padron_tax_ids y _padron_tax_id_primary para export CSV.
     """
-    tax_ids, score = match_padron_taxes(nombre, cuit)
+    if tax_match is None:
+        tax_ids, score = match_padron_taxes(nombre, cuit)
+    else:
+        tax_ids, score = tax_match
     if not tax_ids:
         return
 
@@ -293,7 +333,8 @@ def apply_padron_taxes_to_row(
     if primary_iva is not None:
         row["_padron_tax_id_primary"] = str(primary_iva)
 
-    name_by_id = get_tax_name_by_id()
+    if name_by_id is None:
+        name_by_id = get_tax_name_by_id()
 
     iva_pct = _normalize(row.get("iva_pct"))
     if primary_iva is not None and (overwrite_iva or not iva_pct):

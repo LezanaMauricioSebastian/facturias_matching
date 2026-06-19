@@ -17,6 +17,8 @@ export function createState() {
     },
     rows: [],
     output_headers: [],
+    rowTotals: [],
+    domRefs: { totalCells: [], ivaInputs: [] },
   };
 }
 

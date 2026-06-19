@@ -65,6 +65,24 @@ export function collapseGroupAtRow(rows, rIdx, state = null) {
   first["invoice_line_ids/quantity"] = "1";
   first["invoice_line_ids/price_unit"] = priceUnit;
 
+  // Compactado: sin producto Odoo, solo etiqueta de línea.
+  first["invoice_line_ids/product_id"] = "";
+  delete first["Nombre de producto"];
+  delete first["__item_codigo"];
+  delete first["__oc_line_id"];
+  delete first["__oc_order_id"];
+  delete first["__oc_line_name"];
+  delete first["__oc_match_score"];
+  delete first["__qty_pedido"];
+  delete first["__qty_recibido"];
+  delete first["__qty_facturado_po"];
+  delete first["__qty_original"];
+  delete first["__qty_escalada"];
+  delete first["__um_factor"];
+  if (!String(first["invoice_line_ids/name"] ?? "").trim()) {
+    first["invoice_line_ids/name"] = "Factura compactada";
+  }
+
   const ivaFromFac = String(first.__fac_iva_monto ?? "").trim();
   if (ivaFromFac) {
     first.iva_monto = normalizeNumericValue(ivaFromFac, "iva_monto");

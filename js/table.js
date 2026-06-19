@@ -3,6 +3,7 @@ import {
   formatMoney,
   formatNumericForDisplay,
   isPadronOptionKey,
+  isComboboxOptionKey,
   isFacturaCTypeId,
   normalizeIvaPctValue,
   normalizeNumericValue,
@@ -13,8 +14,94 @@ import {
 } from "./utils.js";
 import { comprobanteDigitUiHint } from "./validation.js";
 import { comprobanteHasMultipleLines, isFirstRowOfComprobante } from "./singleLine.js";
+import {
+  attachComboboxes,
+  isComboboxLoading,
+  renderComboboxCellHtml,
+} from "./combobox.js";
 
 const DOC_NUM_KEY = "l10n_latam_document_number";
+
+function handleSelectionChange(state, r, k, ctx) {
+  const { tableWrap, totalGeneralEl, handlers } = ctx;
+  if (k === "partner_id") {
+    applyProveedorToCuit(state, r);
+    handlers.onRerender?.();
+    return;
+  }
+  if (k === "l10n_latam_document_type_id") {
+    const docTypeRaw = String(state.rows[r]?.[k] ?? "").trim();
+    const ivaKey = "iva_pct";
+    const docOpts = state.options?.document_types || [];
+    const isFacturaC =
+      isFacturaCTypeId(docTypeRaw, state) ||
+      (() => {
+        const lab = findOptionLabel(docOpts, docTypeRaw).toUpperCase();
+        return lab === "FACTURAS C" || lab === "FACTURA C" || lab === "C";
+      })();
+    if (isFacturaC) {
+      state.rows[r][ivaKey] = "IVA No Corresponde";
+      state.rows[r].__iva_monto_manual = false;
+      const ivaSel = tableWrap.querySelector(`select[data-r="${r}"][data-k="${ivaKey}"]`);
+      if (ivaSel) ivaSel.value = "IVA No Corresponde";
+      updateRowTotals(state, totalGeneralEl, r);
+      if (!ivaSel && handlers.onRerender) handlers.onRerender();
+      return;
+    }
+  }
+  if (k === "iva_pct") {
+    state.rows[r].__iva_monto_manual = false;
+    updateRowTotals(state, totalGeneralEl, r);
+  }
+}
+
+function isTotalAffectingKey(k) {
+  return (
+    k === "invoice_line_ids/quantity" ||
+    k === "invoice_line_ids/price_unit" ||
+    k === "iva_monto" ||
+    k === "otros_impuestos_monto" ||
+    /^otros_impuestos_\d+_monto$/.test(k)
+  );
+}
+
+function buildDomRefs(state, tableWrap) {
+  const n = state.rows.length;
+  const totalCells = new Array(n);
+  const ivaInputs = new Array(n);
+  for (let i = 0; i < n; i++) {
+    totalCells[i] = tableWrap.querySelector(`[data-total-r="${i}"]`);
+    ivaInputs[i] = tableWrap.querySelector(`input[data-r="${i}"][data-k="iva_monto"]`);
+  }
+  state.domRefs = { totalCells, ivaInputs };
+}
+
+function sumRowTotals(rowTotals) {
+  let total = 0;
+  for (let i = 0; i < rowTotals.length; i++) total += rowTotals[i] || 0;
+  return total;
+}
+
+function applyRowTotalToDom(state, rIdx) {
+  const r = state.rows[rIdx];
+  const rowTotal = state.rowTotals[rIdx];
+  const { totalCells, ivaInputs } = state.domRefs || {};
+  const cell = totalCells?.[rIdx];
+  if (cell) cell.textContent = formatMoney(rowTotal);
+  if (!r?.__iva_monto_manual) {
+    const ivaInp = ivaInputs?.[rIdx];
+    if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
+  }
+}
+
+export function updateRowTotals(state, totalGeneralEl, rIdx) {
+  if (rIdx < 0 || rIdx >= state.rows.length) return;
+  state.rowTotals[rIdx] = computeRowTotal(state.rows[rIdx]);
+  applyRowTotalToDom(state, rIdx);
+  if (totalGeneralEl) {
+    totalGeneralEl.textContent = formatMoney(sumRowTotals(state.rowTotals));
+  }
+}
 
 function refreshComprobanteHints(tableWrap, state) {
   tableWrap.querySelectorAll("[data-doc-hint-row]").forEach((el) => {
@@ -33,25 +120,31 @@ function refreshComprobanteHints(tableWrap, state) {
 }
 
 export function updateTotals(state, tableWrap, totalGeneralEl) {
+  const n = state.rows.length;
+  state.rowTotals = new Array(n);
   let total = 0;
-  for (let i = 0; i < state.rows.length; i++) {
+  const { totalCells, ivaInputs } = state.domRefs || {};
+  for (let i = 0; i < n; i++) {
     const r = state.rows[i];
     const rowTotal = computeRowTotal(r);
+    state.rowTotals[i] = rowTotal;
     total += rowTotal;
-    const cell = tableWrap.querySelector(`[data-total-r="${i}"]`);
+    const cell = totalCells?.[i] ?? tableWrap.querySelector(`[data-total-r="${i}"]`);
     if (cell) cell.textContent = formatMoney(rowTotal);
     if (!r.__iva_monto_manual) {
-      const ivaInp = tableWrap.querySelector(`input[data-r="${i}"][data-k="iva_monto"]`);
+      const ivaInp = ivaInputs?.[i] ?? tableWrap.querySelector(`input[data-r="${i}"][data-k="iva_monto"]`);
       if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
     }
   }
-  totalGeneralEl.textContent = formatMoney(total);
+  if (totalGeneralEl) totalGeneralEl.textContent = formatMoney(total);
 }
 
 export function renderTable(state, refs, handlers) {
   const { tableWrap, totalGeneralEl } = refs;
   if (!state.columns.length) {
     tableWrap.innerHTML = "";
+    state.rowTotals = [];
+    state.domRefs = { totalCells: [], ivaInputs: [] };
     return;
   }
   const cols = state.columns;
@@ -69,6 +162,7 @@ export function renderTable(state, refs, handlers) {
     invoice_date: 260,
     invoice_date_due: 260,
     "invoice_line_ids/name": 420,
+    "invoice_line_ids/product_id": 320,
     journal_id: 220,
     Proveedor: 220,
     "invoice_line_ids/account_id": 260,
@@ -80,6 +174,9 @@ export function renderTable(state, refs, handlers) {
     otros_impuestos_monto: 200,
     "invoice_line_ids/tax_ids": 220,
     __solo_encabezado: 130,
+    __um_proveedor: 110,
+    __um_empresa: 110,
+    __oc_match_note: 220,
   };
   for (const c of cols) {
     if (c.key === "otros_impuestos" || /^otros_impuestos_\d+$/.test(c.key)) colMinWidth[c.key] = 240;
@@ -122,33 +219,40 @@ export function renderTable(state, refs, handlers) {
         const opts = state.options && state.options[optKey] ? state.options[optKey] : [];
         const cellVal = key === "iva_pct" ? normalizeIvaPctValue(rawVal) : val;
         if (key === "iva_pct" && cellVal !== val) r[key] = cellVal;
-        const loading =
-          (isPadronOptionKey(optKey) && state.padronLoading && (!opts || opts.length === 0)) ||
-          (optKey === "productos" && state.productosLoading && (!opts || opts.length === 0));
-        const dis = loading ? " disabled" : "";
-        const cls = loading ? ' class="selectLoading"' : "";
-        html.push(`<td${tdStyle}><select${cls}${dis} data-r="${rIdx}" data-k="${key}">`);
-        if (loading) {
-          html.push(`<option value="" selected disabled>Cargando…</option>`);
+        const loading = isComboboxLoading(state, optKey);
+        if (isComboboxOptionKey(optKey)) {
+          html.push(
+            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, loading, state })
+          );
         } else {
-          html.push(`<option value=""></option>`);
-          const values = new Set();
-          for (const o of opts) {
-            const ov = optionValue(o);
-            if (!ov || values.has(ov)) continue;
-            values.add(ov);
-            const sel = ov === cellVal ? " selected" : "";
-            const lab = optionLabel(o).replaceAll('"', "&quot;");
-            html.push(`<option${sel} value="${ov.replaceAll('"', "&quot;")}">${lab}</option>`);
+          const selectLoading =
+            (isPadronOptionKey(optKey) && state.padronLoading && (!opts || opts.length === 0)) ||
+            (optKey === "productos" && state.productosLoading && (!opts || opts.length === 0));
+          const dis = selectLoading ? " disabled" : "";
+          const cls = selectLoading ? ' class="selectLoading"' : "";
+          html.push(`<td${tdStyle}><select${cls}${dis} data-r="${rIdx}" data-k="${key}">`);
+          if (selectLoading) {
+            html.push(`<option value="" selected disabled>Cargando…</option>`);
+          } else {
+            html.push(`<option value=""></option>`);
+            const values = new Set();
+            for (const o of opts) {
+              const ov = optionValue(o);
+              if (!ov || values.has(ov)) continue;
+              values.add(ov);
+              const sel = ov === cellVal ? " selected" : "";
+              const lab = optionLabel(o).replaceAll('"', "&quot;");
+              html.push(`<option${sel} value="${ov.replaceAll('"', "&quot;")}">${lab}</option>`);
+            }
+            if (cellVal && !values.has(cellVal)) {
+              const orphanLab = findOptionLabel(opts, cellVal).replaceAll('"', "&quot;");
+              html.push(
+                `<option selected value="${cellVal.replaceAll('"', "&quot;")}">${orphanLab}</option>`
+              );
+            }
           }
-          if (cellVal && !values.has(cellVal)) {
-            const orphanLab = findOptionLabel(opts, cellVal).replaceAll('"', "&quot;");
-            html.push(
-              `<option selected value="${cellVal.replaceAll('"', "&quot;")}">${orphanLab}</option>`
-            );
-          }
+          html.push("</select></td>");
         }
-        html.push("</select></td>");
       } else if (c.type === "numeric") {
         const shown = formatNumericForDisplay(rawVal, key);
         html.push(
@@ -193,14 +297,8 @@ export function renderTable(state, refs, handlers) {
       const k = e.target.getAttribute("data-k");
       state.rows[r][k] = e.target.value;
       if (k === "iva_monto") state.rows[r].__iva_monto_manual = true;
-      if (
-        k === "invoice_line_ids/quantity" ||
-        k === "invoice_line_ids/price_unit" ||
-        k === "iva_monto" ||
-        k === "otros_impuestos_monto" ||
-        /^otros_impuestos_\d+_monto$/.test(k)
-      ) {
-        updateTotals(state, tableWrap, totalGeneralEl);
+      if (isTotalAffectingKey(k)) {
+        updateRowTotals(state, totalGeneralEl, r);
       }
       if (k === DOC_NUM_KEY) refreshComprobanteHints(tableWrap, state);
     });
@@ -218,14 +316,8 @@ export function renderTable(state, refs, handlers) {
       const normalized = normalizeNumericValue(e.target.value, k);
       state.rows[r][k] = normalized;
       e.target.value = normalized;
-      if (
-        k === "invoice_line_ids/quantity" ||
-        k === "invoice_line_ids/price_unit" ||
-        k === "iva_monto" ||
-        k === "otros_impuestos_monto" ||
-        /^otros_impuestos_\d+_monto$/.test(k)
-      ) {
-        updateTotals(state, tableWrap, totalGeneralEl);
+      if (isTotalAffectingKey(k)) {
+        updateRowTotals(state, totalGeneralEl, r);
       }
     });
   });
@@ -236,49 +328,13 @@ export function renderTable(state, refs, handlers) {
       const r = parseInt(e.target.getAttribute("data-r"), 10);
       const k = e.target.getAttribute("data-k");
       state.rows[r][k] = e.target.value;
-      if (k === "partner_id") {
-        applyProveedorToCuit(state, r);
-        handlers.onRerender?.();
-        return;
-      }
-      if (k === "l10n_latam_document_type_id") {
-        const docTypeRaw = String(state.rows[r]?.[k] ?? "").trim();
-        const ivaKey = "iva_pct";
-        const docOpts = state.options?.document_types || [];
-        const isFacturaC =
-          isFacturaCTypeId(docTypeRaw, state) ||
-          (() => {
-            const lab = findOptionLabel(docOpts, docTypeRaw).toUpperCase();
-            return lab === "FACTURAS C" || lab === "FACTURA C" || lab === "C";
-          })();
-        if (isFacturaC) {
-          state.rows[r][ivaKey] = "IVA No Corresponde";
-          state.rows[r].__iva_monto_manual = false;
-
-          // Actualización puntual para evitar re-render costoso.
-          const ivaSel = tableWrap.querySelector(`select[data-r="${r}"][data-k="${ivaKey}"]`);
-          if (ivaSel) ivaSel.value = "IVA No Corresponde";
-
-          updateTotals(state, tableWrap, totalGeneralEl);
-          const ivaInp = tableWrap.querySelector(`input[data-r="${r}"][data-k="iva_monto"]`);
-          if (ivaInp) {
-            ivaInp.value = formatNumericForDisplay(state.rows[r]?.iva_monto, "iva_monto");
-          }
-
-          // Fallback si algo no está en DOM (por ejemplo, columnas dinámicas).
-          if (!ivaSel && handlers.onRerender) handlers.onRerender();
-          return;
-        }
-      }
-      if (k === "iva_pct") {
-        state.rows[r].__iva_monto_manual = false;
-        updateTotals(state, tableWrap, totalGeneralEl);
-        const ivaInp = tableWrap.querySelector(`input[data-r="${r}"][data-k="iva_monto"]`);
-        if (ivaInp) {
-          ivaInp.value = formatNumericForDisplay(state.rows[r]?.iva_monto, "iva_monto");
-        }
-      }
+      handleSelectionChange(state, r, k, { tableWrap, totalGeneralEl, handlers });
     });
+  });
+
+  const selectionCtx = { tableWrap, totalGeneralEl, handlers };
+  attachComboboxes(tableWrap, state, (r, k) => {
+    handleSelectionChange(state, r, k, selectionCtx);
   });
 
   tableWrap.querySelectorAll("button[data-del-r]").forEach((btn) => {
@@ -291,6 +347,7 @@ export function renderTable(state, refs, handlers) {
     });
   });
 
+  buildDomRefs(state, tableWrap);
   refreshComprobanteHints(tableWrap, state);
   updateTotals(state, tableWrap, totalGeneralEl);
 }

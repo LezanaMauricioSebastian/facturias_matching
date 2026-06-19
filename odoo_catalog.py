@@ -283,8 +283,15 @@ def resolve_account_id(
     code, name = _split_cuenta_label(raw)
     if code:
         ck = _normalize_label(code)
-        if ck in by_code:
-            return str(by_code[ck])
+        code_id = by_code.get(ck)
+        name_id = None
+        if name:
+            nk = _normalize_label(name)
+            name_id = by_name.get(nk)
+            if code_id and name_id and code_id != name_id:
+                return str(name_id)
+        if code_id:
+            return str(code_id)
     if name:
         nk = _normalize_label(name)
         if nk in by_name:
@@ -383,6 +390,13 @@ def _fetch_catalog_raw() -> Dict[str, List[Dict[str, Any]]]:
         rubros = [{"id": r["id"], "name": r.get("x_name")} for r in rows if r.get("id")]
 
     doc_types = get_odoo_document_types()
+    products = odoo_search_read(
+        "product.product",
+        [("active", "=", True)],
+        ["id", "name", "default_code"],
+        limit=20000,
+        order="name",
+    )
 
     def _clean(items: List[Dict], extra: Optional[str] = None) -> List[Dict[str, Any]]:
         out = []
@@ -406,12 +420,34 @@ def _fetch_catalog_raw() -> Dict[str, List[Dict[str, Any]]]:
             out.append(row)
         return sorted(out, key=lambda x: x["name"].upper())
 
+    def _clean_products(items: List[Dict]) -> List[Dict[str, Any]]:
+        out = []
+        seen = set()
+        for r in items:
+            iid = r.get("id")
+            if iid is None:
+                continue
+            name = (r.get("name") or "").strip()
+            if not name:
+                continue
+            code = (r.get("default_code") or "").strip()
+            key = (int(iid), name, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            row: Dict[str, Any] = {"id": int(iid), "name": name}
+            if code:
+                row["code"] = code
+            out.append(row)
+        return sorted(out, key=lambda x: (x.get("code") or x["name"]).upper())
+
     return {
         "journals": _clean(journals),
         "document_types": _clean(doc_types),
         "proveedores": _clean(partners, "name"),
         "cuentas": _clean(accounts),
         "rubros": _clean(rubros),
+        "productos": _clean_products(products),
     }
 
 
@@ -460,6 +496,7 @@ def get_catalog(force: bool = False) -> Tuple[Optional[Dict[str, Any]], bool]:
             "cuentas": build_name_to_id_map(raw.get("cuentas") or []),
             "accounts": build_account_maps(raw.get("cuentas") or []),
             "rubros": build_name_to_id_map(raw.get("rubros") or []),
+            "productos": build_name_to_id_map(raw.get("productos") or []),
         },
         "partner_cuit_to_id": partner_cuit_to_id,
         "proveedores_cuit_map": proveedores_cuit_map,

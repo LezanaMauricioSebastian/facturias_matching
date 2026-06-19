@@ -1,4 +1,4 @@
-import { mergeProductOptions, normalizeDateFieldsInRows, normalizeIvaPctValue, normalizeNumericFieldsInRows } from "./utils.js";
+import { mergeEtiquetaOptions, mergeProductOptions, normalizeDateFieldsInRows, normalizeIvaPctValue, normalizeNumericFieldsInRows } from "./utils.js";
 import { migrateRowKeys, propagateAccountDown, ensureOtroImpuestoColumns } from "./rows.js";
 import { renderTable } from "./table.js";
 
@@ -54,16 +54,18 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
 
     refs.btnAddOtroImpuesto.disabled = !(state.rows && state.rows.length);
 
-    if (Array.isArray(data.product_options) && data.product_options.length) {
-      state.options.productos = data.product_options;
-      state.productosLoading = false;
-    } else if (state.rows.length > 0) {
-      state.productosLoading = true;
+    const etiquetaOpts = data.etiqueta_options ?? data.product_options;
+    if (Array.isArray(etiquetaOpts) && etiquetaOpts.length) {
+      state.options.etiquetas = mergeEtiquetaOptions(state.options.etiquetas, etiquetaOpts);
     }
 
-    refs.summaryEl.textContent = empresa
-      ? `Filas: ${state.rows.length} · Empresa: ${empresa} · Proceso: ${pn}`
-      : `Filas: ${state.rows.length} · Proceso: ${pn}`;
+    if (state.rows.length > 0 && !(state.options.productos && state.options.productos.length)) {
+      state.productosLoading = true;
+    } else {
+      state.productosLoading = false;
+    }
+
+    refs.summaryEl.textContent = `Filas: ${state.rows.length} · Proceso: ${pn}`;
     let safeHandlers = handlers;
     if (!safeHandlers) {
       safeHandlers = {
@@ -84,8 +86,10 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
         })
         .then((more) => {
           const prevProd = state.options?.productos;
+          const prevEtiquetas = state.options?.etiquetas;
           state.options = { ...state.options, ...(more || {}) };
           state.options.productos = mergeProductOptions(prevProd, state.options?.productos);
+          state.options.etiquetas = mergeEtiquetaOptions(prevEtiquetas, state.options?.etiquetas);
           state.padronLoading = false;
           state.productosLoading = false;
           renderTable(state, refs, safeHandlers);
@@ -101,7 +105,15 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
       setStatusFn("Sin filas para ese proceso.", "bad");
       refs.btnAddOtroImpuesto.disabled = true;
     } else {
-      setStatusFn("Listo para editar y confirmar.", "ok");
+      const pm = data.purchase_matching || {};
+      const pmPart =
+        pm.enabled && (pm.rows_matched || pm.oc_detected)
+          ? ` · OC: ${pm.rows_matched || 0}/${pm.rows_total || 0} líneas` +
+            (pm.oc_detected ? ` (${pm.oc_detected})` : "")
+          : pm.enabled
+            ? " · OC: sin match"
+            : "";
+      setStatusFn(`Listo para editar y confirmar.${pmPart}`, "ok");
       refs.btnDescargar.disabled = false;
       if (refs.btnOdooImportTest) refs.btnOdooImportTest.disabled = false;
     }

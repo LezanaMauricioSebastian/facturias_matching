@@ -15,9 +15,7 @@ function setStatusBound(msg, kind) {
 }
 
 function summaryText(refs, rowCount) {
-  const empresa = refs.companyNumberEl?.value?.trim() || "";
   const proceso = refs.processNumberEl.value.trim();
-  if (empresa) return `Filas: ${rowCount} · Empresa: ${empresa} · Proceso: ${proceso}`;
   return `Filas: ${rowCount} · Proceso: ${proceso}`;
 }
 
@@ -77,9 +75,6 @@ async function init() {
   });
 
   const urlParams = getUrlParams();
-  if (urlParams.empresa && refs.companyNumberEl) {
-    refs.companyNumberEl.value = urlParams.empresa;
-  }
   if (urlParams.proceso) {
     refs.processNumberEl.value = urlParams.proceso;
     if (refs.btnBuscar && !refs.btnBuscar.disabled) {

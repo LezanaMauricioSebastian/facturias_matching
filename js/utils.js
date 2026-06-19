@@ -8,6 +8,41 @@ export function isPadronOptionKey(k) {
   );
 }
 
+/** Listas grandes: combobox con búsqueda en lugar de <select> con miles de <option>. */
+export function isComboboxOptionKey(k) {
+  return (
+    k === "proveedores" ||
+    k === "rubros" ||
+    k === "journals" ||
+    k === "cuentas" ||
+    k === "productos"
+  );
+}
+
+export function escapeAttr(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export function filterOptions(opts, query, limit = 50) {
+  const list = Array.isArray(opts) ? opts : [];
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return list.slice(0, limit);
+  const out = [];
+  for (const o of list) {
+    const lab = optionLabel(o).toLowerCase();
+    const val = optionValue(o).toLowerCase();
+    if (lab.includes(q) || val.includes(q)) {
+      out.push(o);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
 /** Opción de select: string legacy o {id, name, vat?}. */
 export function optionValue(opt) {
   if (opt == null) return "";
@@ -43,7 +78,21 @@ export function mergeProductOptions(prev, incoming) {
   const seen = new Set();
   const out = [];
   for (const x of [...a, ...b]) {
-    const s = (x ?? "").toString();
+    const key = optionValue(x);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(x);
+  }
+  return out;
+}
+
+export function mergeEtiquetaOptions(prev, incoming) {
+  const a = Array.isArray(prev) ? prev : [];
+  const b = Array.isArray(incoming) ? incoming : [];
+  const seen = new Set();
+  const out = [];
+  for (const x of [...a, ...b]) {
+    const s = String(x ?? "").trim();
     if (!s || seen.has(s)) continue;
     seen.add(s);
     out.push(s);

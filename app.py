@@ -36,7 +36,7 @@ DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
 PADRON_FUZZY_MIN_SCORE = float(os.getenv("PADRON_FUZZY_MIN_SCORE", "72") or "72")
 
 from back_check import MySQLUnavailableError, ProcessTableError, get_process
-from padron_taxes import apply_padron_taxes_to_row, build_csv_tax_ids_dot_id
+from padron_taxes import PadronTaxMatchCache, apply_padron_taxes_to_row, build_csv_tax_ids_dot_id, get_tax_name_by_id
 from config import DEFAULT_JOURNAL_NAME, DEFAULT_RUBRO_NAME, _env_strip, get_table_columns as cfg_get_table_columns
 from config import ODOO_CONFIG
 from odoo_api import (
@@ -56,6 +56,7 @@ from odoo_catalog import (
     resolve_id_fuzzy,
     resolve_partner_id,
 )
+from purchase_matching import enrich_rows_with_purchase_data
 
 # Claves internas (UI/filas) → encabezado CSV para importación Odoo por id numérico
 CSV_HEADER_BY_ROW_KEY: Dict[str, str] = {
@@ -64,6 +65,7 @@ CSV_HEADER_BY_ROW_KEY: Dict[str, str] = {
     "x_studio_category": "x_studio_category/.id",
     "journal_id": "journal_id/.id",
     "invoice_line_ids/account_id": "invoice_line_ids/account_id/.id",
+    "invoice_line_ids/product_id": "invoice_line_ids/product_id/.id",
 }
 
 # Columna solo en export CSV (Odoo: varios impuestos en una celda, ej. "63,1")
@@ -87,6 +89,7 @@ OUTPUT_HEADERS = [
     "invoice_date_due",
     "x_studio_category",
     "invoice_line_ids/name",
+    "invoice_line_ids/product_id",
     "journal_id",
     "invoice_line_ids/account_id",
     "invoice_line_ids/quantity",
@@ -168,6 +171,12 @@ UI_COLUMNS = [
     "otros_impuestos",
 ]
 
+PURCHASE_UI_COLUMNS = [
+    "__um_proveedor",
+    "__um_empresa",
+    "__oc_match_note",
+]
+
 COLUMN_LABELS = {
     "l10n_latam_document_number": "Número de Documento",
     "partner_id": "Proveedor",
@@ -177,6 +186,7 @@ COLUMN_LABELS = {
     "invoice_date_due": "Fecha de vencimiento",
     "x_studio_category": "Rubros",
     "invoice_line_ids/name": "Etiqueta",
+    "invoice_line_ids/product_id": "Producto",
     "journal_id": "Diario",
     "invoice_line_ids/account_id": "Cuenta",
     "invoice_line_ids/quantity": "Cantidad",
@@ -185,6 +195,9 @@ COLUMN_LABELS = {
     "iva_monto": "Monto IVA",
     "otros_impuestos": "Otros Impuestos",
     "otros_impuestos_monto": "Monto Otros Impuestos",
+    "__um_proveedor": "UM proveedor",
+    "__um_empresa": "UM empresa",
+    "__oc_match_note": "Notas OC/UM",
 }
 
 
@@ -218,6 +231,27 @@ def _iva_pct_for_odoo_tax_label(iva_pct: str) -> str:
 def _ui_header_keys() -> List[str]:
     """Headers que se muestran en la UI (sin columnas solo-export)."""
     return list(OUTPUT_HEADERS)
+
+
+def _purchase_numeric_keys() -> set:
+    return set()
+
+
+def _append_purchase_columns(columns: List[Dict[str, Any]], readonly_cols: set) -> None:
+    numeric_cols = _purchase_numeric_keys()
+    for key in PURCHASE_UI_COLUMNS:
+        col_type = "numeric" if key in numeric_cols else "text"
+        columns.append(
+            {
+                "key": key,
+                "label": COLUMN_LABELS.get(key, key),
+                "type": col_type,
+                "options_key": None,
+                "readonly": True,
+                "editable": False,
+            }
+        )
+        readonly_cols.add(key)
 
 
 def _build_tax_names(row: Dict[str, Any]) -> List[str]:
@@ -334,8 +368,19 @@ PADRON_FIELD_COLUMNS = {
     "rubro": "rubro",
     "diario": "diario",
     "cuenta": "cuenta_contable_completo",
+    "cuenta_codigo": "codigo_cuenta_contable",
+    "cuenta_nombre": "cuenta_contable",
     "tipo_documento": "tipo_documento",
+    "etiqueta": "etiqueta",
+    "invoice_line_ids_name": "invoice_line_ids_name",
 }
+
+_LINE_LABEL_COLUMN_CANDIDATES = (
+    "etiqueta",
+    "invoice_line_ids_name",
+    "nombre_linea",
+    "linea_factura",
+)
 
 
 def _detect_padron_fields(cols: List[str]) -> Dict[str, Optional[str]]:
@@ -345,6 +390,15 @@ def _detect_padron_fields(cols: List[str]) -> Dict[str, Optional[str]]:
         key: col_name if col_name in cols_set else None
         for key, col_name in PADRON_FIELD_COLUMNS.items()
     }
+
+
+def _detect_line_label_column(cols: List[str]) -> Optional[str]:
+    fields = _detect_padron_fields(cols)
+    for key in _LINE_LABEL_COLUMN_CANDIDATES:
+        col = fields.get(key)
+        if col:
+            return col
+    return None
 
 
 def _normalize(s: Any) -> str:
@@ -675,21 +729,26 @@ def _padron_rows(table_name: Optional[str] = None, limit: Optional[int] = None) 
             return []
 
     table_ident = _table_ident(table_name)
-    select_cols: List[Tuple[str, str]] = [("name", name_col)]
+    select_items: List[SQL] = [SQL("{} AS {}").format(Identifier(name_col), Identifier("name"))]
     for key in ["doc", "rubro", "diario", "tipo_documento"]:
         col = fields.get(key)
         if col:
-            select_cols.append((key, col))
+            select_items.append(SQL("{} AS {}").format(Identifier(col), Identifier(key)))
+    codigo_col = fields.get("cuenta_codigo")
+    nombre_col = fields.get("cuenta_nombre")
     cuenta_col = fields.get("cuenta")
-    if cuenta_col:
-        select_cols.append(("cuenta", cuenta_col))
+    if codigo_col and nombre_col:
+        select_items.append(
+            SQL(
+                "trim(CAST({} AS text)) || ' ' || trim(CAST({} AS text)) AS cuenta"
+            ).format(Identifier(codigo_col), Identifier(nombre_col))
+        )
+    elif cuenta_col:
+        select_items.append(SQL("{} AS cuenta").format(Identifier(cuenta_col)))
 
     with _pg_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            select_sql = SQL(", ").join(
-                SQL("{} AS {}").format(Identifier(col_name), Identifier(alias))
-                for alias, col_name in select_cols
-            )
+            select_sql = SQL(", ").join(select_items)
             q = SQL("SELECT {} FROM {} WHERE {} IS NOT NULL AND trim({}) <> '' LIMIT {}").format(
                 select_sql,
                 table_ident,
@@ -749,6 +808,20 @@ def _tuple_from_padron_row(r: Dict[str, Any], score: float) -> Tuple[str, str, s
     )
 
 
+def _padron_name_score(query: str, choice: str, **_: Any) -> float:
+    """
+    Score de similitud proveedor para padrón.
+    Combina token_set + partial para evitar falsos positivos tipo GRANJA→ALOBAR (WRatio).
+    """
+    q = _normalize(query).upper()
+    c = _normalize(choice).upper()
+    if not q or not c:
+        return 0.0
+    ts = float(fuzz.token_set_ratio(q, c))
+    pr = float(fuzz.partial_ratio(q, c))
+    return max(ts, 0.55 * ts + 0.45 * pr)
+
+
 def _match_proveedor(nombre: str, cuit: str) -> Tuple[str, str, str, str, float]:
     """
     Devuelve (name, rubro, diario, cuenta, score).
@@ -770,7 +843,7 @@ def _match_proveedor(nombre: str, cuit: str) -> Tuple[str, str, str, str, float]
     if not nombre_n or not choices:
         return ("", "", "", "", 0.0)
 
-    best = rf_process.extractOne(nombre_n, choices, scorer=fuzz.WRatio)
+    best = rf_process.extractOne(nombre_n, choices, scorer=_padron_name_score)
     if not best:
         return ("", "", "", "", 0.0)
     best_name, score, idx = best[0], float(best[1]), int(best[2])
@@ -779,9 +852,9 @@ def _match_proveedor(nombre: str, cuit: str) -> Tuple[str, str, str, str, float]
     return _tuple_from_padron_row(names[idx][1], score)
 
 
-def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
     """
-    Devuelve filas 'normalizadas' para UI y opciones de productos (desde items).
+    Devuelve filas normalizadas para UI, opciones de etiqueta (desde items) y resumen OC.
     """
     catalog, odoo_ok = _get_odoo_catalog()
     maps = (catalog or {}).get("maps") or {}
@@ -795,7 +868,7 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
     # MySQL: sudataco_facturia.process
     row = get_process(int(process_number), empresa=empresa)
     if not row:
-        return ([], [])
+        return ([], [], {"enabled": False})
 
     json_data = row.get("json_data")
     if json_data is None:
@@ -807,8 +880,9 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
 
     facturas = obj.get("facturas") or []
     out_rows: List[Dict[str, Any]] = []
-    product_opts: List[str] = []
+    etiqueta_opts: List[str] = []
     comprobante_idx = -1
+    tax_match_cache = PadronTaxMatchCache()
 
     for fac_wrap in facturas:
         j = fac_wrap.get("json") if isinstance(fac_wrap, dict) else None
@@ -876,15 +950,19 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
             # fila de encabezado sin items
             items = [{"descripcion": "", "cantidad": "", "precio_unitario": ""}]
 
+        comprobante_tax_match = tax_match_cache.get(prov_nombre, prov_cuit)
+        comprobante_tax_names = get_tax_name_by_id() if comprobante_tax_match[0] else None
+
         for i, it in enumerate(items):
             desc = _normalize((it or {}).get("descripcion"))
             if desc:
-                product_opts.append(desc)
+                etiqueta_opts.append(desc)
             qty = (it or {}).get("cantidad")
             price = (it or {}).get("precio_unitario")
             iva = (it or {}).get("alicuota_iva")
             otros_imp = (it or {}).get("otros_impuestos") or (it or {}).get("otros_tributos") or ""
-            #etiqueta = (it or {}).get("etiqueta") or (it or {}).get("unidad_medida") or ""
+            item_codigo = _normalize((it or {}).get("codigo"))
+            item_um = _normalize((it or {}).get("unidad_medida"))
 
             mismo_comprobante = i > 0  # para una misma factura, repetir solo líneas
             otros_imp_n = _normalize(otros_imp)
@@ -907,6 +985,7 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
                     "invoice_date_due": "" if mismo_comprobante else venc,
                     "x_studio_category": "" if mismo_comprobante else rubro_id,
                     "invoice_line_ids/name": desc,
+                    "invoice_line_ids/product_id": "",
                     "journal_id": "" if mismo_comprobante else journal_id,
                     "invoice_line_ids/account_id": "" if mismo_comprobante else account_id,
                     "invoice_line_ids/quantity": "" if qty is None else str(qty),
@@ -918,6 +997,8 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
                     "Nombre de Proveedor": prov_nombre,
                     "CUIT": prov_cuit,
                     "Nombre de producto": desc,
+                    "__item_codigo": item_codigo,
+                    "__um_proveedor": item_um,
                     "_match_score_proveedor": score,
                     "__comprobante_idx": comprobante_idx,
                     "__fac_subtotal": fac_subtotal_hdr if i == 0 else "",
@@ -927,11 +1008,22 @@ def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> T
                 if fac_iva_monto_hdr:
                     row_out["__iva_monto_manual"] = True
                 _apply_fac_percepciones_to_row(fac, row_out)
-            apply_padron_taxes_to_row(row_out, prov_nombre, prov_cuit)
+            apply_padron_taxes_to_row(
+                row_out,
+                prov_nombre,
+                prov_cuit,
+                tax_match=comprobante_tax_match,
+                name_by_id=comprobante_tax_names,
+            )
             out_rows.append(row_out)
 
-    product_opts = sorted({p for p in product_opts if p})
-    return (out_rows, product_opts)
+    etiqueta_opts = sorted({p for p in etiqueta_opts if p})
+
+    purchase_summary: Dict[str, Any] = {"enabled": False}
+    if odoo_ok and out_rows:
+        purchase_summary = enrich_rows_with_purchase_data(out_rows)
+
+    return (out_rows, etiqueta_opts, purchase_summary)
 
 
 def _build_output_rows(
@@ -982,6 +1074,7 @@ def get_metadata():
         "x_studio_category": "rubros",
         "journal_id": "journals",
         "invoice_line_ids/account_id": "cuentas",
+        "invoice_line_ids/product_id": "productos",
         "iva_pct": "iva_options",
         "otros_impuestos": "otros_impuestos_options",
     }
@@ -1008,6 +1101,8 @@ def get_metadata():
             }
         )
 
+    _append_purchase_columns(columns, readonly_cols)
+
     csv_headers = _csv_export_headers(
         list(OUTPUT_HEADERS)
     )
@@ -1026,6 +1121,7 @@ def _build_metadata_payload() -> Dict[str, Any]:
         "x_studio_category": "rubros",
         "journal_id": "journals",
         "invoice_line_ids/account_id": "cuentas",
+        "invoice_line_ids/product_id": "productos",
         "iva_pct": "iva_options",
         "otros_impuestos": "otros_impuestos_options",
     }
@@ -1049,6 +1145,7 @@ def _build_metadata_payload() -> Dict[str, Any]:
                 "editable": (col_type == "text") and (key not in readonly_cols),
             }
         )
+    _append_purchase_columns(columns, readonly_cols)
     csv_headers = _csv_export_headers(
         list(OUTPUT_HEADERS)
     )
@@ -1075,6 +1172,7 @@ def _options_base_payload() -> Dict[str, Any]:
         "iva_options": IVA_OPTIONS,
         "otros_impuestos_options": OTROS_IMPUESTOS_OPTIONS,
         "productos": [],
+        "etiquetas": [],
         "proveedores": [],
         "proveedores_cuit_map": {},
         "rubros": [],
@@ -1097,10 +1195,39 @@ def _options_from_odoo_catalog(catalog: Dict[str, Any]) -> Dict[str, Any]:
             "cuentas": catalog.get("cuentas") or [],
             "document_types": catalog.get("document_types") or [],
             "facturas_c_type_ids": catalog.get("facturas_c_type_ids") or [],
+            "productos": catalog.get("productos") or [],
             "catalog_source": "odoo",
         }
     )
     return out
+
+
+def _pg_product_options(limit: int = 20000) -> List[Dict[str, Any]]:
+    try:
+        with _pg_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, default_code
+                    FROM public.product_product
+                    WHERE active IS DISTINCT FROM false
+                      AND name IS NOT NULL AND trim(name) <> ''
+                    ORDER BY name
+                    LIMIT %s
+                    """,
+                    (int(limit),),
+                )
+                out = []
+                for pid, name, code in cur.fetchall():
+                    if not name:
+                        continue
+                    row: Dict[str, Any] = {"id": int(pid), "name": _normalize(name)}
+                    if code:
+                        row["code"] = _normalize(code)
+                    out.append(row)
+                return out
+    except Exception:
+        return []
 
 
 def _pg_sample_strings(col: Optional[str], limit: int = 5000) -> List[str]:
@@ -1177,10 +1304,15 @@ def _options_from_postgres(padron: bool) -> Dict[str, Any]:
             rubros = _pg_sample_strings(fields.get("rubro"), 5000)
             if rubros:
                 out["rubros"] = _strings_to_legacy_options(rubros)
-            line_name_col = fields.get("invoice_line_ids_name") or fields.get("etiqueta")
-            out["productos"] = _pg_sample_strings(line_name_col, 5000)
+            line_name_col = _detect_line_label_column(cols)
+            if line_name_col:
+                out["etiquetas"] = _pg_sample_strings(line_name_col, 5000)
+            if not out.get("productos"):
+                out["productos"] = _pg_product_options()
         except Exception:
             pass
+    elif not out.get("productos"):
+        out["productos"] = _pg_product_options()
     return out
 
 
@@ -1196,13 +1328,13 @@ def get_options(padron: bool = Query(False, description="Si true, carga opciones
         etiquetas_db: List[str] = []
         try:
             cols = _get_table_columns()
-            fields = _detect_padron_fields(cols)
-            line_name_col = fields.get("invoice_line_ids_name") or fields.get("etiqueta")
-            etiquetas_db = _pg_sample_strings(line_name_col, 5000)
+            line_name_col = _detect_line_label_column(cols)
+            if line_name_col:
+                etiquetas_db = _pg_sample_strings(line_name_col, 5000)
         except Exception:
             etiquetas_db = []
         if etiquetas_db:
-            out["productos"] = etiquetas_db
+            out["etiquetas"] = etiquetas_db
 
     return out
 
@@ -1277,7 +1409,7 @@ def get_padron_schema():
 @app.get("/api/proceso/{process_number}")
 def get_proceso(process_number: str, empresa: Optional[str] = None):
     try:
-        filas, product_options = _parse_process_json(process_number, empresa=empresa)
+        filas, etiqueta_options, purchase_summary = _parse_process_json(process_number, empresa=empresa)
     except MySQLUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except ProcessTableError as e:
@@ -1297,7 +1429,9 @@ def get_proceso(process_number: str, empresa: Optional[str] = None):
         "process_number": process_number,
         "empresa": empresa,
         "rows": out_rows,
-        "product_options": product_options,
+        "etiqueta_options": etiqueta_options,
+        "product_options": etiqueta_options,
+        "purchase_matching": purchase_summary,
         "debug": {
             "filas": len(out_rows),
         },

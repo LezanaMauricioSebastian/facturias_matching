@@ -27,7 +27,6 @@ export function migrateRowKeys(row) {
   if (row.iva_pct != null && String(row.iva_pct).trim()) {
     row.iva_pct = normalizeIvaPctValue(row.iva_pct);
   }
-  delete row["invoice_line_ids/product_id"];
 }
 
 export function applyProveedorToCuit(state, rIdx) {

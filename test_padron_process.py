@@ -53,7 +53,7 @@ def run_for_view(view_name: str, process_number: str) -> Dict[str, Any]:
     app_module.DB_TABLE_NAME = view_name
     app_module._PADRON_CACHE = None
 
-    filas, product_options = app_module._parse_process_json(process_number)
+    filas, product_options, _purchase_summary = app_module._parse_process_json(process_number)
     out_rows = app_module._build_output_rows(filas)
     return {
         "view": view_name,

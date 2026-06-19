@@ -172,6 +172,9 @@ def _build_line_command(row: Dict[str, Any]) -> Tuple[int, int, Dict[str, Any]]:
     account_id = _int_id(row.get("invoice_line_ids/account_id"))
     if account_id:
         vals["account_id"] = account_id
+    product_id = _int_id(row.get("invoice_line_ids/product_id"))
+    if product_id:
+        vals["product_id"] = product_id
     tax_ids = _tax_ids_from_row(row)
     if tax_ids:
         vals["tax_ids"] = [(6, 0, tax_ids)]
