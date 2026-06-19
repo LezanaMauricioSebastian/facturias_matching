@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Compare matching output for a process using old vs new padron view."""
+"""Compare matching output for a process using old vs new padron view (requires DB)."""
 import json
 import os
+import unittest
 from typing import Any, Dict, List
 
-import dotenv
-
-_here = os.path.dirname(__file__)
-dotenv.load_dotenv(os.path.join(_here, ".env"))
+from facturia_matching import config
+from facturia_matching.padron import reset_padron_cache
+from facturia_matching.process import build_output_rows, parse_process_json
 
 VIEWS = ["view_padron_facturia", "view_padron_facturia_actualizado"]
 PROCESS_NUMBERS = ["185", "214"]
+
+
+def _has_db_config() -> bool:
+    return bool(config.DB_HOST and config.DB_USER and config.DB_PASSWORD and config.DB_NAME)
 
 
 def _summary_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -33,7 +37,6 @@ def _summary_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "doc": r.get("l10n_latam_document_number"),
             }
         )
-    # dedupe by proveedor+cuit for header rows only
     seen = set()
     deduped = []
     for x in out:
@@ -47,14 +50,11 @@ def _summary_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def run_for_view(view_name: str, process_number: str) -> Dict[str, Any]:
     os.environ["DB_TABLE_NAME"] = view_name
-    # Reset padron cache between views
-    import app as app_module
+    config.DB_TABLE_NAME = view_name
+    reset_padron_cache()
 
-    app_module.DB_TABLE_NAME = view_name
-    app_module._PADRON_CACHE = None
-
-    filas, product_options, _purchase_summary = app_module._parse_process_json(process_number)
-    out_rows = app_module._build_output_rows(filas)
+    filas, product_options, _purchase_summary = parse_process_json(process_number)
+    out_rows = build_output_rows(filas)
     return {
         "view": view_name,
         "process_number": process_number,
@@ -64,7 +64,21 @@ def run_for_view(view_name: str, process_number: str) -> Dict[str, Any]:
     }
 
 
+@unittest.skipUnless(_has_db_config(), "DB credentials not configured")
+class TestPadronProcessIntegration(unittest.TestCase):
+    def test_compare_views(self):
+        results = {}
+        for pn in PROCESS_NUMBERS:
+            results[pn] = {}
+            for view in VIEWS:
+                results[pn][view] = run_for_view(view, pn)
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+
+
 def main():
+    if not _has_db_config():
+        print("DB credentials not configured; skipping.")
+        return
     results = {}
     for pn in PROCESS_NUMBERS:
         results[pn] = {}

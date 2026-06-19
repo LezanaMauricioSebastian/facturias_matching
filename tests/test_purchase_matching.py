@@ -1,7 +1,7 @@
 """Tests for purchase order matching and UOM scaling."""
 import unittest
 
-from purchase_matching import (
+from facturia_matching.purchase_matching import (
     _canonical_um,
     _extract_qty_um_from_description,
     _line_match_score,

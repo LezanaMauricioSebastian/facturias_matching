@@ -29,7 +29,8 @@ cp .env.example .env
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-uvicorn app:app --reload --port 8080
+pip install -e .
+uvicorn facturia_matching.main:app --reload --port 8080
 ```
 
 Abrí http://localhost:8080
@@ -37,8 +38,11 @@ Abrí http://localhost:8080
 ## Tests
 
 ```bash
-python -m unittest discover -s . -p 'test_*.py'
+pip install -e .
+python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+Los tests de integración (requieren BD) están en `tests/integration/` y se omiten si no hay credenciales.
 
 ## Deploy (Cloud Run)
 
@@ -51,6 +55,17 @@ Las variables de entorno y secretos de BD/Odoo se configuran en Cloud Run despu�
 
 ## Scripts de diagnóstico
 
-- `compare_padron_views.py` — compara columnas y métricas entre vistas del padrón
-- `consultar_odoo_catalog.py` — prueba conexión y catálogo Odoo
-- `padron_proveedores_diff.py` — proveedores en vista vieja que no están en la nueva
+```bash
+pip install -e .
+python scripts/compare_padron_views.py
+python scripts/consultar_odoo_catalog.py
+python scripts/padron_proveedores_diff.py
+```
+
+## Estructura del proyecto
+
+```
+src/facturia_matching/   # paquete Python (API, matching, Odoo)
+tests/                   # tests unitarios e integración
+scripts/                 # utilidades de diagnóstico
+```

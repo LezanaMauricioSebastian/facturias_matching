@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """Proveedores en vista vieja que no están en la nueva (por nombre_contacto)."""
-import os
 
-import dotenv
 from psycopg2 import connect
 
-_here = os.path.dirname(__file__)
-dotenv.load_dotenv(os.path.join(_here, ".env"))
+from facturia_matching.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
 
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
 OLD = "view_padron_facturia"
 NEW = "view_padron_facturia_actualizado"
 NAME_COL = "nombre_contacto"
@@ -16,11 +12,11 @@ NAME_COL = "nombre_contacto"
 
 def _pg_conn():
     return connect(
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT", "5432"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        dbname=os.getenv("DB_NAME"),
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME,
     )
 
 

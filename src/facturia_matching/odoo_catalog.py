@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
 
-from config import ODOO_CATALOG_CACHE_TTL
-from odoo_api import get_odoo_document_types, get_odoo_uid, is_odoo_configured, odoo_search_read
+from facturia_matching.config import ODOO_CATALOG_CACHE_TTL
+from facturia_matching.odoo_api import get_odoo_document_types, get_odoo_uid, is_odoo_configured, odoo_search_read
 
 logger = logging.getLogger(__name__)
 

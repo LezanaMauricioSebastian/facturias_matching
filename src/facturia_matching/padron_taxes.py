@@ -3,27 +3,23 @@ Padrón de impuestos desde view_padron_facturia_actualizado (ids_impuestos / imp
 El padrón histórico principal (rubro, diario, cuenta) sigue en DB_TABLE_NAME (vista vieja).
 """
 import json
-import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import dotenv
 from psycopg2 import connect
 from psycopg2.extras import RealDictCursor
 from psycopg2.sql import Identifier, SQL
 from rapidfuzz import fuzz, process as rf_process
 
-_here = os.path.dirname(__file__)
-dotenv.load_dotenv(os.path.join(_here, ".env"))
-
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
-DB_TABLE_NAME_TAXES = (
-    os.getenv("DB_TABLE_NAME_TAXES", "").strip() or "view_padron_facturia_actualizado"
+from facturia_matching.config import (
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_PORT,
+    DB_SCHEMA,
+    DB_TABLE_NAME_TAXES,
+    DB_USER,
+    get_table_columns as cfg_get_table_columns,
 )
 
 # account.tax purchase — ids vistos en ids_impuestos del padrón

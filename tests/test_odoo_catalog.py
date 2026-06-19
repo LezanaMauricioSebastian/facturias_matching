@@ -1,7 +1,7 @@
 """Unit tests: resolución de cuenta contable padrón → Odoo account_id."""
 import unittest
 
-from odoo_catalog import build_account_maps, resolve_account_id
+from facturia_matching.odoo_catalog import build_account_maps, resolve_account_id
 
 MOCK_ACCOUNTS = [
     {"id": 184, "code": "5.3.1.01.110", "name": "Honorarios Administración"},

@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from config import get_mysql_connection, get_mysql_table_columns, _mysql_table_ref
+from facturia_matching.config import get_mysql_connection, get_mysql_table_columns, _mysql_table_ref
 
 PROCESS_TABLE = "process"
 PROCESS_SCHEMA = "sudataco_facturia"

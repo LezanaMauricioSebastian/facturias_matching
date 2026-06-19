@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: facturia-matching
+Version: 0.1.0
+Summary: FacturIA → Odoo matching UI
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.104.0
+Requires-Dist: uvicorn[standard]>=0.24.0
+Requires-Dist: rapidfuzz>=3.0.0
+Requires-Dist: psycopg2-binary==2.9.9
+Requires-Dist: python-dotenv==1.0.0
+Requires-Dist: mysql-connector-python>=9.0.0
+Requires-Dist: requests>=2.31.0

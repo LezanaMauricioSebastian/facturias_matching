@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from config import ODOO_CONFIG, _env_strip
+from facturia_matching.config import ODOO_CONFIG, _env_strip
 
 logger = logging.getLogger(__name__)
 

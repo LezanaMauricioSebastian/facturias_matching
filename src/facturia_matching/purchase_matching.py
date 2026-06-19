@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
 
-from odoo_api import is_odoo_configured, odoo_search_read
+from facturia_matching.odoo_api import is_odoo_configured, odoo_search_read
 
 # Alias UM proveedor (FacturIA) → nombre canónico Odoo
 _UM_ALIASES: Dict[str, str] = {

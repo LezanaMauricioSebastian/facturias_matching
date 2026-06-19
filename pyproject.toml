@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "facturia-matching"
+version = "0.1.0"
+description = "FacturIA → Odoo matching UI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "rapidfuzz>=3.0.0",
+    "psycopg2-binary==2.9.9",
+    "python-dotenv==1.0.0",
+    "mysql-connector-python>=9.0.0",
+    "requests>=2.31.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+facturia_matching = ["static/**/*"]

@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
   && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
-COPY . /app/
+COPY requirements.txt pyproject.toml /app/
+COPY src/ /app/src/
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+  && pip install --no-cache-dir /app
 
 EXPOSE 8080
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "facturia_matching.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
 """Compare view_padron_facturia vs view_padron_facturia_actualizado (schema + metrics)."""
 import json
-import os
 from typing import Any, Dict, List, Optional
 
-import dotenv
 from psycopg2 import connect
-from psycopg2.extras import RealDictCursor
 
-_here = os.path.dirname(__file__)
-dotenv.load_dotenv(os.path.join(_here, ".env"))
-
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
-DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
+from facturia_matching.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
 
 VIEWS = ["view_padron_facturia", "view_padron_facturia_actualizado"]
 
@@ -104,7 +93,6 @@ def compare():
         except Exception as e:
             metrics = {"error": str(e)}
 
-        only_in = None
         results[view] = {
             "columns": cols,
             "column_count": len(cols),

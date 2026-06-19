@@ -1,7 +1,7 @@
 """Tests unitarios para agrupación/validación de import Odoo (sin llamar a la API)."""
 import unittest
 
-from odoo_import import (
+from facturia_matching.odoo_import import (
     _document_numbers_match,
     collect_expected_tax_amounts_from_group,
     group_rows_into_invoices,

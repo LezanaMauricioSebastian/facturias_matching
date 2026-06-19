@@ -4,8 +4,8 @@
 import json
 import sys
 
-from odoo_api import get_odoo_uid, is_odoo_configured, odoo_xmlrpc_version
-from odoo_catalog import get_catalog, invalidate_catalog_cache
+from facturia_matching.odoo_api import get_odoo_uid, is_odoo_configured, odoo_xmlrpc_version
+from facturia_matching.odoo_catalog import get_catalog, invalidate_catalog_cache
 
 
 def main() -> int:

@@ -1,11 +1,13 @@
 import os
-from psycopg2 import connect
+
+import dotenv
 from mysql.connector import connect as connect_mysql
 from mysql.connector.errors import Error
-import dotenv
+from psycopg2 import connect
 
-_here = os.path.dirname(__file__)
-dotenv.load_dotenv(os.path.join(_here, ".env"))
+from facturia_matching.paths import ENV_FILE
+
+dotenv.load_dotenv(ENV_FILE)
 
 
 def _env_strip(key: str, default: str = "") -> str:
@@ -19,19 +21,26 @@ def _env_strip(key: str, default: str = "") -> str:
 
 
 DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
+DB_PORT = os.getenv("DB_PORT", "5432")
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_NAME = os.getenv("DB_NAME")
 DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-DB_TABLE_NAME = os.getenv("DB_TABLE_NAME")
+DB_TABLE_NAME = os.getenv("DB_TABLE_NAME", "").strip() or "view_padron_facturia"
+DB_TABLE_NAME_FALLBACK = (
+    os.getenv("DB_TABLE_NAME_FALLBACK", "").strip()
+    or os.getenv("DB_TABLE_NAME_TAXES", "").strip()
+    or "view_padron_facturia_actualizado"
+)
+DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
+PADRON_FUZZY_MIN_SCORE = float(os.getenv("PADRON_FUZZY_MIN_SCORE", "72") or "72")
+PADRON_LIMIT = int(os.getenv("PADRON_LIMIT", "50000") or "50000")
 
 DB_HOST_MYSQL = os.getenv("DB_HOST_MYSQL")
 DB_USER_MYSQL = os.getenv("DB_USER_MYSQL")
 DB_PASSWORD_MYSQL = os.getenv("DB_PASSWORD_MYSQL")
 DB_NAME_MYSQL = os.getenv("DB_NAME_MYSQL")
 
-# Backwards-compatible with existing `.env` keys used in this repo
 DB_HOST_MYSQL = (DB_HOST_MYSQL or os.getenv("DB_HOST_mysql") or "").strip() or None
 DB_USER_MYSQL = (DB_USER_MYSQL or os.getenv("DB_USER_mysql") or "").strip() or None
 DB_PASSWORD_MYSQL = (DB_PASSWORD_MYSQL or os.getenv("DB_PASSWORD_mysql") or "").strip() or None
@@ -42,6 +51,10 @@ try:
 except ValueError:
     DB_PORT_MYSQL = 3306
 DB_URL_MYSQL = f"mysql://{DB_USER_MYSQL}:{DB_PASSWORD_MYSQL}@{DB_HOST_MYSQL}:{DB_PORT_MYSQL}/{DB_NAME_MYSQL}"
+
+DB_TABLE_NAME_TAXES = (
+    os.getenv("DB_TABLE_NAME_TAXES", "").strip() or "view_padron_facturia_actualizado"
+)
 
 
 def get_mysql_connection():
@@ -71,8 +84,9 @@ def mysql_fetchall(query: str, params=None):
             cur.close()
     finally:
         conn.close()
+
+
 def check_db_connection_mysql():
-    """ function that checks the connection to the database """
     try:
         conn = get_mysql_connection()
         conn.close()
@@ -83,9 +97,8 @@ def check_db_connection_mysql():
     except Exception as e:
         print(e)
         return False
-# Odoo API (JSON-RPC / XML-RPC) — catálogos del tenant del cliente
-# uid: ODOO_USER_ID numérico → se usa directo en execute_kw (sin authenticate).
-# login: ODOO_USER (email) → solo si no hay uid, vía common.authenticate.
+
+
 _odo_uid_raw = _env_strip("ODOO_USER_ID")
 try:
     ODOO_UID = int(_odo_uid_raw) if _odo_uid_raw else None
@@ -102,12 +115,11 @@ ODOO_CONFIG = {
 }
 
 ODOO_CATALOG_CACHE_TTL = int(_env_strip("ODOO_CATALOG_CACHE_TTL", "600") or "600")
-# Opcionales: solo se usan si están definidos en .env (sin valor por defecto en código)
 DEFAULT_JOURNAL_NAME = _env_strip("DEFAULT_JOURNAL_NAME")
 DEFAULT_RUBRO_NAME = _env_strip("DEFAULT_RUBRO_NAME")
 
+
 def check_db_connection():
-    """ function that checks the connection to the database """
     try:
         conn = connect(DB_URL)
         conn.close()
@@ -117,8 +129,8 @@ def check_db_connection():
         print(e)
         return False
 
+
 def get_tables():
-    """ function that gets the tables in the database """
     try:
         conn = connect(DB_URL)
         cur = conn.cursor()
@@ -129,22 +141,23 @@ def get_tables():
         print(e)
         return None
 
-def check_table_exists(table):
-    """ function that checks if the table exists in the database """
-    try:
 
+def check_table_exists(table):
+    try:
         conn = connect(DB_URL)
         cur = conn.cursor()
-        cur.execute(f"SELECT * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{table}'")
+        cur.execute(
+            f"SELECT * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{table}'"
+        )
         table_exists = cur.fetchall()
         return table_exists
     except Exception as e:
         print(e)
         return None
 
+
 def get_table_columns(table, schema=None):
-    """Columnas de una tabla/vista Postgres (incluye materialized views vía pg_catalog)."""
-    schema = (schema or os.getenv("DB_SCHEMA", "public") or "public").strip()
+    schema = (schema or DB_SCHEMA or "public").strip()
     table = (table or "").strip()
     if not table:
         return None
@@ -181,8 +194,9 @@ def get_table_columns(table, schema=None):
     except Exception as e:
         print(e)
         return None
-def get_table_data(table,max=5):
-    """ function that gets the data in the table """
+
+
+def get_table_data(table, max=5):
     try:
         conn = connect(DB_URL)
         cur = conn.cursor()
@@ -192,8 +206,9 @@ def get_table_data(table,max=5):
     except Exception as e:
         print(e)
         return None
+
+
 def get_mysql_table_columns(table="process", schema="sudataco_facturia") -> list[str]:
-    """Nombres de columnas de una tabla MySQL (information_schema)."""
     try:
         rows = mysql_fetchall(
             """

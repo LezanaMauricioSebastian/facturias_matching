@@ -10,8 +10,8 @@ from datetime import date
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from odoo_api import get_odoo_test_config, get_odoo_uid_from_config, is_odoo_config_ready, odoo_execute_kw_with_config
-from padron_taxes import IVA_TAX_IDS, build_csv_tax_ids_dot_id, resolve_tax_label_to_id, tax_id_for_csv_export
+from facturia_matching.odoo_api import get_odoo_test_config, get_odoo_uid_from_config, is_odoo_config_ready, odoo_execute_kw_with_config
+from facturia_matching.padron_taxes import IVA_TAX_IDS, build_csv_tax_ids_dot_id, resolve_tax_label_to_id, tax_id_for_csv_export
 
 _DATE_DD_MM = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 
