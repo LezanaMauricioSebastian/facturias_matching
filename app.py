@@ -35,7 +35,7 @@ DB_TABLE_NAME_FALLBACK = (
 DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
 PADRON_FUZZY_MIN_SCORE = float(os.getenv("PADRON_FUZZY_MIN_SCORE", "72") or "72")
 
-from back_check import get_process
+from back_check import MySQLUnavailableError, ProcessTableError, get_process
 from padron_taxes import apply_padron_taxes_to_row, build_csv_tax_ids_dot_id
 from config import DEFAULT_JOURNAL_NAME, DEFAULT_RUBRO_NAME, _env_strip, get_table_columns as cfg_get_table_columns
 from config import ODOO_CONFIG
@@ -779,7 +779,7 @@ def _match_proveedor(nombre: str, cuit: str) -> Tuple[str, str, str, str, float]
     return _tuple_from_padron_row(names[idx][1], score)
 
 
-def _parse_process_json(process_number: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _parse_process_json(process_number: str, empresa: Optional[str] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Devuelve filas 'normalizadas' para UI y opciones de productos (desde items).
     """
@@ -793,7 +793,7 @@ def _parse_process_json(process_number: str) -> Tuple[List[Dict[str, Any]], List
     partner_cuit_to_id = (catalog or {}).get("partner_cuit_to_id") or {}
 
     # MySQL: sudataco_facturia.process
-    row = get_process(int(process_number))
+    row = get_process(int(process_number), empresa=empresa)
     if not row:
         return ([], [])
 
@@ -1275,15 +1275,27 @@ def get_padron_schema():
 
 
 @app.get("/api/proceso/{process_number}")
-def get_proceso(process_number: str):
-    filas, product_options = _parse_process_json(process_number)
+def get_proceso(process_number: str, empresa: Optional[str] = None):
+    try:
+        filas, product_options = _parse_process_json(process_number, empresa=empresa)
+    except MySQLUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ProcessTableError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
     if not filas:
-        return {"ok": True, "process_number": process_number, "rows": [], "message": "Sin filas para ese proceso."}
+        return {
+            "ok": True,
+            "process_number": process_number,
+            "empresa": empresa,
+            "rows": [],
+            "message": "Sin filas para ese proceso.",
+        }
     out_rows = _build_output_rows(filas)
 
     return {
         "ok": True,
         "process_number": process_number,
+        "empresa": empresa,
         "rows": out_rows,
         "product_options": product_options,
         "debug": {

@@ -5,12 +5,20 @@ import { ensureOtroImpuestoColumns, currentMaxOtroImpuestoN } from "./rows.js";
 import { renderTable } from "./table.js";
 import { validateRows } from "./validation.js";
 import { collapseGroupAtRow } from "./singleLine.js";
+import { getUrlParams } from "./utils.js";
 
 const state = createState();
 const refs = getDomRefs();
 
 function setStatusBound(msg, kind) {
   setStatus(refs.statusEl, msg, kind);
+}
+
+function summaryText(refs, rowCount) {
+  const empresa = refs.companyNumberEl?.value?.trim() || "";
+  const proceso = refs.processNumberEl.value.trim();
+  if (empresa) return `Filas: ${rowCount} · Empresa: ${empresa} · Proceso: ${proceso}`;
+  return `Filas: ${rowCount} · Proceso: ${proceso}`;
 }
 
 async function init() {
@@ -34,7 +42,7 @@ async function init() {
     onRerender: () => renderNow(),
     onDeleteRow: (idx) => {
       state.rows.splice(idx, 1);
-      refs.summaryEl.textContent = `Filas: ${state.rows.length} · Proceso: ${refs.processNumberEl.value.trim()}`;
+      refs.summaryEl.textContent = summaryText(refs, state.rows.length);
       refs.btnAddOtroImpuesto.disabled = !(state.rows && state.rows.length);
       refs.btnDescargar.disabled = !(state.rows && state.rows.length);
       if (refs.btnOdooImportTest) {
@@ -49,7 +57,7 @@ async function init() {
       if (!window.confirm(msg)) return;
       const res = collapseGroupAtRow(state.rows, rIdx, state);
       if (!res.changed) return;
-      refs.summaryEl.textContent = `Filas: ${state.rows.length} · Proceso: ${refs.processNumberEl.value.trim()}`;
+      refs.summaryEl.textContent = summaryText(refs, state.rows.length);
       renderNow();
     },
   };
@@ -67,6 +75,17 @@ async function init() {
   refs.processNumberEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") buscarProceso(state, refs, setStatusBound, handlers);
   });
+
+  const urlParams = getUrlParams();
+  if (urlParams.empresa && refs.companyNumberEl) {
+    refs.companyNumberEl.value = urlParams.empresa;
+  }
+  if (urlParams.proceso) {
+    refs.processNumberEl.value = urlParams.proceso;
+    if (refs.btnBuscar && !refs.btnBuscar.disabled) {
+      await buscarProceso(state, refs, setStatusBound, handlers, urlParams);
+    }
+  }
 }
 
 if (document.readyState === "loading") {

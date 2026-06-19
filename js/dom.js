@@ -10,6 +10,7 @@ export function getDomRefs() {
     btnDescargar: el("btnDescargar"),
     btnAddOtroImpuesto: el("btnAddOtroImpuesto"),
     totalGeneralEl: el("totalGeneral"),
+    companyNumberEl: el("companyNumber"),
     processNumberEl: el("processNumber"),
   };
 }

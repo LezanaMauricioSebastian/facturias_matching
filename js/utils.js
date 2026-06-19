@@ -244,3 +244,24 @@ export function formatMoney(n) {
     return "$" + (Math.round(n * 100) / 100).toFixed(2);
   }
 }
+
+const URL_PARAM_ALIASES = {
+  empresa: ["empresa", "nro_empresa", "nroEmpresa", "company"],
+  proceso: ["proceso", "nro_proceso", "nroProceso", "process", "process_number"],
+};
+
+/** Lee nro empresa y nro proceso desde query string (?empresa=1&proceso=185). */
+export function getUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  const out = { empresa: "", proceso: "" };
+  for (const [key, aliases] of Object.entries(URL_PARAM_ALIASES)) {
+    for (const alias of aliases) {
+      const v = params.get(alias);
+      if (v != null && String(v).trim() !== "") {
+        out[key] = String(v).trim();
+        break;
+      }
+    }
+  }
+  return out;
+}

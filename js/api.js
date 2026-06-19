@@ -1,9 +1,4 @@
-import {
-  mergeProductOptions,
-  normalizeDateFieldsInRows,
-  normalizeIvaPctValue,
-  normalizeNumericFieldsInRows,
-} from "./utils.js";
+import { mergeProductOptions, normalizeDateFieldsInRows, normalizeIvaPctValue, normalizeNumericFieldsInRows } from "./utils.js";
 import { migrateRowKeys, propagateAccountDown, ensureOtroImpuestoColumns } from "./rows.js";
 import { renderTable } from "./table.js";
 
@@ -35,8 +30,9 @@ export async function loadMetaAndOptions(state) {
   }
 }
 
-export async function buscarProceso(state, refs, setStatusFn, handlers) {
-  const pn = refs.processNumberEl.value.trim();
+export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverrides = {}) {
+  const empresa = String(urlOverrides.empresa ?? refs.companyNumberEl?.value ?? "").trim();
+  const pn = String(urlOverrides.proceso ?? refs.processNumberEl?.value ?? "").trim();
   if (!pn) return;
   setStatusFn("Buscando proceso y ejecutando matching…");
   refs.btnBuscar.disabled = true;
@@ -45,7 +41,9 @@ export async function buscarProceso(state, refs, setStatusFn, handlers) {
   state.padronLoading = false;
   state.productosLoading = false;
   try {
-    const res = await fetch(`/api/proceso/${encodeURIComponent(pn)}`);
+    const qs = empresa ? `?empresa=${encodeURIComponent(empresa)}` : "";
+    const apiUrl = `/api/proceso/${encodeURIComponent(pn)}${qs}`;
+    const res = await fetch(apiUrl);
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || "Error desconocido");
     state.rows = data.rows || [];
@@ -63,7 +61,9 @@ export async function buscarProceso(state, refs, setStatusFn, handlers) {
       state.productosLoading = true;
     }
 
-    refs.summaryEl.textContent = `Filas: ${state.rows.length} · Proceso: ${pn}`;
+    refs.summaryEl.textContent = empresa
+      ? `Filas: ${state.rows.length} · Empresa: ${empresa} · Proceso: ${pn}`
+      : `Filas: ${state.rows.length} · Proceso: ${pn}`;
     let safeHandlers = handlers;
     if (!safeHandlers) {
       safeHandlers = {
