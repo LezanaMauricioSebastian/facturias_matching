@@ -8,7 +8,6 @@ export function getDomRefs() {
     btnBuscar: el("btnBuscar"),
     btnOdooImportTest: el("btnOdooImportTest"),
     btnDescargar: el("btnDescargar"),
-    btnAddOtroImpuesto: el("btnAddOtroImpuesto"),
     totalGeneralEl: el("totalGeneral"),
     companyNumberEl: el("companyNumber"),
     processNumberEl: el("processNumber"),

@@ -215,3 +215,33 @@ select.selectLoading {
   font-weight: 600;
 }
 
+.headerActionCell {
+  text-align: center;
+  vertical-align: bottom;
+  white-space: normal;
+}
+
+.headerActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 6px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.headerActionLabel {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  line-height: 1.25;
+  max-width: 92px;
+}
+
+.headerActionBodyCell {
+  background: rgba(241, 245, 249, 0.35);
+}
+

@@ -1,5 +1,10 @@
 import { mergeEtiquetaOptions, mergeProductOptions, normalizeDateFieldsInRows, normalizeIvaPctValue, normalizeNumericFieldsInRows } from "./utils.js";
-import { migrateRowKeys, propagateAccountDown, ensureOtroImpuestoColumns } from "./rows.js";
+import {
+  migrateRowKeys,
+  propagateAccountDown,
+  ensureOtroImpuestoColumns,
+  ensureAddOtroImpuestoActionColumn,
+} from "./rows.js";
 import { renderTable } from "./table.js";
 
 const SOLO_ENCABEZADO_KEY = "__solo_encabezado";
@@ -23,6 +28,7 @@ export async function loadMetaAndOptions(state) {
   state.output_headers = meta.output_headers || [];
   state.columns = [...state.columns, { key: "__total_linea", label: "Total", type: "computed" }];
   ensureOtroImpuestoColumns(state, 1);
+  ensureAddOtroImpuestoActionColumn(state);
   ensureSoloEncabezadoColumn(state);
   state.options = { ...state.options, ...(options || {}) };
   if (Array.isArray(state.options.iva_options)) {
@@ -51,8 +57,6 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
     normalizeDateFieldsInRows(state);
     normalizeNumericFieldsInRows(state);
     propagateAccountDown(state.rows);
-
-    refs.btnAddOtroImpuesto.disabled = !(state.rows && state.rows.length);
 
     const etiquetaOpts = data.etiqueta_options ?? data.product_options;
     if (Array.isArray(etiquetaOpts) && etiquetaOpts.length) {
@@ -103,7 +107,6 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
 
     if (state.rows.length === 0) {
       setStatusFn("Sin filas para ese proceso.", "bad");
-      refs.btnAddOtroImpuesto.disabled = true;
     } else {
       const pm = data.purchase_matching || {};
       const pmPart =
@@ -131,7 +134,6 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
       };
     }
     renderTable(state, refs, safeHandlers);
-    refs.btnAddOtroImpuesto.disabled = true;
     if (refs.btnOdooImportTest) refs.btnOdooImportTest.disabled = true;
   } finally {
     refs.btnBuscar.disabled = false;

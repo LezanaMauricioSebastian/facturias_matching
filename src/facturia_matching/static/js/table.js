@@ -1,4 +1,4 @@
-import { computeRowTotal, applyProveedorToCuit } from "./rows.js";
+import { computeRowTotal, applyProveedorToCuit, ADD_OTRO_IMPUESTO_KEY } from "./rows.js";
 import {
   formatMoney,
   formatNumericForDisplay,
@@ -177,17 +177,30 @@ export function renderTable(state, refs, handlers) {
     __um_proveedor: 110,
     __um_empresa: 110,
     __oc_match_note: 220,
+    [ADD_OTRO_IMPUESTO_KEY]: 130,
   };
   for (const c of cols) {
     if (c.key === "otros_impuestos" || /^otros_impuestos_\d+$/.test(c.key)) colMinWidth[c.key] = 240;
     if (c.key === "otros_impuestos_monto" || /^otros_impuestos_\d+_monto$/.test(c.key)) colMinWidth[c.key] = 200;
   }
 
+  const actionDisabled = !(state.rows && state.rows.length);
+
   const html = [];
   html.push("<table><thead><tr>");
   for (const c of cols) {
     const mw = colMinWidth[c.key] || colMinWidth[c.label];
     const style = mw ? ` style="min-width:${mw}px"` : "";
+    if (c.type === "header_action" && c.key === ADD_OTRO_IMPUESTO_KEY) {
+      const dis = actionDisabled ? " disabled" : "";
+      html.push(
+        `<th class="headerActionCell"${style}>` +
+          `<button type="button" class="headerActionBtn secondary" data-add-otro-impuesto${dis} title="Agregar otro impuesto">+</button>` +
+          `<span class="headerActionLabel">${c.label}</span>` +
+          `</th>`
+      );
+      continue;
+    }
     html.push(`<th${style}>${c.label}</th>`);
   }
   html.push(`<th style="min-width:120px">Acciones</th>`);
@@ -202,7 +215,9 @@ export function renderTable(state, refs, handlers) {
       const val = (rawVal ?? "").toString();
       const mw = colMinWidth[key] || colMinWidth[c.label];
       const tdStyle = mw ? ` style="min-width:${mw}px"` : "";
-      if (c.type === "checkbox") {
+      if (c.type === "header_action") {
+        html.push(`<td class="headerActionBodyCell"${tdStyle}></td>`);
+      } else if (c.type === "checkbox") {
         const showCb =
           isFirstRowOfComprobante(state.rows, rIdx) && comprobanteHasMultipleLines(state.rows, rIdx);
         if (showCb) {

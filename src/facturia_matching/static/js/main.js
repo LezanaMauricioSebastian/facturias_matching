@@ -1,7 +1,7 @@
 import { createState } from "./state.js";
 import { getDomRefs, setStatus } from "./dom.js";
 import { loadMetaAndOptions, buscarProceso, descargarCsv, importarOdooTest } from "./api.js";
-import { ensureOtroImpuestoColumns, currentMaxOtroImpuestoN } from "./rows.js";
+import { addOtroImpuesto } from "./rows.js";
 import { renderTable } from "./table.js";
 import { validateRows } from "./validation.js";
 import { collapseGroupAtRow } from "./singleLine.js";
@@ -41,11 +41,15 @@ async function init() {
   };
 
   const handlers = {
+    onAddOtroImpuesto: () => {
+      if (!(state.rows && state.rows.length)) return;
+      addOtroImpuesto(state);
+      renderNow();
+    },
     onRerender: () => renderNow(),
     onDeleteRow: (idx) => {
       state.rows.splice(idx, 1);
       refs.summaryEl.textContent = summaryText(refs, state.rows.length);
-      refs.btnAddOtroImpuesto.disabled = !(state.rows && state.rows.length);
       refs.btnDescargar.disabled = !(state.rows && state.rows.length);
       if (refs.btnOdooImportTest) {
         refs.btnOdooImportTest.disabled = !(state.rows && state.rows.length);
@@ -69,10 +73,10 @@ async function init() {
   refs.btnOdooImportTest.addEventListener("click", () =>
     importarOdooTest(state, setStatusBound, validateRows, refs)
   );
-  refs.btnAddOtroImpuesto.addEventListener("click", () => {
-    const next = currentMaxOtroImpuestoN(state.columns) + 1;
-    ensureOtroImpuestoColumns(state, next);
-    renderNow();
+  refs.tableWrap.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-add-otro-impuesto]");
+    if (!btn || btn.disabled) return;
+    handlers.onAddOtroImpuesto();
   });
   refs.processNumberEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") buscarProceso(state, refs, setStatusBound, handlers);
