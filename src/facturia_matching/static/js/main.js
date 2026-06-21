@@ -5,7 +5,7 @@ import { ensureOtroImpuestoColumns, currentMaxOtroImpuestoN } from "./rows.js";
 import { renderTable } from "./table.js";
 import { validateRows } from "./validation.js";
 import { collapseGroupAtRow } from "./singleLine.js";
-import { getUrlParams } from "./utils.js";
+import { getUrlParams, isEmbedMode } from "./utils.js";
 
 const state = createState();
 const refs = getDomRefs();
@@ -20,6 +20,10 @@ function summaryText(refs, rowCount) {
 }
 
 async function init() {
+  if (isEmbedMode()) {
+    document.body.classList.add("embed-mode");
+  }
+
   setStatusBound("Cargando configuración…");
   refs.btnBuscar.disabled = true;
   refs.btnDescargar.disabled = true;

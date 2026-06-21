@@ -299,6 +299,20 @@ const URL_PARAM_ALIASES = {
   proceso: ["proceso", "nro_proceso", "nroProceso", "process", "process_number"],
 };
 
+/** true si la UI va embebida (iframe o ?embed=1). ?embed=0 fuerza mostrar el buscador. */
+export function isEmbedMode() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("embed")) {
+    const v = (params.get("embed") || "1").trim().toLowerCase();
+    return v !== "0" && v !== "false" && v !== "no";
+  }
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 /** Lee nro empresa y nro proceso desde query string (?empresa=1&proceso=185). */
 export function getUrlParams() {
   const params = new URLSearchParams(window.location.search);

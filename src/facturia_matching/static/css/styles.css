@@ -24,7 +24,11 @@ body {
 .row { display:flex; gap:12px; align-items:end; flex-wrap:wrap; }
 .controlsRow { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
 .controlsRow .field { display:flex; flex-direction:column; }
+.searchBar { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .btnGroup { display:flex; gap:10px; align-items:flex-end; }
+
+body.embed-mode .searchBar { display: none; }
+body.embed-mode .wrap { padding-top: 14px; padding-bottom: 20px; }
 
 .card {
   background: var(--card);

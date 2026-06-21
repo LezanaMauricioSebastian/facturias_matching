@@ -12,12 +12,14 @@
         <div class="card">
           <div class="title">CSV generado desde datos consultados y editados, listo para usar en Odoo.</div>
           <div class="controlsRow">
-            <div class="field">
-              <label>Número de proceso</label>
-              <input id="processNumber" type="text" placeholder="Ej: 185">
+            <div class="searchBar" id="searchBar">
+              <div class="field">
+                <label>Número de proceso</label>
+                <input id="processNumber" type="text" placeholder="Ej: 185">
+              </div>
+              <button id="btnBuscar" type="button">Buscar</button>
             </div>
             <div class="btnGroup">
-              <button id="btnBuscar" type="button">Buscar</button>
               <button id="btnOdooImportTest" class="secondary" type="button" disabled>Importar a Odoo TEST</button>
               <button id="btnAddOtroImpuesto" class="secondary" type="button" disabled>Agregar otro impuesto</button>
               <button id="btnDescargar" class="downloadBtn" type="button" disabled>
