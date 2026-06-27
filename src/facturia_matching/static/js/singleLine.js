@@ -71,6 +71,8 @@ export function collapseGroupAtRow(rows, rIdx, state = null) {
   delete first["__item_codigo"];
   delete first["__oc_line_id"];
   delete first["__oc_order_id"];
+  delete first["__selected_oc_order_id"];
+  delete first["__selected_oc_name"];
   delete first["__oc_line_name"];
   delete first["__oc_match_score"];
   delete first["__qty_pedido"];
@@ -103,7 +105,10 @@ export function collapseGroupAtRow(rows, rIdx, state = null) {
       if (m) n = parseInt(m[1], 10);
       else if (mk !== "otros_impuestos_monto") continue;
       if (state) ensureOtroImpuestoColumns(state, n);
-      first[mk] = normalizeNumericValue(String(monto), mk);
+      const prevMonto = first[mk];
+      if (!String(prevMonto ?? "").trim()) {
+        first[mk] = normalizeNumericValue(String(monto), mk);
+      }
     }
   }
 

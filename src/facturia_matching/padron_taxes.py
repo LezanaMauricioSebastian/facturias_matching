@@ -3,6 +3,7 @@ Padrón de impuestos desde view_padron_facturia_actualizado (ids_impuestos / imp
 El padrón histórico principal (rubro, diario, cuenta) sigue en DB_TABLE_NAME (vista vieja).
 """
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -176,6 +177,77 @@ def _label_key(name: str) -> str:
     return _normalize(name).upper()
 
 
+def _ascii_upper(s: str) -> str:
+    repl = str.maketrans("ÁÉÍÓÚÜÑ", "AEIOUUN")
+    return s.upper().translate(repl)
+
+
+# Jurisdicción en etiqueta UI → sufijo en account.tax Odoo (ej. "P. IIBB CABA").
+_IIBB_JURISDICTION_TO_ODOO_SUFFIX: Dict[str, str] = {
+    "CABA": "CABA",
+    "ARBA": "BA",
+    "CATAMARCA": "CTS",
+    "CORDOBA": "CBA",
+    "CORRIENTES": "C",
+    "ENTRE RIOS": "ER",
+    "JUJUY": "J",
+    "MENDOZA": "MZA",
+    "LA RIOJA": "LR",
+    "SALTA": "S",
+    "SAN JUAN": "SJ",
+    "SAN LUIS": "SL",
+    "SANTA FE": "SF",
+    "SANTIAGO DEL ESTERO": "SE",
+    "TUCUMAN": "T",
+    "CHACO": "CHO",
+    "CHUBUT": "CHT",
+    "FORMOSA": "F",
+    "MISIONES": "MS",
+    "NEUQUEN": "N",
+    "LA PAMPA": "LP",
+    "RIO NEGRO": "RN",
+    "SANTA CRUZ": "SC",
+    "TIERRA DEL FUEGO": "TAIS",
+}
+
+
+def _extract_iibb_jurisdiction(label_key: str) -> Optional[str]:
+    """Extrae jurisdicción de etiquetas UI o abreviadas (ej. IIBB CABA sufrida)."""
+    key = _ascii_upper(label_key)
+    patterns = (
+        r"^PERCEPCION IIBB (.+?) (?:SUFRIDA|APLICADA)$",
+        r"^IIBB (.+?) (?:SUFRIDA|APLICADA)$",
+        r"^IIBB (.+)$",
+    )
+    for pattern in patterns:
+        m = re.match(pattern, key)
+        if m:
+            juris = _ascii_upper(_normalize(m.group(1)))
+            if juris:
+                return juris
+    return None
+
+
+def _resolve_iibb_label_to_id(label: str, by_name: Dict[str, int]) -> Optional[int]:
+    key = _label_key(label)
+    if "IIBB" not in key:
+        return None
+    juris = _extract_iibb_jurisdiction(key)
+    if not juris:
+        return None
+    suffix = _IIBB_JURISDICTION_TO_ODOO_SUFFIX.get(juris)
+    if not suffix:
+        return None
+    odoo_key = _label_key(f"P. IIBB {suffix}")
+    if odoo_key in by_name:
+        return by_name[odoo_key]
+    iibb_suffix = f"IIBB {suffix}"
+    for tax_key, tid in by_name.items():
+        if "IIBB" in tax_key and tax_key.endswith(iibb_suffix):
+            return tid
+    return None
+
+
 def get_tax_id_by_name() -> Dict[str, int]:
     global _TAX_ID_BY_NAME
     if _TAX_ID_BY_NAME is not None:
@@ -192,7 +264,7 @@ def get_tax_id_by_name() -> Dict[str, int]:
 def resolve_tax_label_to_id(label: str, *, min_score: float = 96.0) -> Optional[int]:
     """
     Resuelve etiqueta UI (ej. Percepción IIBB CABA Sufrida) a account.tax id.
-    Percepciones IIBB: solo coincidencia exacta (evita mapear La Rioja → ARBA por fuzzy).
+    Percepciones IIBB: match por jurisdicción contra nombres Odoo (ej. P. IIBB CABA).
     Otros impuestos: fuzzy estricto si no hay match exacto.
     """
     key = _label_key(label)
@@ -203,7 +275,7 @@ def resolve_tax_label_to_id(label: str, *, min_score: float = 96.0) -> Optional[
         return by_name[key]
 
     if "IIBB" in key or "PERCEPCI" in key:
-        return None
+        return _resolve_iibb_label_to_id(label, by_name)
 
     choices = list(by_name.keys())
     if not choices:
@@ -263,7 +335,7 @@ def get_tax_name_by_id() -> Dict[int, str]:
     if _TAX_NAME_BY_ID is not None:
         return _TAX_NAME_BY_ID
     try:
-        from odoo_api import get_odoo_uid, is_odoo_configured, odoo_search_read
+        from facturia_matching.odoo_api import get_odoo_uid, is_odoo_configured, odoo_search_read
 
         if not is_odoo_configured() or not get_odoo_uid():
             _TAX_NAME_BY_ID = {}
@@ -447,7 +519,8 @@ def build_csv_tax_ids_dot_id(row: Dict[str, Any]) -> str:
         seen.add(primary)
         ids.append(primary)
 
-    for t in build_csv_additional_taxes(row):
+    additional = build_csv_additional_taxes(row)
+    for t in additional:
         if t.isdigit() and t not in seen:
             seen.add(t)
             ids.append(t)

@@ -19,6 +19,16 @@ export function createState() {
     output_headers: [],
     rowTotals: [],
     domRefs: { totalCells: [], ivaInputs: [] },
+    processNumber: "",
+    empresa: "",
+    source: "",
+    autoSaveTimer: null,
+    saveInFlight: false,
+    dirty: false,
+    skipAutoSave: false,
+    saveStatus: "",
+    odooProfile: "default",
+    purchaseMatching: {},
   };
 }
 

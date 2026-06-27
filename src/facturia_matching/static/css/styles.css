@@ -241,7 +241,162 @@ select.selectLoading {
   max-width: 92px;
 }
 
+.headerTaxLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 6px;
+}
+
+.headerRemoveTaxBtn {
+  min-width: 32px;
+  padding: 4px 8px;
+  font-size: 16px;
+}
+
 .headerActionBodyCell {
   background: rgba(241, 245, 249, 0.35);
+}
+
+.ocPickerBar {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.ocPickerBarInner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ocPickerLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ocPickerBtn {
+  min-width: auto;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+.ocPickerDialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: min(920px, 96vw);
+  width: 100%;
+}
+.ocPickerDialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+.ocPickerDialogPanel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+.ocPickerDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.ocPickerDialogTitle {
+  margin: 0;
+  font-size: 16px;
+}
+.ocPickerClose {
+  min-width: 36px;
+  padding: 4px 10px;
+  font-size: 22px;
+  line-height: 1;
+}
+.ocPickerDialogBody {
+  padding: 12px 16px 16px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.ocCandidateList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ocCandidate {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ocCandidate.isSelected {
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+.ocCandidateToggle {
+  width: 100%;
+  text-align: left;
+  background: #f8fafc;
+  color: var(--text);
+  border: none;
+  border-radius: 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ocCandidateToggle:hover {
+  background: #eef2ff;
+}
+.ocCandidateTitle {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ocCandidateMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ocCandidateBody {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--line);
+}
+.ocLinesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.ocLinesTable th,
+.ocLinesTable td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.ocLinesTable th {
+  background: var(--head);
+  text-align: left;
+}
+.ocLinesTable td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+.ocLineMatch {
+  display: block;
+  font-size: 11px;
+}
+.ocLineMatch.muted {
+  color: var(--muted);
+}
+.ocSelectBtn {
+  min-width: auto;
+}
+.ocPickerEmpty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 

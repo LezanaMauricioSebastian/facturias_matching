@@ -23,8 +23,8 @@ def _normalize_label(s: Any) -> str:
     return " ".join(str(s or "").strip().split()).upper()
 
 
-def build_name_to_id_map(items: List[Dict[str, Any]], name_key: str = "name") -> Dict[str, int]:
-    out: Dict[str, int] = {}
+def build_name_to_id_map(items: List[Dict[str, Any]], name_key: str = "name") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
     for it in items:
         iid = it.get("id")
         name = it.get(name_key) or it.get("name")
@@ -32,7 +32,7 @@ def build_name_to_id_map(items: List[Dict[str, Any]], name_key: str = "name") ->
             continue
         key = _normalize_label(name)
         if key and key not in out:
-            out[key] = int(iid)
+            out[key] = _catalog_id_value(iid)
     return out
 
 
@@ -55,6 +55,30 @@ def resolve_id_by_name(
 
 def _digits_only(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
+
+
+def _catalog_id_value(raw: Any) -> Any:
+    """Id de catálogo: entero Odoo o string (p. ej. rubro del padrón sin modelo x_rubros)."""
+    if isinstance(raw, int):
+        return raw
+    s = str(raw or "").strip()
+    if s.isdigit():
+        return int(s)
+    return s
+
+
+def _padron_rubro_options() -> List[Dict[str, Any]]:
+    """Rubros del padrón Postgres cuando el tenant no tiene modelo x_rubros (p. ej. Aliare sin addon)."""
+    try:
+        from facturia_matching.padron import get_padron_cached
+
+        padron = get_padron_cached() or []
+        names = sorted(
+            {_normalize_label(r.get("rubro")) for r in padron if _normalize_label(r.get("rubro"))}
+        )
+        return [{"id": name, "name": name} for name in names]
+    except Exception:
+        return []
 
 
 def _score_doc_type_candidate(name_u: str, code_u: str, letter: str) -> int:
@@ -174,7 +198,7 @@ def resolve_partner_id(
         if not nm:
             continue
         choices.append(nm)
-        id_by_name[nm] = int(p["id"])
+        id_by_name[nm] = _catalog_id_value(p["id"])
 
     best = rf_process.extractOne(nombre_n, choices, scorer=fuzz.WRatio)
     if not best:
@@ -211,7 +235,7 @@ def resolve_id_fuzzy(
         if not nm:
             continue
         choices.append(nm)
-        id_by_name[nm] = int(it["id"])
+        id_by_name[nm] = _catalog_id_value(it["id"])
 
     best = rf_process.extractOne(nombre_n, choices, scorer=fuzz.WRatio)
     if not best or float(best[1]) < min_score:
@@ -386,8 +410,15 @@ def _fetch_catalog_raw() -> Dict[str, List[Dict[str, Any]]]:
         except Exception:
             continue
     if not rubros:
-        rows = odoo_search_read("x_rubros", [], ["id", "x_name"], limit=500)
-        rubros = [{"id": r["id"], "name": r.get("x_name")} for r in rows if r.get("id")]
+        try:
+            rows = odoo_search_read("x_rubros", [], ["id", "x_name"], limit=500)
+            rubros = [{"id": r["id"], "name": r.get("x_name")} for r in rows if r.get("id")]
+        except Exception:
+            pass
+    if not rubros:
+        rubros = _padron_rubro_options()
+        if rubros:
+            logger.info("Rubros: usando padrón Postgres (%d); instalá facturia_x_rubros en Odoo para IDs reales.", len(rubros))
 
     doc_types = get_odoo_document_types()
     products = odoo_search_read(
@@ -408,11 +439,12 @@ def _fetch_catalog_raw() -> Dict[str, List[Dict[str, Any]]]:
             name = (r.get("name") or r.get(extra or "") or "").strip()
             if not name:
                 continue
-            key = (int(iid), name)
+            norm_id = _catalog_id_value(iid)
+            key = (str(norm_id), name)
             if key in seen:
                 continue
             seen.add(key)
-            row: Dict[str, Any] = {"id": int(iid), "name": name}
+            row: Dict[str, Any] = {"id": norm_id, "name": name}
             if r.get("code"):
                 row["code"] = str(r.get("code")).strip()
             if r.get("vat"):

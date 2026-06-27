@@ -11,6 +11,7 @@ import {
   optionLabel,
   optionValue,
   findOptionLabel,
+  otrosImpuestoKey,
 } from "./utils.js";
 import { comprobanteDigitUiHint } from "./validation.js";
 import { comprobanteHasMultipleLines, isFirstRowOfComprobante } from "./singleLine.js";
@@ -22,10 +23,21 @@ import {
 
 const DOC_NUM_KEY = "l10n_latam_document_number";
 
+function otroImpuestoNFromNameKey(key) {
+  if (key === "otros_impuestos") return 1;
+  const m = /^otros_impuestos_(\d+)$/.exec(key);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 function handleSelectionChange(state, r, k, ctx) {
   const { tableWrap, totalGeneralEl, handlers } = ctx;
   if (k === "partner_id") {
     applyProveedorToCuit(state, r);
+    if (state.purchaseMatching?.enabled && handlers.onRematchPurchase) {
+      state.skipAutoSave = true;
+      handlers.onRematchPurchase(r);
+      return;
+    }
     handlers.onRerender?.();
     return;
   }
@@ -195,8 +207,19 @@ export function renderTable(state, refs, handlers) {
       const dis = actionDisabled ? " disabled" : "";
       html.push(
         `<th class="headerActionCell"${style}>` +
-          `<button type="button" class="headerActionBtn secondary" data-add-otro-impuesto${dis} title="Agregar otro impuesto">+</button>` +
+          `<button type="button" class="headerActionBtn secondary" data-add-otro-impuesto${dis} title="Agregar impuesto">+</button>` +
           `<span class="headerActionLabel">${c.label}</span>` +
+          `</th>`
+      );
+      continue;
+    }
+    const taxN = otroImpuestoNFromNameKey(c.key);
+    if (taxN >= 2 && c.type === "selection" && c.key === otrosImpuestoKey(taxN)) {
+      const dis = actionDisabled ? " disabled" : "";
+      html.push(
+        `<th class="headerActionCell"${style}>` +
+          `<span class="headerTaxLabel">${c.label}</span>` +
+          `<button type="button" class="headerActionBtn secondary headerRemoveTaxBtn" data-remove-otro-impuesto="${taxN}"${dis} title="Quitar impuesto">×</button>` +
           `</th>`
       );
       continue;
@@ -316,6 +339,7 @@ export function renderTable(state, refs, handlers) {
         updateRowTotals(state, totalGeneralEl, r);
       }
       if (k === DOC_NUM_KEY) refreshComprobanteHints(tableWrap, state);
+      handlers.onAutoSave?.();
     });
     inp.addEventListener("blur", (e) => {
       const r = parseInt(e.target.getAttribute("data-r"), 10);
@@ -334,6 +358,7 @@ export function renderTable(state, refs, handlers) {
       if (isTotalAffectingKey(k)) {
         updateRowTotals(state, totalGeneralEl, r);
       }
+      handlers.onAutoSave?.();
     });
   });
 
@@ -344,12 +369,23 @@ export function renderTable(state, refs, handlers) {
       const k = e.target.getAttribute("data-k");
       state.rows[r][k] = e.target.value;
       handleSelectionChange(state, r, k, { tableWrap, totalGeneralEl, handlers });
+      handlers.onAutoSave?.();
     });
   });
 
   const selectionCtx = { tableWrap, totalGeneralEl, handlers };
   attachComboboxes(tableWrap, state, (r, k) => {
     handleSelectionChange(state, r, k, selectionCtx);
+    handlers.onAutoSave?.();
+  });
+
+  tableWrap.querySelectorAll("button[data-remove-otro-impuesto]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      if (e.currentTarget.disabled) return;
+      const n = parseInt(e.currentTarget.getAttribute("data-remove-otro-impuesto"), 10);
+      if (!Number.isFinite(n) || n < 2) return;
+      handlers.onRemoveOtroImpuesto?.(n);
+    });
   });
 
   tableWrap.querySelectorAll("button[data-del-r]").forEach((btn) => {

@@ -32,6 +32,7 @@ __all__ = [
     "options_base_payload",
     "options_from_odoo_catalog",
     "options_from_postgres",
+    "otros_impuestos_options_from_odoo",
     "pg_product_options",
 ]
 
@@ -81,6 +82,31 @@ def pg_sample_strings(col: Optional[str], limit: int = 5000) -> List[str]:
 
 def strings_to_legacy_options(names: List[str]) -> List[Dict[str, Any]]:
     return [{"id": n, "name": n} for n in names if n]
+
+
+def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
+    """
+    Filtra OTROS_IMPUESTOS_OPTIONS a impuestos purchase que existen en Odoo.
+    Un label por tax id; prefiere *Sufrida* cuando Sufrida/Aplicada comparten id.
+    """
+    from facturia_matching.padron_taxes import get_tax_name_by_id, resolve_tax_label_to_id
+
+    if not get_tax_name_by_id():
+        return None
+
+    by_tax_id: Dict[int, str] = {}
+    for label in OTROS_IMPUESTOS_OPTIONS:
+        tid = resolve_tax_label_to_id(label)
+        if tid is None:
+            continue
+        if tid not in by_tax_id or "Sufrida" in label:
+            by_tax_id[tid] = label
+
+    if not by_tax_id:
+        return None
+
+    chosen = set(by_tax_id.values())
+    return [label for label in OTROS_IMPUESTOS_OPTIONS if label in chosen]
 
 
 def options_base_payload() -> Dict[str, Any]:
@@ -202,6 +228,10 @@ def get_options(padron: bool = False) -> Dict[str, Any]:
             etiquetas_db = []
         if etiquetas_db:
             out["etiquetas"] = etiquetas_db
+
+    filtered_otros = otros_impuestos_options_from_odoo()
+    if filtered_otros is not None:
+        out["otros_impuestos_options"] = filtered_otros
 
     return out
 

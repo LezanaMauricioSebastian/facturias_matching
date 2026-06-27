@@ -115,7 +115,7 @@ export function ensureAddOtroImpuestoActionColumn(state) {
   }
   state.columns.splice(insertAt, 0, {
     key: ADD_OTRO_IMPUESTO_KEY,
-    label: "Agregar otro impuesto",
+    label: "Agregar impuesto",
     type: "header_action",
     editable: false,
   });
@@ -144,6 +144,35 @@ export function currentMaxOtroImpuestoN(columns) {
   return maxN;
 }
 
+export function removeOtroImpuesto(state, n) {
+  if (n < 2) return false;
+  const nameKey = otrosImpuestoKey(n);
+  const montoKey = otrosImpuestoMontoKey(n);
+  state.columns = state.columns.filter((c) => c.key !== nameKey && c.key !== montoKey);
+  for (const r of state.rows) {
+    delete r[nameKey];
+    delete r[montoKey];
+  }
+  ensureAddOtroImpuestoActionColumn(state);
+  return true;
+}
+
+export function resetExtraOtroImpuestoColumns(state) {
+  const maxN = currentMaxOtroImpuestoN(state.columns);
+  for (let n = maxN; n >= 2; n--) {
+    removeOtroImpuesto(state, n);
+  }
+}
+
+export function restoreExtraOtroImpuestoColumns(state, indices) {
+  if (!Array.isArray(indices)) return;
+  for (const n of indices) {
+    const num = parseInt(n, 10);
+    if (num >= 2) ensureOtroImpuestoColumns(state, num);
+  }
+  ensureAddOtroImpuestoActionColumn(state);
+}
+
 export function ensureOtroImpuestoColumns(state, n) {
   const nameKey = otrosImpuestoKey(n);
   const montoKey = otrosImpuestoMontoKey(n);
@@ -152,13 +181,14 @@ export function ensureOtroImpuestoColumns(state, n) {
   const actionIdx = state.columns.findIndex((c) => c.key === ADD_OTRO_IMPUESTO_KEY);
   const insertAt =
     actionIdx >= 0 ? actionIdx : findAddOtroImpuestoInsertAt(state.columns);
-  if (!hasName) {
-    const label = n === 1 ? "Otros Impuestos" : `Otros Impuestos (${n})`;
-    state.columns.splice(insertAt, 0, { key: nameKey, label, type: "selection", options_key: "otros_impuestos_options" });
-  }
   if (!hasMonto) {
     const label = n === 1 ? "Monto Otros Impuestos" : `Monto Otros Impuestos (${n})`;
-    state.columns.splice(insertAt + (hasName ? 0 : 1), 0, { key: montoKey, label, type: "numeric" });
+    state.columns.splice(insertAt, 0, { key: montoKey, label, type: "numeric" });
+  }
+  if (!hasName) {
+    const label = n === 1 ? "Otros Impuestos" : `Otros Impuestos (${n})`;
+    const nameInsertAt = insertAt + (hasMonto ? 1 : 0);
+    state.columns.splice(nameInsertAt, 0, { key: nameKey, label, type: "selection", options_key: "otros_impuestos_options" });
   }
   for (const r of state.rows) {
     if (r[nameKey] == null) r[nameKey] = "";

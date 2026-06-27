@@ -60,6 +60,7 @@ pip install -e .
 python scripts/compare_padron_views.py
 python scripts/consultar_odoo_catalog.py
 python scripts/padron_proveedores_diff.py
+python scripts/build_padron_from_odoo.py   # padrón desde facturas Odoo (sin vista Postgres)
 ```
 
 ## Estructura del proyecto

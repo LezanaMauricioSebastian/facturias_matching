@@ -28,6 +28,7 @@ OUTPUT_HEADERS = [
     "invoice_line_ids/quantity",
     "invoice_line_ids/price_unit",
     "iva_monto",
+    "iva_pct",
     "otros_impuestos_monto",
 ]
 
@@ -99,11 +100,12 @@ OTROS_IMPUESTOS_OPTIONS = [
 DOCUMENT_TYPES_OPTIONS = ["FACTURAS A", "FACTURAS B", "FACTURAS C", "OC-X"]
 
 UI_COLUMNS = [
-    "iva_pct",
     "otros_impuestos",
 ]
 
 PURCHASE_UI_COLUMNS = [
+    "__qty_pedido",
+    "__qty_recibido",
     "__um_proveedor",
     "__um_empresa",
     "__oc_match_note",
@@ -130,6 +132,8 @@ COLUMN_LABELS = {
     "__um_proveedor": "UM proveedor",
     "__um_empresa": "UM empresa",
     "__oc_match_note": "Notas OC/UM",
+    "__qty_pedido": "Cant. pedida",
+    "__qty_recibido": "Cant. recibida",
 }
 
 
@@ -146,7 +150,7 @@ def ui_header_keys() -> List[str]:
 
 
 def purchase_numeric_keys() -> set:
-    return set()
+    return {"__qty_pedido", "__qty_recibido"}
 
 
 def append_purchase_columns(columns: List[Dict[str, Any]], readonly_cols: set) -> None:

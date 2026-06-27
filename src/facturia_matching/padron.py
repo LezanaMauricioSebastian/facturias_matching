@@ -50,6 +50,36 @@ def reset_padron_cache() -> None:
     global _PADRON_CACHE, _PADRON_FALLBACK_CACHE
     _PADRON_CACHE = None
     _PADRON_FALLBACK_CACHE = None
+    try:
+        from facturia_matching.padron_odoo import reset_padron_odoo_cache
+
+        reset_padron_odoo_cache()
+    except ImportError:
+        pass
+
+
+def _padron_sources() -> List[List[Dict[str, Any]]]:
+    """Orden de fuentes para match_proveedor (Odoo histórico vs vista Postgres)."""
+    from facturia_matching.config import PADRON_SOURCE
+    from facturia_matching.odoo_env import is_odoo_aliare_profile
+
+    source = PADRON_SOURCE or ("odoo,postgres" if is_odoo_aliare_profile() else "postgres")
+    parts = [p.strip() for p in source.split(",") if p.strip()]
+    if not parts:
+        parts = ["postgres"]
+
+    out: List[List[Dict[str, Any]]] = []
+    for part in parts:
+        if part == "odoo":
+            from facturia_matching.padron_odoo import get_padron_odoo_cached
+
+            out.append(get_padron_odoo_cached())
+        elif part == "postgres":
+            out.append(get_padron_cached())
+            fb = get_padron_fallback_cached()
+            if fb:
+                out.append(fb)
+    return out or [get_padron_cached()]
 
 
 def pg_conn():
@@ -297,22 +327,25 @@ def match_proveedor(nombre: str, cuit: str) -> Tuple[str, str, str, str, float]:
     nombre_n = normalize(nombre)
     cuit_n = "".join(ch for ch in normalize(cuit) if ch.isdigit())
 
-    for padron in (get_padron_cached(), get_padron_fallback_cached()):
+    for padron in _padron_sources():
         hit = padron_row_from_cuit(padron, cuit_n)
         if hit:
             return tuple_from_padron_row(hit, 100.0)
 
-    padron = get_padron_cached()
-    names = [(normalize(r.get("name")), r) for r in padron]
-    choices = [n for n, _ in names]
-    if not nombre_n or not choices:
-        return ("", "", "", "", 0.0)
+    for padron in _padron_sources():
+        if not padron:
+            continue
+        names = [(normalize(r.get("name")), r) for r in padron]
+        choices = [n for n, _ in names if n]
+        if not nombre_n or not choices:
+            continue
+        best = rf_process.extractOne(nombre_n, choices, scorer=padron_name_score)
+        if not best:
+            continue
+        score = float(best[1])
+        if score < PADRON_FUZZY_MIN_SCORE:
+            continue
+        idx = int(best[2])
+        return tuple_from_padron_row(names[idx][1], score)
 
-    best = rf_process.extractOne(nombre_n, choices, scorer=padron_name_score)
-    if not best:
-        return ("", "", "", "", 0.0)
-    score = float(best[1])
-    idx = int(best[2])
-    if score < PADRON_FUZZY_MIN_SCORE:
-        return ("", "", "", "", 0.0)
-    return tuple_from_padron_row(names[idx][1], score)
+    return ("", "", "", "", 0.0)

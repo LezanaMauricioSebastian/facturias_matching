@@ -14,9 +14,29 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from facturia_matching.config import ODOO_CONFIG, _env_strip
+from facturia_matching.config import ODOO_CONFIG
+from facturia_matching.odoo_env import _default_test_secret, build_odoo_test_config
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_odoo_test_secret() -> Tuple[str, str]:
+    """Credencial TEST: api_key_test > password > api_key global."""
+    return _default_test_secret()
+
+
+def get_odoo_test_config() -> Dict[str, Any]:
+    """Credenciales Odoo TEST desde .env (ODOO_*_TEST o perfil aliare)."""
+    return build_odoo_test_config()
+
+
+def _db_missing_message(config: Dict[str, Any]) -> str:
+    db = config.get("db") or ""
+    base = (config.get("base_url") or "").rstrip("/")
+    return (
+        f'La base "{db}" no existe en {base}. '
+        "El staging de Odoo cambió: pedí el nuevo valor de ODOO_DB_TEST."
+    )
 
 
 def _jsonrpc_url_for(config: Dict[str, Any]) -> str:
@@ -33,24 +53,6 @@ def _xmlrpc_url(service: str, config: Optional[Dict[str, Any]] = None) -> str:
     cfg = config or ODOO_CONFIG
     base = (cfg.get("base_url") or "").rstrip("/")
     return f"{base}/xmlrpc/2/{service}"
-
-
-def get_odoo_test_config() -> Dict[str, Any]:
-    """Credenciales Odoo TEST desde .env (ODOO_*_TEST)."""
-    uid_raw = _env_strip("ODOO_USER_ID_TEST")
-    try:
-        uid = int(uid_raw) if uid_raw else None
-    except ValueError:
-        uid = None
-
-    return {
-        "base_url": _env_strip("ODOO_API_TEST").rstrip("/"),
-        "endpoint": (_env_strip("ODOO_ENDPOINT_TEST", _env_strip("ODOO_ENDPOINT", "/jsonrpc")).lstrip("/") or "jsonrpc"),
-        "db": _env_strip("ODOO_DB_TEST"),
-        "uid": uid,
-        "login": _env_strip("ODOO_USER_TEST"),
-        "password": _env_strip("ODOO_PASSWORD_TEST"),
-    }
 
 
 def is_odoo_config_ready(config: Dict[str, Any]) -> bool:
@@ -103,6 +105,18 @@ def verify_odoo_config_connection(config: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     db_exists, db_list, db_list_error = probe_odoo_db_exists(config)
+    if db_exists is False:
+        hint = _db_missing_message(config)
+        return {
+            "ok": False,
+            "error": hint,
+            "hint": hint,
+            "base_url": base_url,
+            "db": db,
+            "db_exists": False,
+            "db_list": db_list,
+            "db_list_error": db_list_error,
+        }
 
     version: Optional[dict] = None
     auth_uid: Optional[int] = None
@@ -113,9 +127,13 @@ def verify_odoo_config_connection(config: Dict[str, Any]) -> Dict[str, Any]:
             auth_uid = common.authenticate(db, login, password, {})
             auth_uid = int(auth_uid) if auth_uid else None
     except Exception as e:
+        err = str(e)
+        db_missing = "does not exist" in err.lower() or "keyerror" in err.lower()
+        hint = _db_missing_message(config) if db_missing else None
         return {
             "ok": False,
-            "error": str(e),
+            "error": hint or err,
+            "hint": hint,
             "base_url": base_url,
             "db": db,
             "db_exists": db_exists,

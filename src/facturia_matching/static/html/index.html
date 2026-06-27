@@ -20,6 +20,7 @@
               <button id="btnBuscar" type="button">Buscar</button>
             </div>
             <div class="btnGroup">
+              <button id="btnRevertir" class="secondary" type="button" disabled>Restaurar original</button>
               <button id="btnOdooImportTest" class="secondary" type="button" disabled>Importar a Odoo TEST</button>
               <button id="btnDescargar" class="downloadBtn" type="button" disabled>
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -36,6 +37,7 @@
 
         <div class="card processCard">
           <div class="hint summaryHint" id="summary"></div>
+          <div id="ocPickerBar" class="ocPickerBar" hidden></div>
           <div class="tableScroll">
             <div id="tableWrap"></div>
           </div>
@@ -48,6 +50,15 @@
         </div>
       </div>
     </div>
+    <dialog id="ocPickerDialog" class="ocPickerDialog">
+      <div class="ocPickerDialogPanel">
+        <header class="ocPickerDialogHeader">
+          <h2 class="ocPickerDialogTitle">Seleccionar OC</h2>
+          <button type="button" class="ocPickerClose secondary" data-close-oc aria-label="Cerrar">×</button>
+        </header>
+        <div class="ocPickerDialogBody"></div>
+      </div>
+    </dialog>
     <script type="module" src="/js/main.js"></script>
   </body>
 </html>

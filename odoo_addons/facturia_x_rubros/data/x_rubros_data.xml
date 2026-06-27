@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data noupdate="1">
+    <record id="rubro_agua" model="x_rubros">
+      <field name="x_name">AGUA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">10</field>
+    </record>
+    <record id="rubro_alquiler_administracion" model="x_rubros">
+      <field name="x_name">ALQUILER ADMINISTRACION</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">20</field>
+    </record>
+    <record id="rubro_alquiler_comercial" model="x_rubros">
+      <field name="x_name">ALQUILER COMERCIAL</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">30</field>
+    </record>
+    <record id="rubro_alquileres_comerciales" model="x_rubros">
+      <field name="x_name">ALQUILERES COMERCIALES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">40</field>
+    </record>
+    <record id="rubro_arreglos_y_remodelacion" model="x_rubros">
+      <field name="x_name">ARREGLOS Y REMODELACION</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">50</field>
+    </record>
+    <record id="rubro_cnc" model="x_rubros">
+      <field name="x_name">CNC</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">60</field>
+    </record>
+    <record id="rubro_combustible" model="x_rubros">
+      <field name="x_name">COMBUSTIBLE</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">70</field>
+    </record>
+    <record id="rubro_comisiones_bancarias" model="x_rubros">
+      <field name="x_name">COMISIONES BANCARIAS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">80</field>
+    </record>
+    <record id="rubro_comisiones_medios_de_cobros" model="x_rubros">
+      <field name="x_name">COMISIONES MEDIOS DE COBROS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">90</field>
+    </record>
+    <record id="rubro_comisiones_y_gastos_bancarios" model="x_rubros">
+      <field name="x_name">COMISIONES Y GASTOS BANCARIOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">100</field>
+    </record>
+    <record id="rubro_compra_de_mercaderias" model="x_rubros">
+      <field name="x_name">COMPRA DE MERCADERIAS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">110</field>
+    </record>
+    <record id="rubro_compra_extra_de_mercaderia" model="x_rubros">
+      <field name="x_name">COMPRA EXTRA DE MERCADERIA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">120</field>
+    </record>
+    <record id="rubro_compra_insumos_cup" model="x_rubros">
+      <field name="x_name">COMPRA INSUMOS CUP</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">130</field>
+    </record>
+    <record id="rubro_energia_electrica" model="x_rubros">
+      <field name="x_name">ENERGIA ELECTRICA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">140</field>
+    </record>
+    <record id="rubro_envios_y_fletes" model="x_rubros">
+      <field name="x_name">ENVIOS Y FLETES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">150</field>
+    </record>
+    <record id="rubro_equipamientos" model="x_rubros">
+      <field name="x_name">EQUIPAMIENTOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">160</field>
+    </record>
+    <record id="rubro_expensas" model="x_rubros">
+      <field name="x_name">EXPENSAS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">170</field>
+    </record>
+    <record id="rubro_gas" model="x_rubros">
+      <field name="x_name">GAS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">180</field>
+    </record>
+    <record id="rubro_gastos_capacitacion_al_personal" model="x_rubros">
+      <field name="x_name">GASTOS CAPACITACION AL PERSONAL</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">190</field>
+    </record>
+    <record id="rubro_gastos_de_distribucion_suc_cup" model="x_rubros">
+      <field name="x_name">GASTOS DE DISTRIBUCION SUC CUP</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">200</field>
+    </record>
+    <record id="rubro_gastos_de_oficina" model="x_rubros">
+      <field name="x_name">GASTOS DE OFICINA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">210</field>
+    </record>
+    <record id="rubro_gastos_en_personal" model="x_rubros">
+      <field name="x_name">GASTOS EN PERSONAL</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">220</field>
+    </record>
+    <record id="rubro_gastos_mantenimiento_equipos" model="x_rubros">
+      <field name="x_name">GASTOS MANTENIMIENTO EQUIPOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">230</field>
+    </record>
+    <record id="rubro_gastos_mantenimiento_equipos_cup" model="x_rubros">
+      <field name="x_name">GASTOS MANTENIMIENTO EQUIPOS CUP</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">240</field>
+    </record>
+    <record id="rubro_gastos_mantenimiento_sucursal" model="x_rubros">
+      <field name="x_name">GASTOS MANTENIMIENTO SUCURSAL</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">250</field>
+    </record>
+    <record id="rubro_gastos_no_frecuentes" model="x_rubros">
+      <field name="x_name">GASTOS NO FRECUENTES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">260</field>
+    </record>
+    <record id="rubro_gastos_software_de_gestion" model="x_rubros">
+      <field name="x_name">GASTOS SOFTWARE DE GESTION</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">270</field>
+    </record>
+    <record id="rubro_gastos_varios_extraordinarios" model="x_rubros">
+      <field name="x_name">GASTOS VARIOS EXTRAORDINARIOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">280</field>
+    </record>
+    <record id="rubro_honorarios_contables" model="x_rubros">
+      <field name="x_name">HONORARIOS CONTABLES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">290</field>
+    </record>
+    <record id="rubro_honorarios_legales" model="x_rubros">
+      <field name="x_name">HONORARIOS LEGALES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">300</field>
+    </record>
+    <record id="rubro_honorarios_profesionales" model="x_rubros">
+      <field name="x_name">HONORARIOS PROFESIONALES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">310</field>
+    </record>
+    <record id="rubro_insumos_de_descartables" model="x_rubros">
+      <field name="x_name">INSUMOS DE DESCARTABLES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">320</field>
+    </record>
+    <record id="rubro_insumos_limpieza" model="x_rubros">
+      <field name="x_name">INSUMOS LIMPIEZA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">330</field>
+    </record>
+    <record id="rubro_libreria" model="x_rubros">
+      <field name="x_name">LIBRERIA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">340</field>
+    </record>
+    <record id="rubro_mantenimiento_de_rodados" model="x_rubros">
+      <field name="x_name">MANTENIMIENTO DE RODADOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">350</field>
+    </record>
+    <record id="rubro_marketing" model="x_rubros">
+      <field name="x_name">MARKETING</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">360</field>
+    </record>
+    <record id="rubro_movilidad__cabify___uber" model="x_rubros">
+      <field name="x_name">MOVILIDAD (CABIFY - UBER)</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">370</field>
+    </record>
+    <record id="rubro_movilidad_y_viaticos" model="x_rubros">
+      <field name="x_name">MOVILIDAD Y VIATICOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">380</field>
+    </record>
+    <record id="rubro_muebles_y_utiles" model="x_rubros">
+      <field name="x_name">MUEBLES Y UTILES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">390</field>
+    </record>
+    <record id="rubro_reemplazo_maquinaria_y_equipos" model="x_rubros">
+      <field name="x_name">REEMPLAZO MAQUINARIA Y EQUIPOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">400</field>
+    </record>
+    <record id="rubro_resultados_inversiones" model="x_rubros">
+      <field name="x_name">RESULTADOS INVERSIONES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">410</field>
+    </record>
+    <record id="rubro_seguros_vehiculos" model="x_rubros">
+      <field name="x_name">SEGUROS VEHICULOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">420</field>
+    </record>
+    <record id="rubro_servicio_internet" model="x_rubros">
+      <field name="x_name">SERVICIO INTERNET</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">430</field>
+    </record>
+    <record id="rubro_sueldos" model="x_rubros">
+      <field name="x_name">SUELDOS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">440</field>
+    </record>
+    <record id="rubro_utensilios_de_cocina" model="x_rubros">
+      <field name="x_name">UTENSILIOS DE COCINA</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">450</field>
+    </record>
+    <record id="rubro_viandas" model="x_rubros">
+      <field name="x_name">VIANDAS</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">460</field>
+    </record>
+    <record id="rubro_viaticos_viajes" model="x_rubros">
+      <field name="x_name">VIATICOS VIAJES</field>
+      <field name="x_active" eval="True"/>
+      <field name="x_studio_sequence">470</field>
+    </record>
+  </data>
+</odoo>

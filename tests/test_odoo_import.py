@@ -2,10 +2,14 @@
 import unittest
 
 from facturia_matching.odoo_import import (
+    _build_line_command,
+    _build_move_vals,
     _document_numbers_match,
     collect_expected_tax_amounts_from_group,
     group_rows_into_invoices,
+    plan_invoice_origin_update,
     plan_line_tax_updates,
+    plan_purchase_line_updates,
     plan_tax_line_amount_overwrites,
     propagate_invoice_headers,
     validate_rows_for_import,
@@ -119,6 +123,118 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(updates[0]["new_amount"], 2100.5)
         self.assertEqual(updates[1]["new_amount"], 150.25)
         self.assertEqual(warnings, [])
+
+    def test_build_line_command_links_purchase_line(self):
+        _cmd, _zero, vals = _build_line_command(
+            {
+                "invoice_line_ids/name": "Item OC",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "100",
+                "invoice_line_ids/account_id": "10",
+                "__oc_line_id": "456",
+            }
+        )
+        self.assertEqual(vals["purchase_line_id"], 456)
+
+    def test_build_line_command_without_oc_line(self):
+        _cmd, _zero, vals = _build_line_command(
+            {
+                "invoice_line_ids/name": "Item suelto",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "50",
+                "invoice_line_ids/account_id": "10",
+            }
+        )
+        self.assertNotIn("purchase_line_id", vals)
+
+    def test_build_move_vals_sets_invoice_origin_from_selected_oc(self):
+        group = [
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00001-00000001",
+                "invoice_date": "01/06/2026",
+                "__selected_oc_name": "P06345",
+                "invoice_line_ids/name": "Linea 1",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "100",
+                "__oc_line_id": "100",
+            },
+            {
+                "invoice_line_ids/name": "Linea 2",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "50",
+                "__oc_name": "P99999",
+            },
+        ]
+        vals = _build_move_vals(group)
+        self.assertEqual(vals["invoice_origin"], "P06345")
+        self.assertEqual(vals["invoice_line_ids"][0][2]["purchase_line_id"], 100)
+        self.assertNotIn("purchase_line_id", vals["invoice_line_ids"][1][2])
+
+    def test_build_move_vals_invoice_origin_from_oc_names(self):
+        group = [
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00001-00000001",
+                "invoice_date": "01/06/2026",
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "1",
+                "__oc_name": "P001",
+            },
+            {
+                "invoice_line_ids/name": "B",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "2",
+                "__oc_name": "P002",
+            },
+        ]
+        vals = _build_move_vals(group)
+        self.assertEqual(vals["invoice_origin"], "P001, P002")
+
+    def test_plan_purchase_line_updates_changes_oc(self):
+        product_lines = [
+            {"id": 10, "name": "A", "purchase_line_id": [100, "PO/100"]},
+            {"id": 11, "name": "B", "purchase_line_id": False},
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/price_unit": "1",
+                "__oc_line_id": "200",
+            },
+            {
+                "invoice_line_ids/name": "B",
+                "invoice_line_ids/price_unit": "2",
+                "__oc_line_id": "300",
+            },
+        ]
+        updates, warnings = plan_purchase_line_updates(product_lines, rows)
+        self.assertEqual(len(updates), 2)
+        self.assertEqual(updates[0]["new_purchase_line_id"], 200)
+        self.assertEqual(updates[1]["new_purchase_line_id"], 300)
+        self.assertEqual(warnings, [])
+
+    def test_plan_purchase_line_updates_clears_oc(self):
+        product_lines = [{"id": 10, "name": "A", "purchase_line_id": [100, "PO/100"]}]
+        rows = [{"invoice_line_ids/name": "A", "invoice_line_ids/price_unit": "1"}]
+        updates, _ = plan_purchase_line_updates(product_lines, rows)
+        self.assertEqual(len(updates), 1)
+        self.assertIsNone(updates[0]["new_purchase_line_id"])
+
+    def test_plan_invoice_origin_update(self):
+        group = [
+            {
+                "invoice_line_ids/name": "x",
+                "invoice_line_ids/price_unit": "1",
+                "__selected_oc_name": "PNEW",
+            }
+        ]
+        plan = plan_invoice_origin_update("POLD", group)
+        self.assertEqual(plan["new_invoice_origin"], "PNEW")
+        self.assertIsNone(plan_invoice_origin_update("PNEW", group))
 
 
 if __name__ == "__main__":

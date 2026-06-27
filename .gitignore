@@ -10,6 +10,7 @@ env/
 
 # Secrets
 .env
+.env.aliare
 
 # IDE / OS
 .vscode/

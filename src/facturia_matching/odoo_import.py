@@ -157,6 +157,24 @@ def validate_rows_for_import(rows: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def _invoice_origin_from_group(group: List[Dict[str, Any]]) -> str:
+    """Nombre(s) de OC para invoice_origin (vínculo visible en el encabezado Odoo)."""
+    for row in group:
+        selected = _normalize(row.get("__selected_oc_name"))
+        if selected:
+            return selected
+    names: List[str] = []
+    seen: set = set()
+    for row in group:
+        if not _line_has_content(row):
+            continue
+        name = _normalize(row.get("__oc_name"))
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return ", ".join(names)
+
+
 def _build_line_command(row: Dict[str, Any]) -> Tuple[int, int, Dict[str, Any]]:
     qty = _parse_amount_loose(row.get("invoice_line_ids/quantity"))
     if qty is None or qty <= 0:
@@ -175,6 +193,9 @@ def _build_line_command(row: Dict[str, Any]) -> Tuple[int, int, Dict[str, Any]]:
     product_id = _int_id(row.get("invoice_line_ids/product_id"))
     if product_id:
         vals["product_id"] = product_id
+    po_line_id = _int_id(row.get("__oc_line_id"))
+    if po_line_id:
+        vals["purchase_line_id"] = po_line_id
     tax_ids = _tax_ids_from_row(row)
     if tax_ids:
         vals["tax_ids"] = [(6, 0, tax_ids)]
@@ -183,6 +204,77 @@ def _build_line_command(row: Dict[str, Any]) -> Tuple[int, int, Dict[str, Any]]:
 
 def _content_rows_from_group(group: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [r for r in group if _line_has_content(r)]
+
+
+def _purchase_line_id_raw(line: Dict[str, Any]) -> Optional[int]:
+    raw = line.get("purchase_line_id")
+    if isinstance(raw, (list, tuple)) and raw:
+        return int(raw[0])
+    if isinstance(raw, int):
+        return raw
+    return None
+
+
+def _purchase_line_id_from_row(row: Dict[str, Any]) -> Optional[int]:
+    return _int_id(row.get("__oc_line_id"))
+
+
+def plan_purchase_line_updates(
+    product_lines: List[Dict[str, Any]],
+    content_rows: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Planifica purchase_line_id en líneas de producto (empareja por orden con filas UI).
+    Permite actualizar o quitar el vínculo OC si cambió la selección en FacturIA.
+    """
+    updates: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    rows = _content_rows_from_group(content_rows)
+    if not product_lines:
+        warnings.append("La factura no tiene líneas de producto")
+        return updates, warnings
+    if not rows:
+        warnings.append("No hay filas con contenido para vincular OC")
+        return updates, warnings
+
+    n = min(len(product_lines), len(rows))
+    if len(product_lines) != len(rows):
+        warnings.append(
+            f"OC: líneas Odoo ({len(product_lines)}) vs filas UI ({len(rows)}): "
+            f"se actualizan las primeras {n} por orden"
+        )
+
+    for i in range(n):
+        line = product_lines[i]
+        row = rows[i]
+        expected = _purchase_line_id_from_row(row)
+        current = _purchase_line_id_raw(line)
+        if expected == current:
+            continue
+        updates.append(
+            {
+                "line_id": line["id"],
+                "line_name": line.get("name"),
+                "old_purchase_line_id": current,
+                "new_purchase_line_id": expected,
+            }
+        )
+    return updates, warnings
+
+
+def plan_invoice_origin_update(
+    current: Any,
+    group: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Planifica invoice_origin del encabezado si difiere de la OC en filas UI."""
+    expected = _invoice_origin_from_group(group)
+    current_norm = _normalize(current)
+    if expected == current_norm:
+        return None
+    return {
+        "old_invoice_origin": current_norm,
+        "new_invoice_origin": expected,
+    }
 
 
 def _otros_impuesto_slot_keys(n: int) -> Tuple[str, str]:
@@ -318,7 +410,7 @@ def _get_move_product_lines(config: Dict[str, Any], move_id: int) -> List[Dict[s
             ("move_id", "=", move_id),
             ("display_type", "not in", ["tax", "payment_term", "line_section", "line_note"]),
         ]],
-        {"fields": ["id", "name", "sequence", "tax_ids"], "order": "sequence,id"},
+        {"fields": ["id", "name", "sequence", "tax_ids", "purchase_line_id"], "order": "sequence,id"},
     )
 
 
@@ -423,18 +515,18 @@ def sync_move_taxes_from_group(
     group: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Sincroniza impuestos de una factura ya creada en Odoo (borrador):
+    Sincroniza una factura ya creada en Odoo (borrador) con las filas UI:
 
-    1. Ajusta tax_ids en líneas de producto (tipos de impuesto correctos).
-    2. Vuelve a leer la factura y obtiene líneas display_type=tax.
-    3. Sobreescribe montos de esas líneas con iva_monto / otros_impuestos_monto de FacturIA.
+    1. Vínculos OC (purchase_line_id + invoice_origin).
+    2. tax_ids en líneas de producto.
+    3. Montos en líneas display_type=tax (iva_monto / otros_impuestos_monto).
     """
     move_rows = odoo_execute_kw_with_config(
         config,
         "account.move",
         "read",
         [[move_id]],
-        {"fields": ["id", "name", "state", "l10n_latam_document_number"]},
+        {"fields": ["id", "name", "state", "l10n_latam_document_number", "invoice_origin"]},
     )
     if not move_rows:
         raise ValueError(f"Factura {move_id} no encontrada")
@@ -448,6 +540,39 @@ def sync_move_taxes_from_group(
     warnings: List[str] = []
 
     product_lines = _get_move_product_lines(config, move_id)
+
+    planned_po, warnings_po = plan_purchase_line_updates(product_lines, group)
+    warnings.extend(warnings_po)
+    purchase_line_updates: List[Dict[str, Any]] = []
+    for item in planned_po:
+        po_line_id = item["new_purchase_line_id"]
+        write_vals: Dict[str, Any] = (
+            {"purchase_line_id": po_line_id} if po_line_id else {"purchase_line_id": False}
+        )
+        odoo_execute_kw_with_config(
+            config,
+            "account.move.line",
+            "write",
+            [[item["line_id"]], write_vals],
+        )
+        purchase_line_updates.append({**item, "write_vals": write_vals})
+
+    origin_plan = plan_invoice_origin_update(move.get("invoice_origin"), group)
+    invoice_origin_update: Optional[Dict[str, Any]] = None
+    if origin_plan:
+        origin_vals: Dict[str, Any] = (
+            {"invoice_origin": origin_plan["new_invoice_origin"]}
+            if origin_plan["new_invoice_origin"]
+            else {"invoice_origin": False}
+        )
+        odoo_execute_kw_with_config(
+            config,
+            "account.move",
+            "write",
+            [[move_id], origin_vals],
+        )
+        invoice_origin_update = {**origin_plan, "write_vals": origin_vals}
+
     planned_ids, warnings_ids = plan_line_tax_updates(product_lines, group)
     warnings.extend(warnings_ids)
 
@@ -486,9 +611,13 @@ def sync_move_taxes_from_group(
         "document_number": move.get("l10n_latam_document_number"),
         "state": move.get("state"),
         "product_lines_updated": len(product_updates),
+        "purchase_lines_updated": len(purchase_line_updates),
         "tax_lines_updated": len(tax_line_updates),
         "lines_updated": len(tax_line_updates),
         "product_updates": product_updates,
+        "purchase_line_updates": purchase_line_updates,
+        "invoice_origin_updated": invoice_origin_update is not None,
+        "invoice_origin_update": invoice_origin_update,
         "tax_line_updates": tax_line_updates,
         "expected_tax_amounts": expected_amounts,
         "warnings": warnings,
@@ -522,6 +651,9 @@ def _build_move_vals(group: List[Dict[str, Any]]) -> Dict[str, Any]:
     rubro_id = _int_id(header.get("x_studio_category"))
     if rubro_id:
         vals["x_studio_category"] = rubro_id
+    invoice_origin = _invoice_origin_from_group(group)
+    if invoice_origin:
+        vals["invoice_origin"] = invoice_origin
 
     line_cmds = [_build_line_command(r) for r in group if _line_has_content(r)]
     vals["invoice_line_ids"] = line_cmds
@@ -575,9 +707,13 @@ def _tax_sync_summary(doc_number: str, result: Dict[str, Any]) -> Dict[str, Any]
         "state": result.get("state"),
         "lines_updated": result.get("tax_lines_updated", result.get("lines_updated", 0)),
         "product_lines_updated": result.get("product_lines_updated", 0),
+        "purchase_lines_updated": result.get("purchase_lines_updated", 0),
         "tax_lines_updated": result.get("tax_lines_updated", 0),
+        "invoice_origin_updated": result.get("invoice_origin_updated", False),
         "expected_tax_amounts": result.get("expected_tax_amounts", {}),
         "product_updates": result.get("product_updates", []),
+        "purchase_line_updates": result.get("purchase_line_updates", []),
+        "invoice_origin_update": result.get("invoice_origin_update"),
         "tax_line_updates": result.get("tax_line_updates", []),
         "updates": result.get("tax_line_updates", result.get("updates", [])),
         "warnings": result.get("warnings", []),
@@ -592,8 +728,8 @@ def import_rows_to_odoo_test(
 ) -> Dict[str, Any]:
     """
     Crea facturas de proveedor en borrador en Odoo TEST.
-    Tras crear (o si ya existe y update_taxes_if_exists=True), relee la factura,
-    localiza líneas display_type=tax y sobreescribe montos con FacturIA.
+    Tras crear (o si ya existe y update_taxes_if_exists=True), sincroniza OC, impuestos
+    y montos de líneas tax con las filas UI actuales.
     Devuelve {ok, created, updated_taxes, skipped, errors}.
     """
     config = get_odoo_test_config()

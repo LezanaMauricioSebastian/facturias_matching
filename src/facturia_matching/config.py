@@ -10,15 +10,7 @@ from facturia_matching.paths import ENV_FILE
 dotenv.load_dotenv(ENV_FILE)
 
 
-def _env_strip(key: str, default: str = "") -> str:
-    val = os.getenv(key, default)
-    if not val:
-        return ""
-    s = str(val).strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
-        s = s[1:-1].strip()
-    return s
-
+from facturia_matching.env_utils import env_strip as _env_strip
 
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT", "5432")
@@ -35,6 +27,9 @@ DB_TABLE_NAME_FALLBACK = (
 DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip() or "public"
 PADRON_FUZZY_MIN_SCORE = float(os.getenv("PADRON_FUZZY_MIN_SCORE", "72") or "72")
 PADRON_LIMIT = int(os.getenv("PADRON_LIMIT", "50000") or "50000")
+PADRON_ODOO_LIMIT = int(os.getenv("PADRON_ODOO_LIMIT", "5000") or "5000")
+# odoo | postgres | odoo,postgres — en perfil aliare default odoo,postgres (Odoo primero)
+PADRON_SOURCE = _env_strip("PADRON_SOURCE").lower()
 
 DB_HOST_MYSQL = os.getenv("DB_HOST_MYSQL")
 DB_USER_MYSQL = os.getenv("DB_USER_MYSQL")
@@ -99,20 +94,9 @@ def check_db_connection_mysql():
         return False
 
 
-_odo_uid_raw = _env_strip("ODOO_USER_ID")
-try:
-    ODOO_UID = int(_odo_uid_raw) if _odo_uid_raw else None
-except ValueError:
-    ODOO_UID = None
+from facturia_matching.odoo_env import build_odoo_main_config
 
-ODOO_CONFIG = {
-    "base_url": _env_strip("ODOO_BASE_URL", "https://dinner.odoo.com").rstrip("/"),
-    "endpoint": (_env_strip("ODOO_ENDPOINT", "/jsonrpc").lstrip("/") or "jsonrpc"),
-    "db": _env_strip("ODOO_DB"),
-    "uid": ODOO_UID,
-    "login": _env_strip("ODOO_USER"),
-    "password": _env_strip("ODOO_PASSWORD"),
-}
+ODOO_CONFIG = build_odoo_main_config()
 
 ODOO_CATALOG_CACHE_TTL = int(_env_strip("ODOO_CATALOG_CACHE_TTL", "600") or "600")
 DEFAULT_JOURNAL_NAME = _env_strip("DEFAULT_JOURNAL_NAME")
