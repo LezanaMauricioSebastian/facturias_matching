@@ -30,10 +30,18 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-uvicorn facturia_matching.main:app --reload --port 8080
+python main.py
 ```
 
 Abrí http://localhost:8080
+
+Variables opcionales: `PORT` (default 8080), `HOST` (default 127.0.0.1), `RELOAD=0` para desactivar autoreload.
+
+Alternativa equivalente:
+
+```bash
+uvicorn facturia_matching.main:app --reload --port 8080
+```
 
 ## Tests
 
@@ -69,4 +77,16 @@ python scripts/build_padron_from_odoo.py   # padrón desde facturas Odoo (sin vi
 src/facturia_matching/   # paquete Python (API, matching, Odoo)
 tests/                   # tests unitarios e integración
 scripts/                 # utilidades de diagnóstico
+docs/                    # documentación técnica
 ```
+
+## Documentación
+
+Índice general: **[docs/README.md](docs/README.md)** — arquitectura, módulos Python/JS, API, tests y guías por tarea.
+
+- [Arquitectura y flujo de datos](docs/arquitectura.md)
+- [Módulos Python](docs/modulos-python.md)
+- [Módulos frontend](docs/modulos-frontend.md)
+- [API REST](docs/api.md)
+- [Tests y scripts](docs/tests-y-scripts.md)
+- [IVA por comprobante e import a Odoo](docs/iva-y-import-odoo.md) — modos line/header/mixed, pipeline de import y errores frecuentes

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Copia proveedores de Dinner Odoo TEST → Aliare staging (demo / matching UI).
+Copia proveedores de Dinner Odoo → Aliare staging (demo / matching UI).
 
 Uso:
   python scripts/seed_aliare_proveedores.py
@@ -14,40 +14,21 @@ import argparse
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from facturia_matching.env_utils import env_strip
-from facturia_matching.odoo_api import (
+from facturia_matching.infra.env import env_strip
+from facturia_matching.odoo.api import (
     get_odoo_uid_from_config,
     odoo_execute_kw_with_config,
 )
-from facturia_matching.odoo_env import build_odoo_main_config
-from facturia_matching.utils import normalize
+from facturia_matching.odoo.env import build_odoo_main_config
+from facturia_matching.infra.normalization import normalize
 
 
 def _digits_only(s: Any) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
 
 
-def _build_dinner_test_config() -> Dict[str, Any]:
-    def _uid(raw: str) -> Optional[int]:
-        s = (raw or "").strip()
-        if not s or "@" in s:
-            return None
-        try:
-            return int(s)
-        except ValueError:
-            return None
-
-    api = env_strip("ODOO_API_KEY_TEST")
-    pwd = env_strip("ODOO_PASSWORD_TEST") or env_strip("ODOO_API_KEY")
-    ep = env_strip("ODOO_ENDPOINT_TEST", env_strip("ODOO_ENDPOINT", "/jsonrpc")).lstrip("/") or "jsonrpc"
-    return {
-        "base_url": env_strip("ODOO_API_TEST").rstrip("/"),
-        "endpoint": ep,
-        "db": env_strip("ODOO_DB_TEST"),
-        "uid": _uid(env_strip("ODOO_USER_ID_TEST")),
-        "login": env_strip("ODOO_USER_TEST"),
-        "password": api or pwd,
-    }
+def _build_dinner_config() -> Dict[str, Any]:
+    return dict(build_odoo_main_config("default"))
 
 
 def _build_aliare_config() -> Dict[str, Any]:
@@ -58,7 +39,7 @@ def _build_aliare_config() -> Dict[str, Any]:
     try:
         from importlib import reload
 
-        import facturia_matching.odoo_env as odoo_env
+        import facturia_matching.odoo.env as odoo_env
 
         reload(odoo_env)
         return odoo_env.build_odoo_main_config()
@@ -128,11 +109,11 @@ def _dinner_suppliers(config: Dict[str, Any], limit: int) -> List[Dict[str, Any]
 
 
 def seed_proveedores(*, limit: int = 15, dry_run: bool = False) -> Dict[str, int]:
-    dinner_cfg = _build_dinner_test_config()
+    dinner_cfg = _build_dinner_config()
     aliare_cfg = _build_aliare_config()
 
     if not get_odoo_uid_from_config(dinner_cfg):
-        raise RuntimeError("No se pudo autenticar en Dinner TEST (revisá ODOO_*_TEST en .env).")
+        raise RuntimeError("No se pudo autenticar en Dinner Odoo (revisá ODOO_* en .env).")
     if not get_odoo_uid_from_config(aliare_cfg):
         raise RuntimeError("No se pudo autenticar en Aliare (revisá ODOO_*_ALIARE en .env).")
 
@@ -167,12 +148,12 @@ def seed_proveedores(*, limit: int = 15, dry_run: bool = False) -> Dict[str, int
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Copiar proveedores Dinner TEST → Aliare")
+    parser = argparse.ArgumentParser(description="Copiar proveedores Dinner → Aliare")
     parser.add_argument("--limit", type=int, default=15, help="Cantidad máxima a copiar (default 15)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
-    print(f"Dinner TEST → Aliare | limit={args.limit}")
+    print(f"Dinner → Aliare | limit={args.limit}")
     stats = seed_proveedores(limit=args.limit, dry_run=args.dry_run)
     print(
         f"Listo. candidatos={stats['candidates']} creados={stats['created']} "

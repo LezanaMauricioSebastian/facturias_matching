@@ -21,13 +21,13 @@ import argparse
 import sys
 from typing import Dict, List, Set
 
-from facturia_matching.odoo_api import is_odoo_configured, odoo_execute_kw, odoo_search_read
-from facturia_matching.odoo_env import is_odoo_aliare_profile
-from facturia_matching.utils import normalize
+from facturia_matching.odoo.api import is_odoo_configured, odoo_execute_kw, odoo_search_read
+from facturia_matching.odoo.env import is_odoo_aliare_profile
+from facturia_matching.infra.normalization import normalize
 
 
 def _rubro_names_from_padron() -> List[str]:
-    from facturia_matching.padron import get_padron_cached
+    from facturia_matching.padron.postgres import get_padron_cached
 
     padron = get_padron_cached() or []
     names: Set[str] = set()
@@ -39,7 +39,7 @@ def _rubro_names_from_padron() -> List[str]:
 
 
 def _rubro_names_from_dinner() -> List[str]:
-    from facturia_matching.odoo_env import is_odoo_aliare_profile as _aliare
+    from facturia_matching.odoo.env import is_odoo_aliare_profile as _aliare
 
     if _aliare():
         raise RuntimeError("--from-dinner requiere perfil default (Dinner), no aliare.")

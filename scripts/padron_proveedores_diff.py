@@ -3,7 +3,7 @@
 
 from psycopg2 import connect
 
-from facturia_matching.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
+from facturia_matching.infra.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
 
 OLD = "view_padron_facturia"
 NEW = "view_padron_facturia_actualizado"

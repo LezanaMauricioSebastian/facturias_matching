@@ -1,0 +1,309 @@
+{
+  "scenarios": [
+    {
+      "id": "proceso4_line_single_rate",
+      "description": "Proceso 4: una línea 21%, __fac_iva_montos coincide con cálculo por línea",
+      "rows": [
+        {
+          "iva_pct": "21",
+          "iva_monto": "57255.38",
+          "__fac_iva_monto": "57255.38",
+          "__fac_iva_montos": "{\"21\": \"57255.38\"}",
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "272644.68"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 57255.38,
+      "expected_base_odoo": 272644.68,
+      "expected_total_odoo": 329900.06
+    },
+    {
+      "id": "header_only_fac_iva",
+      "description": "Varias líneas 0%, IVA solo en encabezado FacturIA",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "964,37",
+          "iva_pct": "0",
+          "__fac_subtotal": "97719.14",
+          "__fac_iva_monto": "20521.22"
+        },
+        {
+          "invoice_line_ids/quantity": "2",
+          "invoice_line_ids/price_unit": "12786,04",
+          "iva_pct": "0"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 20521.22,
+      "expected_base_odoo": 97719.14,
+      "expected_total_odoo": 118240.36
+    },
+    {
+      "id": "single_line_rate_mismatch",
+      "description": "Una línea con % que no cierra → modo header",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "17768,6",
+          "iva_pct": "10,5",
+          "__fac_subtotal": "17768.60",
+          "__fac_iva_monto": "7736.40"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 7736.4,
+      "expected_base_odoo": 17768.6,
+      "expected_total_odoo": 25505.0
+    },
+    {
+      "id": "mixed_multi_line",
+      "description": "Líneas con/sin rate, IVA encabezado no cierra con líneas",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "964,37",
+          "iva_pct": "21",
+          "__fac_iva_monto": "20521.22"
+        },
+        {
+          "invoice_line_ids/quantity": "2840",
+          "invoice_line_ids/price_unit": "12628,72",
+          "iva_pct": "0"
+        }
+      ],
+      "expected_mode": "mixed",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 20521.22,
+      "expected_warnings": true
+    },
+    {
+      "id": "multi_rate_json",
+      "description": "Desglose 21% + 10.5% desde __fac_iva_montos",
+      "rows": [
+        {
+          "__fac_iva_montos": "{\"21\": \"18726.13\", \"10.5\": \"1012.59\"}",
+          "__fac_iva_monto": "19738.72",
+          "invoice_line_ids/name": "A",
+          "invoice_line_ids/price_unit": "1",
+          "invoice_line_ids/quantity": "1",
+          "iva_pct": "0"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 19738.72
+    },
+    {
+      "id": "line_two_rates",
+      "description": "Dos líneas 21% y 10.5%, sumas cierran con encabezado",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "100000",
+          "iva_pct": "21",
+          "__fac_iva_monto": "31500"
+        },
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "100000",
+          "iva_pct": "10,5"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 31500.0
+    },
+    {
+      "id": "line_manual_iva_override",
+      "description": "iva_monto manual en modo line (dos líneas, una con override)",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000",
+          "iva_pct": "21",
+          "iva_monto": "250",
+          "__iva_monto_manual": true,
+          "__fac_iva_monto": "460"
+        },
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000",
+          "iva_pct": "21"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 460.0
+    },
+    {
+      "id": "explicit_json_overrides_line",
+      "description": "Modo line: iva_monto de línea gana sobre __fac_iva_montos almacenado",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000",
+          "iva_pct": "21",
+          "iva_monto": "999",
+          "__iva_monto_manual": true,
+          "__fac_iva_monto": "210",
+          "__fac_iva_montos": "{\"21\": \"210\"}"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 999.0,
+      "expected_collect_iva": 999.0
+    },
+    {
+      "id": "header_inflated_lines",
+      "description": "Qty/precio inflados, base Odoo usa __fac_subtotal",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "964,37",
+          "iva_pct": "0",
+          "__fac_subtotal": "110024.13",
+          "__fac_iva_monto": "20521.22"
+        },
+        {
+          "invoice_line_ids/quantity": "2840",
+          "invoice_line_ids/price_unit": "12628,72",
+          "iva_pct": "0"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_base_odoo": 110024.13,
+      "expected_total_odoo": 130545.35
+    },
+    {
+      "id": "tolerance_boundary_match",
+      "description": "Diferencia IVA dentro de tolerancia → line",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000",
+          "iva_pct": "21",
+          "__fac_iva_monto": "210.01"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true
+    },
+    {
+      "id": "tolerance_boundary_mismatch",
+      "description": "Diferencia IVA fuera de tolerancia en una línea → header",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000",
+          "iva_pct": "21",
+          "__fac_iva_monto": "210.30"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false
+    },
+    {
+      "id": "iva_no_corresponde",
+      "description": "Factura C / IVA no corresponde",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "5000",
+          "iva_pct": "IVA No Corresponde",
+          "__fac_iva_monto": "0"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 0.0
+    },
+    {
+      "id": "lines_with_rate_no_header",
+      "description": "Líneas con rate, sin IVA encabezado → line",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "2",
+          "invoice_line_ids/price_unit": "500",
+          "iva_pct": "21"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 210.0
+    },
+    {
+      "id": "otros_impuestos_slots",
+      "description": "Percepción en slot 1 + IVA header",
+      "rows": [
+        {
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "272644.68",
+          "iva_pct": "0",
+          "__fac_iva_monto": "57255.38",
+          "otros_impuestos_monto": "150.25"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 57255.38,
+      "expected_otros": 150.25
+    },
+    {
+      "id": "line_mode_with_fac_montos",
+      "description": "Modo line con __fac_iva_montos almacenado (proceso 4 style)",
+      "rows": [
+        {
+          "iva_pct": "21",
+          "__fac_iva_monto": "420",
+          "__fac_iva_montos": "{\"21\": \"420\"}",
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000"
+        },
+        {
+          "iva_pct": "21",
+          "invoice_line_ids/quantity": "1",
+          "invoice_line_ids/price_unit": "1000"
+        }
+      ],
+      "expected_mode": "line",
+      "footer_editable": false,
+      "show_iva_column": true,
+      "expected_iva_odoo": 420.0
+    },
+    {
+      "id": "serialize_no_total_key",
+      "description": "Fixture para verificar que _total no se serializa en JSON",
+      "rows": [
+        {
+          "iva_pct": "0",
+          "__fac_iva_monto": "1000"
+        }
+      ],
+      "expected_mode": "header",
+      "footer_editable": true,
+      "show_iva_column": false,
+      "expected_iva_odoo": 1000.0
+    }
+  ]
+}

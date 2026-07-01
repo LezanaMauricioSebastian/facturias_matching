@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from psycopg2 import connect
 
-from facturia_matching.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
+from facturia_matching.infra.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_SCHEMA, DB_USER
 
 VIEWS = ["view_padron_facturia", "view_padron_facturia_actualizado"]
 

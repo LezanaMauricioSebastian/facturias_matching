@@ -9,30 +9,36 @@
   <body>
     <div class="wrap">
       <div class="grid">
-        <div class="card">
-          <div class="title">CSV generado desde datos consultados y editados, listo para usar en Odoo.</div>
+        <div class="card actionCard">
+          <div class="title actionTitle" id="actionTitle">CSV generado desde datos consultados y editados, listo para usar en Odoo.</div>
           <div class="controlsRow">
             <div class="searchBar" id="searchBar">
               <div class="field">
                 <label>Número de proceso</label>
-                <input id="processNumber" type="text" placeholder="Ej: 185">
+                <input id="processNumber" type="text" placeholder="Ej: 137 (20 facturas)">
               </div>
               <button id="btnBuscar" type="button">Buscar</button>
             </div>
-            <div class="btnGroup">
-              <button id="btnRevertir" class="secondary" type="button" disabled>Restaurar original</button>
-              <button id="btnOdooImportTest" class="secondary" type="button" disabled>Importar a Odoo TEST</button>
-              <button id="btnDescargar" class="downloadBtn" type="button" disabled>
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                </svg>
-                Descargar CSV
-              </button>
+            <div class="btnGroupWrap">
+              <div class="btnGroup btnGroupSecondary">
+                <button id="btnRevertir" class="secondary btnRevert" type="button" disabled>Restaurar original</button>
+              </div>
+              <div class="btnGroup btnGroupPrimary">
+                <button id="btnOdooImport" class="secondary" type="button" disabled>Importar a Odoo</button>
+                <button id="btnDescargar" class="downloadBtn" type="button" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                  Descargar CSV
+                </button>
+              </div>
             </div>
           </div>
-          <div class="hint">Revisá/ajustá los campos editables y descargá el CSV final.</div>
-          <div id="status" class="status"></div>
+          <div class="contextRow">
+            <div class="hint actionHint" id="actionHint">Revisá/ajustá los campos editables y descargá el CSV final.</div>
+            <div id="status" class="status"></div>
+          </div>
         </div>
 
         <div class="card processCard">
@@ -44,7 +50,7 @@
           <div class="footerBar footerInside">
             <div></div>
             <div class="totalBox">
-              Total General: <strong id="totalGeneral">$0.00</strong>
+              Total del proceso: <strong id="totalGeneral">$0.00</strong>
             </div>
           </div>
         </div>

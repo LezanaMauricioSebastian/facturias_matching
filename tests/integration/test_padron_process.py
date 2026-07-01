@@ -5,16 +5,21 @@ import os
 import unittest
 from typing import Any, Dict, List
 
-from facturia_matching import config
-from facturia_matching.padron import reset_padron_cache
-from facturia_matching.process import build_output_rows, parse_process_json
+from facturia_matching.infra import config
+from facturia_matching.padron.postgres import reset_padron_cache
+from facturia_matching.core.process import build_output_rows, parse_process_json
 
 VIEWS = ["view_padron_facturia", "view_padron_facturia_actualizado"]
 PROCESS_NUMBERS = ["185", "214"]
 
 
 def _has_db_config() -> bool:
-    return bool(config.DB_HOST and config.DB_USER and config.DB_PASSWORD and config.DB_NAME)
+    return bool(
+        config.DB_HOST
+        and config.DB_USER
+        and config.DB_PASSWORD
+        and config.RESOLVED_PG_DBNAME
+    )
 
 
 def _summary_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

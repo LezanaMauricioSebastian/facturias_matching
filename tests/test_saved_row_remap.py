@@ -3,7 +3,8 @@
 import unittest
 from unittest.mock import patch
 
-from facturia_matching.saved_row_remap import remap_saved_rows_to_catalog
+from facturia_matching.odoo.request_context import odoo_profile_context
+from facturia_matching.persistence.saved_row_remap import remap_saved_rows_to_catalog
 
 
 def _aliare_catalog():
@@ -31,8 +32,8 @@ def _aliare_catalog():
 
 
 class TestRemapSavedRowsToCatalog(unittest.TestCase):
-    @patch("facturia_matching.saved_row_remap.get_catalog")
-    @patch("facturia_matching.saved_row_remap.match_proveedor")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_remaps_partner_id_by_cuit_from_other_tenant(self, mock_match, mock_catalog):
         mock_catalog.return_value = (_aliare_catalog(), True)
         mock_match.return_value = (
@@ -54,13 +55,14 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
                 "invoice_line_ids/name": "Item",
             }
         ]
-        out = remap_saved_rows_to_catalog(rows)
+        with odoo_profile_context("default"):
+            out = remap_saved_rows_to_catalog(rows)
         self.assertEqual(out[0]["partner_id"], "22")
         self.assertEqual(out[0]["journal_id"], "5")
         self.assertEqual(out[0]["x_studio_category"], "3")
         self.assertEqual(out[0]["invoice_line_ids/account_id"], "100")
 
-    @patch("facturia_matching.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     def test_keeps_valid_partner_id(self, mock_catalog):
         mock_catalog.return_value = (_aliare_catalog(), True)
         rows = [
@@ -74,15 +76,15 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
         out = remap_saved_rows_to_catalog(rows)
         self.assertEqual(out[0]["partner_id"], "22")
 
-    @patch("facturia_matching.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     def test_noop_when_odoo_unavailable(self, mock_catalog):
         mock_catalog.return_value = (None, False)
         rows = [{"partner_id": "1419", "CUIT": "30710552602"}]
         out = remap_saved_rows_to_catalog(rows)
         self.assertEqual(out[0]["partner_id"], "1419")
 
-    @patch("facturia_matching.saved_row_remap.get_catalog")
-    @patch("facturia_matching.saved_row_remap.match_proveedor")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_remaps_stale_partner_on_continuation_rows(self, mock_match, mock_catalog):
         mock_catalog.return_value = (_aliare_catalog(), True)
         mock_match.return_value = (
@@ -110,8 +112,8 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
         self.assertEqual(out[0]["partner_id"], "22")
         self.assertEqual(out[1]["partner_id"], "22")
 
-    @patch("facturia_matching.saved_row_remap.get_catalog")
-    @patch("facturia_matching.saved_row_remap.match_proveedor")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_propagates_partner_to_line_rows(self, mock_match, mock_catalog):
         mock_catalog.return_value = (_aliare_catalog(), True)
         mock_match.return_value = ("", "", "", "", 0.0)
@@ -132,7 +134,7 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
         self.assertEqual(out[0]["partner_id"], "22")
         self.assertEqual(out[1]["partner_id"], "22")
 
-    @patch("facturia_matching.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     def test_remaps_product_by_code(self, mock_catalog):
         mock_catalog.return_value = (_aliare_catalog(), True)
         rows = [

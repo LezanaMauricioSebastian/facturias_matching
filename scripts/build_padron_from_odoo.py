@@ -17,11 +17,11 @@ import json
 import sys
 from typing import Any, Dict, List
 
-from facturia_matching.odoo_api import get_odoo_uid, is_odoo_configured, odoo_xmlrpc_version
-from facturia_matching.odoo_env import FACTURIA_ODOO_PROFILE, is_odoo_aliare_profile
-from facturia_matching.padron import get_padron_cached
-from facturia_matching.padron_odoo import build_padron_rows_from_odoo
-from facturia_matching.utils import normalize
+from facturia_matching.odoo.api import get_odoo_uid, is_odoo_configured, odoo_xmlrpc_version
+from facturia_matching.odoo.env import FACTURIA_ODOO_PROFILE, is_odoo_aliare_profile
+from facturia_matching.padron.postgres import get_padron_cached
+from facturia_matching.padron.odoo import build_padron_rows_from_odoo
+from facturia_matching.infra.normalization import normalize
 
 VIEW_COLUMNS = [
     "nombre_contacto",

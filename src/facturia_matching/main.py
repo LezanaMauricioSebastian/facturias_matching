@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from facturia_matching.api.routes import router
-from facturia_matching.paths import CSS_DIR, HTML_DIR, JS_DIR
+from facturia_matching.infra.paths import CSS_DIR, HTML_DIR, JS_DIR
 
 app = FastAPI(title="FacturIA matching UI")
 app.add_middleware(

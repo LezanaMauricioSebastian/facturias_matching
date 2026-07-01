@@ -5,24 +5,32 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from facturia_matching.back_check import MySQLUnavailableError, ProcessTableError
-from facturia_matching.config import DB_SCHEMA, DB_TABLE_NAME, ODOO_CONFIG
-from facturia_matching.csv_export import build_csv_response
-from facturia_matching.odoo_api import (
+from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME
+from facturia_matching.odoo.api import get_active_odoo_config
+from facturia_matching.odoo.request_context import odoo_profile_context
+from facturia_matching.odoo.env import (
+    current_odoo_profile,
+    is_odoo_aliare_profile,
+    is_odoo_cloud_flag,
+    is_odoo_sudata_profile,
+    uses_odoo_padron_first,
+)
+from facturia_matching.export.csv_export import build_csv_response
+from facturia_matching.odoo.api import (
     _jsonrpc_url,
-    get_odoo_test_config,
+    get_odoo_import_config,
     get_odoo_uid,
     is_odoo_config_ready,
     is_odoo_configured,
     odoo_xmlrpc_version,
     verify_odoo_config_connection,
 )
-from facturia_matching.odoo_import import import_rows_to_odoo_test
-from facturia_matching.options import build_metadata_payload, get_options
-from facturia_matching.padron import detect_padron_fields, get_table_columns
-from facturia_matching.paths import HTML_DIR
-from facturia_matching.process import build_output_rows
-from facturia_matching.process_conversions import (
+from facturia_matching.odoo.import_ import import_rows_to_odoo
+from facturia_matching.core.options import build_metadata_payload, get_options
+from facturia_matching.padron.postgres import detect_padron_fields, get_table_columns
+from facturia_matching.infra.paths import CSS_DIR, HTML_DIR
+from facturia_matching.core.process import build_output_rows
+from facturia_matching.persistence.process_conversions import (
     ProcessConversionError,
     delete_conversion,
     infer_otro_impuesto_indices,
@@ -30,9 +38,43 @@ from facturia_matching.process_conversions import (
     resolve_process_row,
     save_conversion,
 )
-from facturia_matching.purchase_matching import apply_oc_selection, rematch_comprobante_purchase
+from facturia_matching.odoo.purchase_matching import apply_oc_selection, rematch_comprobante_purchase
 
 router = APIRouter()
+
+
+def _coalesce_odoo_profile(
+    perfil: Optional[str],
+    odoo_profile_q: Optional[str],
+) -> Optional[str]:
+    return odoo_profile_q or perfil
+
+
+def _resolve_request_odoo_profile(
+    perfil: Optional[str] = None,
+    odoo_profile_q: Optional[str] = None,
+    odoo_cloud: Optional[Any] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """odoo_cloud=1 → sudata; si no, odoo_profile / perfil en query o body."""
+    if payload:
+        if is_odoo_cloud_flag(payload.get("odoo_cloud")):
+            return "sudata"
+        body_profile = payload.get("odoo_profile") or payload.get("perfil")
+        if body_profile is not None and str(body_profile).strip() != "":
+            return str(body_profile).strip()
+    if is_odoo_cloud_flag(odoo_cloud):
+        return "sudata"
+    return _coalesce_odoo_profile(perfil, odoo_profile_q)
+
+
+def _with_odoo_profile(odoo_profile: Optional[str], fn):
+    with odoo_profile_context(odoo_profile):
+        return fn()
+
+
+def _payload_odoo_profile(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    return _resolve_request_odoo_profile(payload=payload)
 
 
 def _build_proceso_response(
@@ -78,8 +120,6 @@ def _build_proceso_response(
             resp["odoo_profile"] = conversion_meta["odoo_profile"]
         if conversion_meta.get("template_id") is not None:
             resp["conversion_template_id"] = conversion_meta["template_id"]
-    from facturia_matching.odoo_env import current_odoo_profile
-
     resp["odoo_profile"] = resp.get("odoo_profile") or current_odoo_profile()
     return resp
 
@@ -100,7 +140,13 @@ def root():
     index_path = HTML_DIR / "index.html"
     if not index_path.exists():
         return HTMLResponse("<h3>Falta html/index.html</h3>", status_code=500)
-    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+    html = index_path.read_text(encoding="utf-8")
+    css_path = CSS_DIR / "styles.css"
+    if css_path.is_file():
+        v = int(css_path.stat().st_mtime)
+        html = html.replace('href="/css/styles.css"', f'href="/css/styles.css?v={v}"')
+        html = html.replace('src="/js/main.js"', f'src="/js/main.js?v={v}"')
+    return HTMLResponse(html)
 
 
 @router.get("/api/metadata")
@@ -109,84 +155,139 @@ def get_metadata():
 
 
 @router.get("/api/bootstrap")
-def get_bootstrap():
-    from facturia_matching.odoo_env import is_odoo_aliare_profile
+def get_bootstrap(
+    empresa: Optional[str] = None,
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    def _boot():
+        meta = build_metadata_payload()
+        opts = get_options(padron=False)
+        return {
+            "metadata": meta,
+            "options": opts,
+            "odoo_profile": current_odoo_profile(),
+        }
 
-    meta = build_metadata_payload()
-    opts = get_options(padron=False)
-    return {
-        "metadata": meta,
-        "options": opts,
-        "odoo_profile": "aliare" if is_odoo_aliare_profile() else "default",
-    }
+    return _with_odoo_profile(odoo_profile, _boot)
 
 
 @router.get("/api/options")
 def api_options(
     padron: bool = Query(False, description="Si true, carga opciones grandes desde DB (puede tardar)."),
+    empresa: Optional[str] = None,
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
 ):
-    return get_options(padron=padron)
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    return _with_odoo_profile(odoo_profile, lambda: get_options(padron=padron))
 
 
 @router.get("/api/odoo/health")
-def odoo_health():
-    if not is_odoo_configured():
-        return {"ok": False, "error": "ODOO_* no configurado en .env"}
-    uid = get_odoo_uid()
-    version = odoo_xmlrpc_version()
-    return {
-        "ok": uid is not None,
-        "uid": uid,
-        "uid_source": "ODOO_USER_ID" if ODOO_CONFIG.get("uid") is not None else "ODOO_USER",
-        "db": ODOO_CONFIG.get("db"),
-        "base_url": ODOO_CONFIG.get("base_url"),
-        "jsonrpc_url": _jsonrpc_url(),
-        "version": version,
-    }
+def odoo_health(
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    def _health():
+        if not is_odoo_configured():
+            return {"ok": False, "error": "ODOO_* no configurado en .env"}
+        cfg = get_active_odoo_config()
+        uid = get_odoo_uid()
+        version = odoo_xmlrpc_version()
+        return {
+            "ok": uid is not None,
+            "uid": uid,
+            "uid_source": "ODOO_USER_ID" if cfg.get("uid") is not None else "ODOO_USER",
+            "db": cfg.get("db"),
+            "base_url": cfg.get("base_url"),
+            "jsonrpc_url": _jsonrpc_url(),
+            "odoo_profile": current_odoo_profile(),
+            "version": version,
+        }
+
+    return _with_odoo_profile(odoo_profile, _health)
 
 
-@router.get("/api/odoo/health/test")
-def odoo_health_test():
-    from facturia_matching.odoo_env import _aliare_secret, is_odoo_aliare_profile
+@router.get("/api/odoo/health/import")
+def odoo_health_import(
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    def _health_import():
+        from facturia_matching.odoo.env import _aliare_secret, _sudata_secret
 
-    config = get_odoo_test_config()
-    if not is_odoo_config_ready(config):
-        if is_odoo_aliare_profile():
-            err = (
-                "Faltan variables Odoo Aliare (ODOO_BASE_URL_ALIARE, ODOO_DB_ALIARE, "
-                "ODOO_USER_ALIARE u ODOO_USER_ID_ALIARE con email, y ODOO_API_KEY_ALIARE u ODOO_PASSWORD_ALIARE)."
-            )
+        config = get_odoo_import_config()
+        if not is_odoo_config_ready(config):
+            if is_odoo_sudata_profile():
+                err = (
+                    "Faltan variables Odoo Sudata (ODOO_BASE_URL_SUDATA o URL_SUDATA, "
+                    "ODOO_USER_SUDATA o USERNAME_SUDATA, y ODOO_API_KEY_SUDATA u ODOO_PASSWORD_SUDATA; "
+                    "ODOO_DB_SUDATA o DB_SUDATA opcional)."
+                )
+            elif is_odoo_aliare_profile():
+                err = (
+                    "Faltan variables Odoo Aliare (ODOO_BASE_URL_ALIARE, "
+                    "ODOO_USER_ALIARE u ODOO_USER_ID_ALIARE con email, y ODOO_API_KEY_ALIARE u ODOO_PASSWORD_ALIARE; "
+                    "ODOO_DB_ALIARE opcional si hay una sola base o coincide con el host)."
+                )
+            else:
+                err = (
+                    "Faltan variables Odoo Dinner (ODOO_BASE_URL, "
+                    "ODOO_USER_ID u ODOO_USER, y ODOO_PASSWORD u ODOO_API_KEY; "
+                    "ODOO_DB opcional si hay una sola base)."
+                )
+            return {"ok": False, "error": err}
+        if is_odoo_sudata_profile():
+            _, credential_source = _sudata_secret()
+        elif is_odoo_aliare_profile():
+            _, credential_source = _aliare_secret()
         else:
-            err = (
-                "Faltan ODOO_*_TEST en .env "
-                "(ODOO_API_TEST, ODOO_DB_TEST, y ODOO_PASSWORD_TEST u ODOO_API_KEY_TEST/ODOO_API_KEY, "
-                "más ODOO_USER_ID_TEST u ODOO_USER_TEST)."
-            )
-        return {"ok": False, "error": err}
-    if is_odoo_aliare_profile():
-        _, credential_source = _aliare_secret()
-    else:
-        from facturia_matching.odoo_api import _resolve_odoo_test_secret
+            from facturia_matching.infra.env import env_strip
 
-        _, credential_source = _resolve_odoo_test_secret()
-    result = verify_odoo_config_connection(config)
-    result["credential_source"] = credential_source
-    result["profile"] = "aliare" if is_odoo_aliare_profile() else "default"
-    return result
+            if env_strip("ODOO_API_KEY"):
+                credential_source = "ODOO_API_KEY"
+            elif env_strip("ODOO_PASSWORD"):
+                credential_source = "ODOO_PASSWORD"
+            else:
+                credential_source = "none"
+        result = verify_odoo_config_connection(config)
+        result["credential_source"] = credential_source
+        result["profile"] = current_odoo_profile()
+        return result
+
+    return _with_odoo_profile(odoo_profile, _health_import)
 
 
-@router.post("/api/odoo/import/test")
-def odoo_import_test(payload: Dict[str, Any]):
+@router.post("/api/odoo/import")
+def odoo_import(
+    payload: Dict[str, Any],
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="payload.rows debe ser una lista")
     skip_duplicates = payload.get("skip_duplicates", True)
     update_taxes_if_exists = payload.get("update_taxes_if_exists", True)
-    return import_rows_to_odoo_test(
-        rows,
-        skip_duplicates=bool(skip_duplicates),
-        update_taxes_if_exists=bool(update_taxes_if_exists),
-    )
+    empresa = payload.get("empresa")
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud, payload)
+
+    def _import():
+        return import_rows_to_odoo(
+            rows,
+            skip_duplicates=bool(skip_duplicates),
+            update_taxes_if_exists=bool(update_taxes_if_exists),
+        )
+
+    return _with_odoo_profile(odoo_profile, _import)
 
 
 @router.get("/api/padron/schema")
@@ -204,26 +305,39 @@ def get_padron_schema():
 
 
 @router.get("/api/padron/odoo")
-def get_padron_odoo(limit: int = Query(50, ge=1, le=500)):
-    """Padrón desde últimas facturas Odoo (perfil aliare: odoo antes que Postgres)."""
-    from facturia_matching.config import PADRON_SOURCE
-    from facturia_matching.odoo_env import is_odoo_aliare_profile
-    from facturia_matching.padron_odoo import build_padron_rows_from_odoo
+def get_padron_odoo(
+    limit: int = Query(50, ge=1, le=500),
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    """Padrón desde últimas facturas Odoo (perfil aliare/sudata: odoo antes que Postgres)."""
+    def _padron():
+        from facturia_matching.infra.config import PADRON_SOURCE
+        from facturia_matching.padron.odoo import build_padron_rows_from_odoo
 
-    rows = build_padron_rows_from_odoo(limit=limit)
-    return {
-        "source": PADRON_SOURCE or ("odoo,postgres" if is_odoo_aliare_profile() else "postgres"),
-        "count": len(rows),
-        "rows": rows[:limit],
-    }
+        rows = build_padron_rows_from_odoo(limit=limit)
+        return {
+            "source": PADRON_SOURCE or ("odoo,postgres" if uses_odoo_padron_first() else "postgres"),
+            "count": len(rows),
+            "rows": rows[:limit],
+            "odoo_profile": current_odoo_profile(),
+        }
+
+    return _with_odoo_profile(odoo_profile, _padron)
 
 
 @router.get("/api/proceso/{process_number}")
 def get_proceso(
     process_number: str,
     empresa: Optional[str] = None,
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
     regenerate: bool = Query(False, description="Si true, ignora conversión guardada y regenera desde json_data."),
 ):
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
     def _load():
         filas, etiqueta_options, purchase_summary, source, conversion_meta = load_process_rows(
             process_number,
@@ -240,7 +354,7 @@ def get_proceso(
             conversion_meta,
         )
 
-    return _handle_process_load_errors(_load)
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _load))
 
 
 @router.post("/api/proceso/{process_number}/select-oc")
@@ -248,20 +362,21 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
     comprobante_idx = payload.get("comprobante_idx")
     order_id = payload.get("order_id")
     empresa = payload.get("empresa")
+    odoo_profile = _payload_odoo_profile(payload)
     if comprobante_idx is None:
         raise HTTPException(status_code=400, detail="comprobante_idx es requerido")
     if order_id is None or not str(order_id).strip().isdigit():
         raise HTTPException(status_code=400, detail="order_id debe ser un entero")
 
     def _select():
-        from facturia_matching.process import parse_process_json
-        from facturia_matching.process_conversions import get_saved_conversion
+        from facturia_matching.core.process import parse_process_json
+        from facturia_matching.persistence.process_conversions import get_saved_conversion
 
         process_row = resolve_process_row(process_number, empresa=empresa)
         saved = get_saved_conversion(int(process_row["id"])) if process_row.get("id") else None
 
         if saved and saved.get("rows"):
-            from facturia_matching.saved_row_remap import remap_saved_rows_to_catalog
+            from facturia_matching.persistence.saved_row_remap import remap_saved_rows_to_catalog
 
             filas = remap_saved_rows_to_catalog(saved["rows"])
             conversion_meta = {
@@ -304,7 +419,7 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
             conversion_meta,
         )
 
-    return _handle_process_load_errors(_select)
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _select))
 
 
 @router.post("/api/proceso/{process_number}/rematch-purchase")
@@ -312,6 +427,7 @@ def post_proceso_rematch_purchase(process_number: str, payload: Dict[str, Any]):
     rows = payload.get("rows")
     comprobante_idx = payload.get("comprobante_idx")
     empresa = payload.get("empresa")
+    odoo_profile = _payload_odoo_profile(payload)
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="payload.rows debe ser una lista")
     if comprobante_idx is None:
@@ -354,15 +470,22 @@ def post_proceso_rematch_purchase(process_number: str, payload: Dict[str, Any]):
             conversion_meta,
         )
 
-    return _handle_process_load_errors(_rematch)
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _rematch))
 
 
 @router.put("/api/proceso/{process_number}/conversion")
-def put_proceso_conversion(process_number: str, payload: Dict[str, Any]):
+def put_proceso_conversion(
+    process_number: str,
+    payload: Dict[str, Any],
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_cloud: Optional[str] = Query(None),
+):
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="payload.rows debe ser una lista")
     empresa = payload.get("empresa")
+    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud, payload)
 
     def _save():
         process_row = resolve_process_row(process_number, empresa=empresa)
@@ -381,13 +504,14 @@ def put_proceso_conversion(process_number: str, payload: Dict[str, Any]):
             "saved_at": result.get("saved_at"),
         }
 
-    return _handle_process_load_errors(_save)
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _save))
 
 
 @router.post("/api/proceso/{process_number}/revert")
 def post_proceso_revert(process_number: str, payload: Optional[Dict[str, Any]] = None):
     payload = payload or {}
     empresa = payload.get("empresa")
+    odoo_profile = _payload_odoo_profile(payload)
 
     def _revert():
         process_row = resolve_process_row(process_number, empresa=empresa)
@@ -407,7 +531,7 @@ def post_proceso_revert(process_number: str, payload: Optional[Dict[str, Any]] =
             conversion_meta,
         )
 
-    return _handle_process_load_errors(_revert)
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _revert))
 
 
 @router.post("/api/csv")

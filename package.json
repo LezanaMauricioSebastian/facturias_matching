@@ -1,0 +1,8 @@
+{
+  "name": "facturia-matching-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:js": "node --test tests/js/comprobante_tax.test.mjs"
+  }
+}

@@ -1,14 +1,15 @@
 """Unit tests: montos IVA y percepciones a nivel comprobante (muestra proceso 216)."""
 import unittest
 
-from facturia_matching.amounts import (
+from facturia_matching.core.amounts import (
     apply_fac_percepciones_to_row,
     fac_iva_monto_str,
     format_amount_for_odoo_csv,
     parse_amount,
+    resolve_fac_item_qty_price,
     rows_prepared_for_odoo_csv,
 )
-from facturia_matching.padron_taxes import build_csv_tax_ids_dot_id
+from facturia_matching.padron.taxes import build_csv_tax_ids_dot_id
 
 
 FAC_216 = {
@@ -43,6 +44,22 @@ class TestFacAmounts(unittest.TestCase):
         self.assertEqual(format_amount_for_odoo_csv("1.657.755"), "1657755")
         self.assertEqual(format_amount_for_odoo_csv("45.000"), "45000")
         self.assertEqual(format_amount_for_odoo_csv("82.000,52", money=True), "82000.52")
+
+    def test_resolve_fac_item_from_subtotal_sin_iva(self):
+        item = {
+            "cantidad": 2,
+            "precio_unitario": None,
+            "subtotal_sin_iva": 20660.31,
+        }
+        qty, price = resolve_fac_item_qty_price(item)
+        self.assertEqual(qty, "2")
+        self.assertAlmostEqual(parse_amount(price), 10330.16, places=2)
+
+    def test_resolve_fac_item_when_qty_missing(self):
+        item = {"cantidad": None, "precio_unitario": None, "subtotal_sin_iva": 81630.95}
+        qty, price = resolve_fac_item_qty_price(item)
+        self.assertEqual(qty, "1")
+        self.assertAlmostEqual(parse_amount(price), 81630.95)
 
     def test_rows_prepared_propagate_partner(self):
         rows = [

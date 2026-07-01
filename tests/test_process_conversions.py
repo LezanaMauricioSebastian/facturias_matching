@@ -4,12 +4,15 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from facturia_matching.odoo_env import (
+from facturia_matching.odoo.request_context import odoo_profile_context
+from facturia_matching.core.process import backfill_fac_iva_montos_from_process
+
+from facturia_matching.odoo.env import (
     ODOO_TEMPLATE_ID_ALIARE,
     ODOO_TEMPLATE_ID_DEFAULT,
     get_conversion_template_id,
 )
-from facturia_matching.process_conversions import (
+from facturia_matching.persistence.process_conversions import (
     CONVERSION_FORMAT,
     ODOO_TEMPLATE_ID,
     build_converted_payload,
@@ -37,9 +40,9 @@ class TestProcessConversionsPayload(unittest.TestCase):
         self.assertIn("odoo_profile", data)
         self.assertEqual(parse_converted_payload(raw), rows)
 
-    @patch("facturia_matching.odoo_env.is_odoo_aliare_profile", return_value=True)
-    def test_conversion_template_id_aliare(self, _mock):
-        self.assertEqual(get_conversion_template_id(), ODOO_TEMPLATE_ID_ALIARE)
+    def test_conversion_template_id_aliare(self):
+        with odoo_profile_context("aliare"):
+            self.assertEqual(get_conversion_template_id(), ODOO_TEMPLATE_ID_ALIARE)
 
     def test_conversion_template_id_default(self):
         self.assertEqual(get_conversion_template_id(), ODOO_TEMPLATE_ID_DEFAULT)
@@ -66,7 +69,7 @@ class TestProcessConversionsPayload(unittest.TestCase):
 
 
 class TestResolveProcessRow(unittest.TestCase):
-    @patch("facturia_matching.process_conversions.get_process")
+    @patch("facturia_matching.persistence.process_conversions.get_process")
     def test_resolve_process_row_ok(self, mock_get):
         mock_get.return_value = {"id": 188, "company_id": 1, "user_id": 3, "process_number": 185}
         row = resolve_process_row("185", empresa="1")
@@ -74,7 +77,7 @@ class TestResolveProcessRow(unittest.TestCase):
         self.assertEqual(row["company_id"], 1)
         self.assertEqual(row["user_id"], 3)
 
-    @patch("facturia_matching.process_conversions.get_process")
+    @patch("facturia_matching.persistence.process_conversions.get_process")
     def test_resolve_process_row_missing_company(self, mock_get):
         mock_get.return_value = {"id": 1, "company_id": None}
         with self.assertRaises(Exception):
@@ -82,8 +85,9 @@ class TestResolveProcessRow(unittest.TestCase):
 
 
 class TestSaveConversion(unittest.TestCase):
-    @patch("facturia_matching.process_conversions.get_mysql_connection")
-    def test_save_conversion_insert(self, mock_conn_fn):
+    @patch("facturia_matching.persistence.process_conversions.ensure_export_template_exists")
+    @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
+    def test_save_conversion_insert(self, mock_conn_fn, _mock_ensure):
         conn = MagicMock()
         mock_conn_fn.return_value = conn
         cur = MagicMock()
@@ -100,7 +104,7 @@ class TestSaveConversion(unittest.TestCase):
         insert_sql = cur.execute.call_args_list[-1][0][0]
         self.assertIn("INSERT INTO", insert_sql)
 
-    @patch("facturia_matching.process_conversions.get_mysql_connection")
+    @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
     def test_save_conversion_update(self, mock_conn_fn):
         conn = MagicMock()
         mock_conn_fn.return_value = conn
@@ -115,7 +119,7 @@ class TestSaveConversion(unittest.TestCase):
         self.assertIn("UPDATE", update_sql)
         conn.commit.assert_called_once()
 
-    @patch("facturia_matching.process_conversions.get_mysql_connection")
+    @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
     def test_delete_conversion(self, mock_conn_fn):
         conn = MagicMock()
         mock_conn_fn.return_value = conn
@@ -129,6 +133,51 @@ class TestSaveConversion(unittest.TestCase):
         delete_sql = cur.execute.call_args[0][0]
         self.assertIn("DELETE FROM", delete_sql)
         conn.commit.assert_called_once()
+
+
+class TestBackfillFacIvaMontos(unittest.TestCase):
+    @patch("facturia_matching.core.process.get_process")
+    def test_backfill_from_process_json_without_line_iva(self, mock_get):
+        mock_get.return_value = {
+            "json_data": json.dumps(
+                {
+                    "facturas": [
+                        {
+                            "json": {
+                                "factura": {
+                                    "iva_21": "15893.38",
+                                    "iva_10_5": "2832.75",
+                                    "items": [{"descripcion": "Item A"}],
+                                }
+                            }
+                        }
+                    ]
+                }
+            )
+        }
+        rows = [{"__comprobante_idx": 0, "iva_pct": ""}]
+        out = backfill_fac_iva_montos_from_process(rows, "123")
+        montos = json.loads(out[0]["__fac_iva_montos"])
+        self.assertEqual(montos.get("21"), "15893.38")
+        self.assertEqual(montos.get("10.5"), "2832.75")
+        self.assertTrue(str(out[0].get("__fac_iva_monto") or "").strip())
+
+
+class TestConversionIvaMetadata(unittest.TestCase):
+    def test_roundtrip_preserves_fac_iva_metadata(self):
+        rows = [
+            {
+                "partner_id": "1",
+                "__fac_subtotal": "110024.13",
+                "__fac_iva_monto": "20521.22",
+                "__fac_iva_montos": '{"21": "20521.22"}',
+            }
+        ]
+        raw = build_converted_payload(rows)
+        parsed = parse_converted_payload(raw)
+        self.assertEqual(parsed[0]["__fac_iva_montos"], rows[0]["__fac_iva_montos"])
+        self.assertEqual(parsed[0]["__fac_subtotal"], rows[0]["__fac_subtotal"])
+        self.assertEqual(parsed[0]["__fac_iva_monto"], rows[0]["__fac_iva_monto"])
 
 
 if __name__ == "__main__":

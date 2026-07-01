@@ -2,8 +2,8 @@
 import unittest
 from unittest.mock import patch
 
-from facturia_matching.odoo_import import collect_expected_tax_amounts_from_group
-from facturia_matching.padron_taxes import _label_key, _resolve_iibb_label_to_id
+from facturia_matching.odoo.import_ import collect_expected_tax_amounts_from_group
+from facturia_matching.padron.taxes import _label_key, _resolve_iibb_label_to_id
 
 
 def _by_name(*pairs):
@@ -49,8 +49,8 @@ class TestIibbLabelResolution(unittest.TestCase):
                 "invoice_line_ids/price_unit": "272644,68",
             }
         ]
-        with patch("facturia_matching.padron_taxes.get_tax_id_by_name", return_value=id_by_name):
-            with patch("facturia_matching.padron_taxes.get_tax_name_by_id", return_value=by_name):
+        with patch("facturia_matching.padron.taxes.get_tax_id_by_name", return_value=id_by_name):
+            with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value=by_name):
                 amounts = collect_expected_tax_amounts_from_group(rows)
         self.assertEqual(amounts.get(2), 3271.74)
         self.assertNotIn(1, amounts)

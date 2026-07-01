@@ -26,9 +26,65 @@ body {
 .controlsRow .field { display:flex; flex-direction:column; }
 .searchBar { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .btnGroup { display:flex; gap:10px; align-items:flex-end; }
+.btnGroupWrap {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.contextRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
 body.embed-mode .searchBar { display: none; }
-body.embed-mode .wrap { padding-top: 14px; padding-bottom: 20px; }
+body.embed-mode .wrap { padding: 0 12px 12px; }
+body.embed-mode .grid { gap: 10px; }
+body.embed-mode .actionTitle { display: none; }
+body.embed-mode .actionHint { display: none; }
+body.embed-mode .actionCard {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 8px 12px;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+body.embed-mode .controlsRow {
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+body.embed-mode .btnGroupWrap {
+  width: 100%;
+  justify-content: space-between;
+}
+body.embed-mode .contextRow { margin-top: 6px; min-height: 14px; }
+body.embed-mode .summaryHint { margin-bottom: 6px; }
+body.embed-mode .ocPickerBar { margin-bottom: 8px; padding: 8px 10px; }
+body.embed-mode .contextRow .status { margin-top: 0; }
+body.embed-mode .tableScroll { max-height: min(62vh, 680px); }
+body.embed-mode .card { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05); }
+body.embed-mode .processCard { padding: 10px 12px; }
+body.embed-mode .comprobanteCardHeader { display: none; }
+body.embed-mode .downloadBtn {
+  padding: 8px 14px;
+  min-width: 0;
+  border-radius: 10px;
+}
+body.embed-mode button.secondary,
+body.embed-mode .headerActionBtn.secondary {
+  padding: 8px 12px;
+}
+
+@media (min-width: 560px) {
+  body.embed-mode .btnGroupWrap {
+    width: auto;
+    margin-left: auto;
+  }
+}
 
 .card {
   background: var(--card);
@@ -71,6 +127,39 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .summaryHint { margin: 0 0 10px; }
+.summaryBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.metaBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  background: #f1f5f9;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.metaBadgeOk {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.metaBadgePending {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+.metaBadgeBad {
+  background: #fef2f2;
+  color: var(--bad);
+  border-color: #fecaca;
+}
 .status { font-size: 12px; margin-top: 10px; color: var(--muted); }
 .status.ok { color: var(--ok); }
 .status.bad { color: var(--bad); }
@@ -95,9 +184,12 @@ thead th {
   border-bottom: 1px solid var(--line);
   color: #0b1324;
   font-weight: 700;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
-th, td { padding:10px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+th, td { padding:8px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
 th { text-align:left; position:sticky; top:0; z-index:1; }
 tbody tr:hover td { background: rgba(37,99,235,.03); }
 td input, td select { min-width:auto; width:100%; padding:8px 10px; border-radius:10px; }
@@ -217,42 +309,53 @@ select.selectLoading {
 
 .headerActionCell {
   text-align: center;
-  vertical-align: bottom;
-  white-space: normal;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.headerAddTaxCell {
+  width: 44px;
+  min-width: 44px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.headerTaxCell {
+  vertical-align: middle;
+}
+
+.headerTaxHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
 }
 
 .headerActionBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  padding: 6px 10px;
-  font-size: 18px;
+  min-width: 28px;
+  padding: 2px 6px;
+  font-size: 16px;
   line-height: 1;
 }
 
-.headerActionLabel {
-  display: block;
-  margin-top: 6px;
+.headerTaxLabel {
   font-size: 11px;
   font-weight: 700;
-  color: var(--muted);
-  line-height: 1.25;
-  max-width: 92px;
-}
-
-.headerTaxLabel {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.25;
-  margin-bottom: 6px;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .headerRemoveTaxBtn {
-  min-width: 32px;
-  padding: 4px 8px;
-  font-size: 16px;
+  min-width: 24px;
+  padding: 2px 5px;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .headerActionBodyCell {
@@ -398,5 +501,96 @@ select.selectLoading {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.comprobantesStack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.comprobanteCard {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.comprobanteCardHeader {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--head);
+}
+
+.comprobanteCardTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0b1324;
+  line-height: 1.3;
+}
+
+.comprobanteTableMount {
+  overflow-x: auto;
+}
+
+.comprobanteTableMount table {
+  margin: 0;
+}
+
+.comprobanteFooter {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--line);
+  background: #fafbfd;
+}
+
+.comprobanteTotalsTable {
+  width: 100%;
+  max-width: 520px;
+  margin-left: auto;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.comprobanteTotalsTable th,
+.comprobanteTotalsTable td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+
+.comprobanteTotalsTable th:first-child,
+.comprobanteTotalsTable td:first-child {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.comprobanteTotalsTable tr.totalsGrand td {
+  font-weight: 700;
+  border-top: 2px solid var(--line);
+}
+
+.comprobanteFooterInput {
+  width: 100%;
+  max-width: 160px;
+  margin-left: auto;
+  display: block;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: right;
+  background: #fff;
+}
+
+.comprobanteFooterInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.comprobanteFooterReadonly {
+  font-variant-numeric: tabular-nums;
 }
 

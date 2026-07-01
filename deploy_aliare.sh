@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Los valores sensibles viven en Secret Manager con sufijo _ALIARE.
 # El servicio monta cada secret en el nombre de env estándar que lee la app
-# (ej. secret ODOO_API_KEY_TEST_ALIARE → env ODOO_API_KEY_TEST).
+# (ej. secret ODOO_API_KEY_ALIARE → env ODOO_API_KEY_ALIARE).
 #
 # Requisitos: gcloud autenticado, permisos Run + Artifact Registry + Secret Manager.
 #
@@ -205,6 +205,16 @@ ODOO_PASSWORD_ALIARE|ODOO_API_KEY_ALIARE)
   return 1
 }
 
+is_default_odoo_public_env_key() {
+  local key="$1"
+  case "${key}" in
+    ODOO_BASE_URL|ODOO_ENDPOINT|ODOO_DB|ODOO_USER_ID|ODOO_USER|PADRON_SOURCE)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_aliare_public_env_key() {
   local key="$1"
   [[ "${key}" == *_ALIARE ]] || [[ "${key}" == "FACTURIA_ODOO_PROFILE" ]]
@@ -238,7 +248,8 @@ is_deploy_public_env_key() {
   local key="$1"
   is_aliare_public_env_key "${key}" \
     || is_mysql_public_env_key "${key}" \
-    || is_padron_public_env_key "${key}"
+    || is_padron_public_env_key "${key}" \
+    || is_default_odoo_public_env_key "${key}"
 }
 
 normalize_mysql_env_key() {
