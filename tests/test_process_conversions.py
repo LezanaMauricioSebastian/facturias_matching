@@ -55,9 +55,30 @@ class TestProcessConversionsPayload(unittest.TestCase):
                 "otros_impuestos_2": "B",
                 "otros_impuestos_2_monto": "2",
                 "otros_impuestos_3": "C",
+                "otros_impuestos_3_monto": "3",
             }
         ]
         self.assertEqual(infer_otro_impuesto_indices(rows), [1, 2, 3])
+
+    def test_infer_otro_impuesto_indices_ignores_label_only_without_monto(self):
+        rows = [{"otros_impuestos": "A", "otros_impuestos_2": "B", "otros_impuestos_2_monto": ""}]
+        self.assertEqual(infer_otro_impuesto_indices(rows), [1])
+
+    def test_strip_empty_extra_otro_impuesto_slots(self):
+        from facturia_matching.persistence.process_conversions import _strip_empty_extra_otro_impuesto_slots
+
+        rows = [
+            {
+                "otros_impuestos": "IIBB",
+                "otros_impuestos_monto": "100",
+                "otros_impuestos_2": "Ganancias",
+                "otros_impuestos_2_monto": "",
+                "otros_impuestos_3": "Otro",
+            }
+        ]
+        _strip_empty_extra_otro_impuesto_slots(rows)
+        self.assertEqual(infer_otro_impuesto_indices(rows), [1])
+        self.assertNotIn("otros_impuestos_2", rows[0])
 
     def test_parse_rejects_invalid_format(self):
         with self.assertRaises(Exception):

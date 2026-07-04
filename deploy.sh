@@ -11,9 +11,9 @@ set -euo pipefail
 #
 # Uso:
 #   chmod +x deploy.sh
-#   ./deploy.sh --dev                 # deploy rápido a odoo-dev (sin tocar env/secrets del servicio)
+#   ./deploy.sh --dev                 # deploy a odoo-dev (Dinner TEST + Aliare testct)
 #   ./deploy.sh --setup-secrets       # crea/actualiza secrets _DINNER (interactivo)
-#   ./deploy.sh                       # build + deploy prod (matching-ui-odoo)
+#   ./deploy.sh                       # deploy prod matching-ui-odoo (Dinner prod + Central Ticket)
 #   ./deploy.sh --check-secrets       # solo verifica que existan los secrets
 #
 # Config no sensible (hosts, URLs Odoo, DB names, user ids): copiá .env.dinner.example
@@ -33,7 +33,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-PROJECT_ID="${PROJECT_ID:-fudo-481618}"
+# Proyecto GCP (Secret Manager + Cloud Run). No depende de `gcloud config get-value project`.
+DEFAULT_GCP_PROJECT="fudo-481618"
+PROJECT_ID="${PROJECT_ID:-${DEFAULT_GCP_PROJECT}}"
+export CLOUDSDK_CORE_PROJECT="${PROJECT_ID}"
 REGION="${REGION:-southamerica-east1}"
 REPO_NAME="${REPO_NAME:-containers}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
@@ -43,18 +46,21 @@ SECRETS="${SECRETS:-}"
 
 DEV_MODE=0
 MODE="deploy"
+SKIP_SECRETS_CHECK=0
+GCLOUD_SECRET_ACCESS_ERROR=""
 for arg in "$@"; do
   case "$arg" in
     --dev) DEV_MODE=1 ;;
     --setup-secrets) MODE="setup-secrets" ;;
     --check-secrets) MODE="check-secrets" ;;
+    --skip-secrets-check) SKIP_SECRETS_CHECK=1 ;;
     -h|--help)
       sed -n '4,32p' "$0"
       exit 0
       ;;
     *)
       echo "Argumento desconocido: $arg" >&2
-      echo "Uso: $0 [--dev | --setup-secrets | --check-secrets | --help]" >&2
+      echo "Uso: $0 [--dev | --setup-secrets | --check-secrets | --skip-secrets-check | --help]" >&2
       exit 1
       ;;
   esac
@@ -75,8 +81,11 @@ IMAGE_URI="${AR_HOST}/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${TAG}"
 
 DINNER_DEFAULT_DB_HOST_MYSQL="${DINNER_DEFAULT_DB_HOST_MYSQL:-167.250.5.17}"
 DINNER_DEFAULT_DB_PORT_MYSQL="${DINNER_DEFAULT_DB_PORT_MYSQL:-3306}"
-DINNER_DEFAULT_DB_USER_MYSQL="${DINNER_DEFAULT_DB_USER_MYSQL:-sudataco_gestion}"
+DINNER_DEFAULT_DB_USER_MYSQL="${DINNER_DEFAULT_DB_USER_MYSQL:-sudataco_admin}"
 DINNER_DEFAULT_DB_NAME_MYSQL="${DINNER_DEFAULT_DB_NAME_MYSQL:-sudataco_app}"
+DINNER_DEV_DEFAULT_DB_USER_MYSQL="${DINNER_DEV_DEFAULT_DB_USER_MYSQL:-sudataco_admin}"
+DINNER_DEV_PROCESS_SCHEMA="${DINNER_DEV_PROCESS_SCHEMA:-sudataco_staging}"
+DINNER_PROD_PROCESS_SCHEMA="${DINNER_PROD_PROCESS_SCHEMA:-sudataco_facturia}"
 
 declare -a SECRET_ENV_KEYS=(
   DB_PASSWORD
@@ -92,9 +101,57 @@ declare -a SECRET_GCP_NAMES=(
   ODOO_API_KEY_DINNER
 )
 
+declare -a DEV_SECRET_ENV_KEYS=(
+  DB_PASSWORD
+  DB_PASSWORD_MYSQL
+  ODOO_PASSWORD
+  ODOO_API_KEY
+  ODOO_PASSWORD_ALIARE
+  ODOO_API_KEY_ALIARE
+)
+
+declare -a DEV_SECRET_GCP_NAMES=(
+  DB_PASSWORD_DINNER
+  DB_PASSWORD_MYSQL_DINNER
+  ODOO_PASSWORD_TEST
+  ODOO_API_KEY_TEST
+  ODOO_PASSWORD_ALIARE
+  ODOO_API_KEY_ALIARE
+)
+
 secret_exists() {
   local name="$1"
-  gcloud secrets describe "${name}" --project "${PROJECT_ID}" >/dev/null 2>&1
+  local err=""
+  if gcloud secrets describe "${name}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+    return 0
+  fi
+  err="$(gcloud secrets describe "${name}" --project "${PROJECT_ID}" 2>&1 >/dev/null || true)"
+  if [[ "${err}" == *"Reauthentication"* ]] \
+    || [[ "${err}" == *"PERMISSION_DENIED"* ]] \
+    || [[ "${err}" == *"Permission denied"* ]] \
+    || [[ "${err}" == *"does not have"* ]]; then
+    GCLOUD_SECRET_ACCESS_ERROR="${err}"
+  fi
+  return 1
+}
+
+report_secret_access_failure() {
+  if [[ -n "${GCLOUD_SECRET_ACCESS_ERROR}" ]]; then
+    echo "" >&2
+    echo "ERROR: gcloud no puede leer Secret Manager en proyecto ${PROJECT_ID}." >&2
+    echo "  Cuenta activa: $(gcloud config get-value account 2>/dev/null || echo '?')" >&2
+    echo "  Probá: gcloud auth login" >&2
+    echo "  (Los secrets pueden existir en la consola; la CLI no los ve sin auth/permisos.)" >&2
+    exit 1
+  fi
+}
+
+report_required_secret_missing() {
+  local label="$1"
+  report_secret_access_failure
+  echo "ERROR: falta secret ${label}" >&2
+  echo "Ejecutá: $0 --setup-secrets" >&2
+  exit 1
 }
 
 resolve_secret_gcp_name() {
@@ -111,7 +168,7 @@ resolve_secret_gcp_name() {
   echo ""
 }
 
-build_default_secrets_arg() {
+build_prod_secrets_arg() {
   local pairs=()
   local i env_key gcp_name resolved
   for i in "${!SECRET_ENV_KEYS[@]}"; do
@@ -122,7 +179,29 @@ build_default_secrets_arg() {
       pairs+=("${env_key}=${resolved}:latest")
     fi
   done
-  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA ODOO_PASSWORD_ALIARE ODOO_API_KEY_ALIARE; do
+  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA ODOO_PASSWORD_ALIARE; do
+    resolved="$(resolve_secret_gcp_name "${env_key}" "${env_key}")"
+    if [[ -n "${resolved}" ]]; then
+      pairs+=("${env_key}=${resolved}:latest")
+    fi
+  done
+  # Central Ticket (Aliare prod): solo contraseña; no montar ODOO_API_KEY_ALIARE.
+  local IFS=,
+  echo "${pairs[*]}"
+}
+
+build_dev_secrets_arg() {
+  local pairs=()
+  local i env_key gcp_name resolved
+  for i in "${!DEV_SECRET_ENV_KEYS[@]}"; do
+    env_key="${DEV_SECRET_ENV_KEYS[$i]}"
+    gcp_name="${DEV_SECRET_GCP_NAMES[$i]}"
+    resolved="$(resolve_secret_gcp_name "${env_key}" "${gcp_name}")"
+    if [[ -n "${resolved}" ]]; then
+      pairs+=("${env_key}=${resolved}:latest")
+    fi
+  done
+  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA; do
     resolved="$(resolve_secret_gcp_name "${env_key}" "${env_key}")"
     if [[ -n "${resolved}" ]]; then
       pairs+=("${env_key}=${resolved}:latest")
@@ -132,10 +211,42 @@ build_default_secrets_arg() {
   echo "${pairs[*]}"
 }
 
+build_default_secrets_arg() {
+  build_prod_secrets_arg
+}
+
+check_dev_secrets() {
+  local pg_ok=0 mysql_ok=0
+  GCLOUD_SECRET_ACCESS_ERROR=""
+  if secret_exists "DB_PASSWORD_DINNER" || secret_exists "DB_PASSWORD"; then pg_ok=1; fi
+  report_secret_access_failure
+  if secret_exists "DB_PASSWORD_MYSQL_DINNER" || secret_exists "DB_PASSWORD_MYSQL"; then mysql_ok=1; fi
+  report_secret_access_failure
+  if [[ "${pg_ok}" -eq 0 ]]; then
+    report_required_secret_missing "Postgres (DB_PASSWORD_DINNER o DB_PASSWORD)"
+  fi
+  if [[ "${mysql_ok}" -eq 0 ]]; then
+    report_required_secret_missing "MySQL (DB_PASSWORD_MYSQL_DINNER o DB_PASSWORD_MYSQL)"
+  fi
+  local odoo_test=0
+  for name in ODOO_PASSWORD_TEST ODOO_API_KEY_TEST; do
+    if secret_exists "${name}"; then
+      odoo_test=1
+      break
+    fi
+  done
+  if [[ "${odoo_test}" -eq 0 ]]; then
+    echo "AVISO: no hay ODOO_PASSWORD_TEST ni ODOO_API_KEY_TEST; Dinner TEST no conectará." >&2
+    echo "  Creá los secrets con: $0 --setup-secrets" >&2
+  fi
+}
+
 check_secrets() {
   local missing=()
   local i env_key gcp_name resolved
+  GCLOUD_SECRET_ACCESS_ERROR=""
   echo "Verificando secrets Dinner en proyecto ${PROJECT_ID}..."
+  echo "  Cuenta gcloud: $(gcloud config get-value account 2>/dev/null || echo '?')"
   for i in "${!SECRET_GCP_NAMES[@]}"; do
     env_key="${SECRET_ENV_KEYS[$i]}"
     gcp_name="${SECRET_GCP_NAMES[$i]}"
@@ -143,23 +254,24 @@ check_secrets() {
     if [[ -n "${resolved}" ]]; then
       echo "  OK  ${resolved} → ${env_key}"
     else
+      report_secret_access_failure
       echo "  --  ${gcp_name} / ${env_key} (no existe; opcional si no usás esa credencial)"
       missing+=("${gcp_name}")
     fi
   done
 
+  report_secret_access_failure
+
   local pg_ok=0 mysql_ok=0
   if secret_exists "DB_PASSWORD_DINNER" || secret_exists "DB_PASSWORD"; then pg_ok=1; fi
+  report_secret_access_failure
   if secret_exists "DB_PASSWORD_MYSQL_DINNER" || secret_exists "DB_PASSWORD_MYSQL"; then mysql_ok=1; fi
+  report_secret_access_failure
   if [[ "${pg_ok}" -eq 0 ]]; then
-    echo "ERROR: falta secret Postgres (DB_PASSWORD_DINNER o DB_PASSWORD)" >&2
-    echo "Ejecutá: $0 --setup-secrets" >&2
-    exit 1
+    report_required_secret_missing "Postgres (DB_PASSWORD_DINNER o DB_PASSWORD)"
   fi
   if [[ "${mysql_ok}" -eq 0 ]]; then
-    echo "ERROR: falta secret MySQL (DB_PASSWORD_MYSQL_DINNER o DB_PASSWORD_MYSQL)" >&2
-    echo "Ejecutá: $0 --setup-secrets" >&2
-    exit 1
+    report_required_secret_missing "MySQL (DB_PASSWORD_MYSQL_DINNER o DB_PASSWORD_MYSQL)"
   fi
 
   local odoo_any=0
@@ -222,17 +334,21 @@ setup_secrets_interactive() {
   echo "=== Alta / actualización de secrets Dinner (proyecto ${PROJECT_ID}) ==="
   echo "DB_PASSWORD_DINNER       → Postgres padrón"
   echo "DB_PASSWORD_MYSQL_DINNER → MySQL FacturIA (process / process_conversions)"
-  echo "ODOO_PASSWORD_DINNER   → ODOO_PASSWORD"
-  echo "ODOO_API_KEY_DINNER    → ODOO_API_KEY"
+  echo "ODOO_PASSWORD_DINNER   → ODOO_PASSWORD (prod)"
+  echo "ODOO_API_KEY_DINNER    → ODOO_API_KEY (prod)"
+  echo "ODOO_PASSWORD_TEST     → ODOO_PASSWORD en odoo-dev (Dinner TEST)"
+  echo "ODOO_API_KEY_TEST      → ODOO_API_KEY en odoo-dev (Dinner TEST)"
   echo "Enter sin valor = omitir ese secret."
   echo ""
 
   gcloud services enable secretmanager.googleapis.com --project "${PROJECT_ID}" >/dev/null
 
+  local -a setup_gcp_names=("${SECRET_GCP_NAMES[@]}" ODOO_PASSWORD_TEST ODOO_API_KEY_TEST)
+  local -a setup_env_keys=("${SECRET_ENV_KEYS[@]}" ODOO_PASSWORD ODOO_API_KEY)
   local i env_key gcp_name val confirm action
-  for i in "${!SECRET_GCP_NAMES[@]}"; do
-    env_key="${SECRET_ENV_KEYS[$i]}"
-    gcp_name="${SECRET_GCP_NAMES[$i]}"
+  for i in "${!setup_gcp_names[@]}"; do
+    env_key="${setup_env_keys[$i]}"
+    gcp_name="${setup_gcp_names[$i]}"
     if secret_exists "${gcp_name}"; then
       read -r -p "${gcp_name} → ${env_key} [existe]. s=actualizar, Enter=omitir: " action
       [[ "${action}" == "s" || "${action}" == "S" ]] || continue
@@ -257,7 +373,8 @@ is_secret_env_key() {
   local key="$1"
   case "${key}" in
     DB_PASSWORD|DB_PASSWORD_MYSQL|DB_PASSWORD_DINNER|DB_PASSWORD_MYSQL_DINNER|\
-ODOO_PASSWORD|ODOO_API_KEY|ODOO_PASSWORD_DINNER|ODOO_API_KEY_DINNER|\
+    ODOO_PASSWORD|ODOO_API_KEY|ODOO_PASSWORD_DINNER|ODOO_API_KEY_DINNER|\
+ODOO_PASSWORD_TEST|ODOO_API_KEY_TEST|\
 ODOO_PASSWORD_SUDATA|ODOO_API_KEY_SUDATA|PASSWORD_SUDATA|API_KEY_SUDATA|\
 ODOO_PASSWORD_ALIARE|ODOO_API_KEY_ALIARE)
       return 0
@@ -305,7 +422,8 @@ is_mysql_public_env_key() {
   local key="$1"
   case "${key}" in
     DB_HOST_MYSQL|DB_HOST_mysql|DB_PORT_MYSQL|DB_PORT_mysql|\
-DB_USER_MYSQL|DB_USER_mysql|DB_NAME_MYSQL|DB_NAME_mysql)
+DB_USER_MYSQL|DB_USER_mysql|DB_NAME_MYSQL|DB_NAME_mysql|\
+PROCESS_SCHEMA)
       return 0
       ;;
   esac
@@ -373,10 +491,60 @@ default_mysql_env_pairs() {
     "DB_NAME_MYSQL=${DINNER_DEFAULT_DB_NAME_MYSQL}"
 }
 
+# odoo-dev: MySQL staging (sudataco_staging) con usuario admin.
+default_dev_mysql_env_pairs() {
+  merge_env_pairs \
+    "PROCESS_SCHEMA=${DINNER_DEV_PROCESS_SCHEMA}" \
+    "DB_USER_MYSQL=${DINNER_DEV_DEFAULT_DB_USER_MYSQL}"
+}
+
+# matching-ui-odoo (prod): MySQL FacturIA producción (sudataco_facturia).
+default_prod_mysql_env_pairs() {
+  merge_env_pairs \
+    "PROCESS_SCHEMA=${DINNER_PROD_PROCESS_SCHEMA}"
+}
+
 default_dinner_env_pairs() {
   merge_env_pairs \
     "FACTURIA_ODOO_PROFILE=default" \
     "$(default_mysql_env_pairs)"
+}
+
+# matching-ui-odoo (prod): Dinner producción (lectura-escritura).
+default_prod_dinner_env_pairs() {
+  merge_env_pairs \
+    "ODOO_BASE_URL=https://dinner.odoo.com" \
+    "ODOO_ENDPOINT=/jsonrpc" \
+    "ODOO_DB=somoswilox-dinner-main-20779820" \
+    "ODOO_USER_ID=29"
+}
+
+# odoo-dev: Dinner TEST (lectura-escritura para pruebas).
+# Sin ODOO_DB: la app resuelve la base vía /web/database/list + credenciales.
+default_dev_dinner_env_pairs() {
+  merge_env_pairs \
+    "ODOO_BASE_URL=https://dinner-test.odoo.com" \
+    "ODOO_ENDPOINT=/jsonrpc" \
+    "ODOO_USER_ID=55" \
+    "ODOO_USER=fundacion.sud@gmail.com"
+}
+
+# matching-ui-odoo (prod): perfil Aliare → Odoo Central Ticket (password, sin API key).
+default_prod_aliare_env_pairs() {
+  merge_env_pairs \
+    "ODOO_BASE_URL_ALIARE=https://centralticket.aliare.com.ar" \
+    "ODOO_ENDPOINT_ALIARE=/jsonrpc" \
+    "ODOO_DB_ALIARE=centralticket" \
+    "ODOO_USER_ALIARE=conexion@sudata.com.ar"
+}
+
+# odoo-dev: Aliare staging testct (como .env local).
+default_dev_aliare_env_pairs() {
+  merge_env_pairs \
+    "ODOO_BASE_URL_ALIARE=https://testct.aliare.com.ar" \
+    "ODOO_ENDPOINT_ALIARE=/jsonrpc" \
+    "ODOO_DB_ALIARE=staging-ejtngefwqs.cloudpepper.site" \
+    "ODOO_USER_ALIARE=conexion@sudata.com.ar"
 }
 
 load_env_vars_from_file() {
@@ -397,6 +565,9 @@ load_env_vars_from_file() {
     key="$(echo "${key}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     val="$(echo "${val}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     is_secret_env_key "${key}" && continue
+    if [[ "${DEV_MODE}" -eq 1 && "${key}" == "ODOO_DB" ]]; then
+      continue
+    fi
     if [[ "${file}" == ".env" ]]; then
       if ! is_deploy_public_env_key "${key}"; then
         continue
@@ -483,6 +654,22 @@ build_deploy_env_vars() {
     fi
   fi
 
+  if [[ "${DEV_MODE}" -eq 1 ]]; then
+    IFS=',' read -r -a dev_dinner <<< "$(default_dev_dinner_env_pairs)"
+    all_pairs+=("${dev_dinner[@]}")
+    IFS=',' read -r -a dev_aliare <<< "$(default_dev_aliare_env_pairs)"
+    all_pairs+=("${dev_aliare[@]}")
+    IFS=',' read -r -a dev_mysql <<< "$(default_dev_mysql_env_pairs)"
+    all_pairs+=("${dev_mysql[@]}")
+  else
+    IFS=',' read -r -a prod_dinner <<< "$(default_prod_dinner_env_pairs)"
+    all_pairs+=("${prod_dinner[@]}")
+    IFS=',' read -r -a prod_aliare <<< "$(default_prod_aliare_env_pairs)"
+    all_pairs+=("${prod_aliare[@]}")
+    IFS=',' read -r -a prod_mysql <<< "$(default_prod_mysql_env_pairs)"
+    all_pairs+=("${prod_mysql[@]}")
+  fi
+
   merge_env_pairs "${all_pairs[@]}"
 }
 
@@ -490,14 +677,23 @@ deploy_service() {
   local secrets_arg env_arg env_source
 
   if [[ "${DEV_MODE}" -eq 0 ]]; then
-    check_secrets
-    secrets_arg="${SECRETS:-$(build_default_secrets_arg)}"
+    if [[ "${SKIP_SECRETS_CHECK}" -eq 0 ]]; then
+      check_secrets
+    else
+      echo "AVISO: --skip-secrets-check; no se verifican secrets." >&2
+    fi
+    secrets_arg="${SECRETS:-$(build_prod_secrets_arg)}"
     env_arg="${ENV_VARS:-$(build_deploy_env_vars)}"
     env_source="$(resolve_env_file)"
   else
-    secrets_arg="${SECRETS:-}"
-    env_arg="${ENV_VARS:-}"
-    env_source="(config existente en Cloud Run)"
+    if [[ "${SKIP_SECRETS_CHECK}" -eq 0 ]]; then
+      check_dev_secrets
+    else
+      echo "AVISO: --skip-secrets-check; no se verifican secrets." >&2
+    fi
+    secrets_arg="${SECRETS:-$(build_dev_secrets_arg)}"
+    env_arg="${ENV_VARS:-$(build_deploy_env_vars)}"
+    env_source="defaults odoo-dev (Dinner TEST + Aliare testct)"
   fi
 
   echo "Entorno:   ${ENV_LABEL}"
@@ -506,10 +702,14 @@ deploy_service() {
   echo "Servicio:  ${SERVICE_NAME}"
   echo "Imagen:    ${IMAGE_URI}"
   if [[ "${DEV_MODE}" -eq 1 ]]; then
-    echo "Modo dev:  no se sobreescriben env vars ni secrets (salvo ENV_VARS/SECRETS explícitos)."
+    echo "Modo dev:  odoo-dev → Dinner TEST + Aliare testct + MySQL ${DINNER_DEV_PROCESS_SCHEMA}."
+    if [[ -n "${env_arg}" ]]; then
+      echo "Env vars:  ${env_arg}"
+    fi
   elif [[ -n "${env_arg}" ]]; then
+    echo "Modo prod: matching-ui-odoo → Dinner prod + Central Ticket + MySQL ${DINNER_PROD_PROCESS_SCHEMA}."
     echo "Env vars:  ${env_arg}"
-    echo "             (defaults MySQL + FACTURIA_ODOO_PROFILE; override vía ${env_source:-.env.dinner})"
+    echo "             (override vía ${env_source:-.env.dinner})"
   else
     echo "AVISO: sin ENV_VARS; copiá .env.dinner.example → .env.dinner" >&2
   fi

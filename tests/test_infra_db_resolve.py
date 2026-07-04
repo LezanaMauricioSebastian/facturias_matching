@@ -57,5 +57,17 @@ class TestMysqlConnectKwargs(unittest.TestCase):
         )
 
 
+class TestProcessSchema(unittest.TestCase):
+    def test_default_process_schema(self):
+        from facturia_matching.infra.config import resolve_process_schema
+
+        self.assertEqual(resolve_process_schema(""), "sudataco_facturia")
+
+    def test_staging_process_schema(self):
+        from facturia_matching.infra.config import resolve_process_schema
+
+        self.assertEqual(resolve_process_schema("sudataco_staging"), "sudataco_staging")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,10 @@
-import { buildApiQuery, normalizeIvaPctValue, resolveOdooProfileParam, activeOdooProfile } from "../utils/index.js";
+import {
+  buildApiQuery,
+  normalizeIvaPctValue,
+  syncOdooProfileState,
+  hasExplicitOdooProfileOverride,
+  activeOdooProfile,
+} from "../utils/index.js";
 import {
   ensureOtroImpuestoColumns,
   ensureAddOtroImpuestoActionColumn,
@@ -22,10 +28,36 @@ export function odooImportButtonLabel() {
 }
 
 export function odooImportTargetName(state) {
+  return odooTenantBadgeLabel(state);
+}
+
+/** Etiqueta chica del tenant Odoo activo (ej. Odoo Central Ticket). */
+export function odooTenantBadgeLabel(state) {
   const profile = activeOdooProfile(state);
+  if (hasExplicitOdooProfileOverride(state)) {
+    if (profile === "aliare") return "Odoo Aliare";
+    if (profile === "sudata") return "Odoo Sudata";
+    return "Odoo Dinner";
+  }
+
+  const empresa = String(state?.empresa || "").trim();
+  const labels = state?.empresaOdooLabels || {};
+  if (empresa && labels[empresa]) return labels[empresa];
+
   if (profile === "aliare") return "Odoo Aliare";
   if (profile === "sudata") return "Odoo Sudata";
   return "Odoo Dinner";
+}
+
+export function updateOdooTenantBadge(state, refs) {
+  const badge = refs?.odooTenantBadge;
+  if (!badge) return;
+  const profile = activeOdooProfile(state);
+  const label = odooTenantBadgeLabel(state);
+  badge.textContent = label;
+  badge.dataset.profile = profile;
+  badge.hidden = false;
+  badge.title = `Destino de importación: ${label}`;
 }
 
 export async function loadMetaAndOptions(state, urlParams = {}) {
@@ -37,11 +69,14 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   ).then((r) => r.json());
   const meta = boot?.metadata || {};
   const options = boot?.options || {};
-  const bootProfile = boot?.odoo_profile;
-  state.odooProfile =
-    bootProfile === "aliare" ? "aliare" : bootProfile === "sudata" ? "sudata" : "default";
-  if (odoo_cloud || odoo_profile) {
-    state.odooProfile = resolveOdooProfileParam(odoo_profile, odoo_cloud);
+  state.empresaOdooProfiles = boot?.empresa_odoo_profiles || {};
+  state.empresaOdooLabels = boot?.empresa_odoo_labels || {};
+  if (empresa) state.empresa = empresa;
+  syncOdooProfileState(state, urlParams);
+  if (!state.odooProfileLocked) {
+    const bootProfile = boot?.odoo_profile;
+    state.odooProfile =
+      bootProfile === "aliare" ? "aliare" : bootProfile === "sudata" ? "sudata" : "default";
   }
   state.columns = meta.columns || [];
   state.output_headers = meta.output_headers || [];

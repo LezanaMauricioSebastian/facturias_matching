@@ -26,6 +26,7 @@ src/facturia_matching/infra/paths.py
 src/facturia_matching/odoo/__init__.py
 src/facturia_matching/odoo/api.py
 src/facturia_matching/odoo/catalog.py
+src/facturia_matching/odoo/document_types_i18n.py
 src/facturia_matching/odoo/env.py
 src/facturia_matching/odoo/import_.py
 src/facturia_matching/odoo/purchase_matching.py
@@ -95,6 +96,9 @@ tests/test_comprobante_tax.py
 tests/test_db_resolve.py
 tests/test_fac_amounts.py
 tests/test_infra_db_resolve.py
+tests/test_iva_tax_resolve.py
+tests/test_js_python_parity.py
+tests/test_odoo_api.py
 tests/test_odoo_catalog.py
 tests/test_odoo_import.py
 tests/test_options_otros_impuestos.py
@@ -102,4 +106,6 @@ tests/test_padron_taxes_iibb.py
 tests/test_process_conversions.py
 tests/test_purchase_matching.py
 tests/test_routes_odoo_cloud.py
+tests/test_rubro_profile.py
 tests/test_saved_row_remap.py
+tests/test_tax_pipeline.py

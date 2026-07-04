@@ -26,6 +26,7 @@ from facturia_matching.odoo.env import is_odoo_aliare_profile, is_odoo_sudata_pr
 from facturia_matching.padron.taxes import (
     build_csv_tax_ids_dot_id,
     is_iva_tax_id,
+    iva_pct_requires_line_tax,
     resolve_tax_label_to_id,
     tax_id_for_csv_export,
 )
@@ -144,27 +145,99 @@ def _tax_ids_from_row(row: Dict[str, Any]) -> List[int]:
     return out
 
 
+def _first_content_row_index(group: List[Dict[str, Any]]) -> Optional[int]:
+    for i, row in enumerate(group):
+        if _line_has_content(row):
+            return i
+    return None
+
+
+def _is_first_content_row(row: Dict[str, Any], group: List[Dict[str, Any]]) -> bool:
+    idx = _first_content_row_index(group)
+    if idx is None:
+        return False
+    return group[idx] is row
+
+
+def _comprobante_non_iva_tax_ids(group: List[Dict[str, Any]]) -> List[int]:
+    """Impuestos no-IVA del comprobante (IIBB/percepciones), en cualquier fila del grupo."""
+    ids: List[int] = []
+    seen: set = set()
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        row_non_iva = [tid for tid in _tax_ids_from_row(row) if not is_iva_tax_id(tid)]
+        for tid in _padron_other_tax_ids_from_row(row):
+            if tid not in row_non_iva:
+                row_non_iva.append(tid)
+        other_idx = 0
+        for _n, label_key, monto_key in _iter_otros_impuesto_slots(row):
+            label = _normalize(row.get(label_key))
+            monto = _parse_amount_loose(row.get(monto_key))
+            if not label and (monto is None or monto <= 0):
+                continue
+            tid = resolve_tax_label_to_id(label) if label else None
+            if tid is None and monto is not None and monto > 0 and other_idx < len(row_non_iva):
+                tid = row_non_iva[other_idx]
+                other_idx += 1
+            if tid is None or is_iva_tax_id(tid) or tid in seen:
+                continue
+            seen.add(tid)
+            ids.append(int(tid))
+        for tid in row_non_iva:
+            if tid not in seen:
+                seen.add(tid)
+                ids.append(tid)
+    return ids
+
+
+def _merge_comprobante_non_iva_tax_ids(
+    tax_ids: List[int],
+    row: Dict[str, Any],
+    group: List[Dict[str, Any]],
+) -> List[int]:
+    """En header/mixed, percepciones del comprobante van en la primera línea de producto."""
+    mode = classify_comprobante_tax_mode(group)
+    if mode not in ("header", "mixed") or not _is_first_content_row(row, group):
+        return tax_ids
+    merged = list(tax_ids)
+    seen = set(merged)
+    for tid in _comprobante_non_iva_tax_ids(group):
+        if tid not in seen:
+            seen.add(tid)
+            merged.append(tid)
+    return merged
+
+
+def _filter_iva_tax_ids_for_row(
+    row: Dict[str, Any],
+    tax_ids: List[int],
+    mode: str,
+) -> List[int]:
+    if not iva_pct_requires_line_tax(row.get("iva_pct")):
+        return [tid for tid in tax_ids if not is_iva_tax_id(tid)]
+    if mode == "header" and iva_pct_to_rate(row.get("iva_pct")) > 0:
+        return [tid for tid in tax_ids if not is_iva_tax_id(tid)]
+    return tax_ids
+
+
 def _tax_ids_for_odoo_line(
     row: Dict[str, Any],
     group: Optional[List[Dict[str, Any]]] = None,
 ) -> List[int]:
     """
     tax_ids de una línea de producto en Odoo según arquitectura FacturIA:
-    - header: IVA solo en el total de abajo → ninguna línea lleva IVA (sí otros impuestos).
-    - line / mixed: IVA en la línea solo si esa fila trae iva_pct > 0.
+    - header: IVA numérico solo en el total de abajo; Exento/No Gravado sí en línea.
+    - line / mixed: IVA en la línea si esa fila trae iva_pct > 0 o Exento/No Gravado.
+    - IIBB/percepciones a nivel comprobante se consolidan en la primera línea con contenido.
     """
     tax_ids = _tax_ids_from_row(row)
     if not group:
-        if iva_pct_to_rate(row.get("iva_pct")) <= 0:
-            return [tid for tid in tax_ids if not is_iva_tax_id(tid)]
-        return tax_ids
+        return _filter_iva_tax_ids_for_row(row, tax_ids, "line")
 
     mode = classify_comprobante_tax_mode(group)
-    if mode == "header":
-        return [tid for tid in tax_ids if not is_iva_tax_id(tid)]
-    if iva_pct_to_rate(row.get("iva_pct")) <= 0:
-        return [tid for tid in tax_ids if not is_iva_tax_id(tid)]
-    return tax_ids
+    result = _filter_iva_tax_ids_for_row(row, tax_ids, mode)
+    return _merge_comprobante_non_iva_tax_ids(result, row, group)
 
 
 def _line_has_content(row: Dict[str, Any]) -> bool:
@@ -649,25 +722,6 @@ def _iva_tax_id_for_rate(rate_key: str, row: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _explicit_fac_iva_montos(group: List[Dict[str, Any]]) -> Dict[str, float]:
-    first = group[0] if group else {}
-    raw = first.get("__fac_iva_montos")
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw) if isinstance(raw, str) else raw
-        if isinstance(parsed, dict):
-            out: Dict[str, float] = {}
-            for k, v in parsed.items():
-                amt = _parse_amount_loose(v)
-                if amt is not None and amt > 0:
-                    out[str(k)] = amt
-            return out
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return {}
-
-
 def _padron_other_tax_ids_from_row(row: Dict[str, Any]) -> List[int]:
     raw = row.get("_padron_other_tax_ids") or []
     out: List[int] = []
@@ -681,10 +735,23 @@ def _padron_other_tax_ids_from_row(row: Dict[str, Any]) -> List[int]:
     return out
 
 
+def _iva_tax_resolve_row(group: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fila de referencia para resolver account.tax id por alícuota (perfil Odoo activo)."""
+    for row in _content_rows_from_group(group):
+        if iva_pct_requires_line_tax(row.get("iva_pct")):
+            return row
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        if row.get("__fac_iva_montos") or row.get("__fac_iva_monto"):
+            return row
+    return group[0] if group else {}
+
+
 def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict[int, float]:
     """
     Montos de impuesto esperados desde FacturIA (filas UI), indexados por account.tax id.
-    En modo header/mixed el IVA viene de __fac_iva_monto; en modo line se calcula por fila.
+    En modo header/mixed el IVA viene del pie (__fac_iva_monto / __fac_iva_montos).
     """
     amounts: Dict[int, float] = defaultdict(float)
     content_rows = _content_rows_from_group(group)
@@ -692,8 +759,7 @@ def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict
         return {}
 
     mode = classify_comprobante_tax_mode(group)
-    header = group[0] if group else {}
-    explicit_iva = _explicit_fac_iva_montos(group)
+    iva_resolve_row = _iva_tax_resolve_row(group)
 
     if mode == "line":
         for row in content_rows:
@@ -712,35 +778,13 @@ def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict
                         break
             if iva_tid is not None:
                 amounts[iva_tid] += iva_amt
-    elif explicit_iva:
-        for rate_key, amt in explicit_iva.items():
-            iva_tid = _iva_tax_id_for_rate(rate_key, header)
+    else:
+        for rate_key, amt in fac_iva_montos(group).items():
+            iva_tid = _iva_tax_id_for_rate(rate_key, iva_resolve_row)
             if iva_tid is not None and amt > 0:
                 amounts[iva_tid] += amt
-    else:
-        iva_by_rate = fac_iva_montos(group)
-        if iva_by_rate:
-            for rate_key, amt in iva_by_rate.items():
-                iva_tid = _iva_tax_id_for_rate(rate_key, header)
-                if iva_tid is not None and amt > 0:
-                    amounts[iva_tid] += amt
-        else:
-            header_iva = fac_iva_monto(group)
-            if header_iva is not None and header_iva > 0:
-                tax_ids = _tax_ids_from_row(header)
-                iva_tid: Optional[int] = None
-                iva_tid_s = tax_id_for_csv_export(header)
-                if iva_tid_s and iva_tid_s.isdigit():
-                    iva_tid = int(iva_tid_s)
-                elif tax_ids:
-                    for tid in tax_ids:
-                        if is_iva_tax_id(tid):
-                            iva_tid = tid
-                            break
-                if iva_tid is not None:
-                    amounts[iva_tid] += header_iva
 
-    for row in content_rows:
+    for row in group:
         if not isinstance(row, dict):
             continue
 
@@ -963,6 +1007,104 @@ def _tax_line_amount_write_vals(
     return vals
 
 
+def _ensure_missing_tax_lines_on_move(
+    config: Dict[str, Any],
+    move_id: int,
+    group: List[Dict[str, Any]],
+    product_lines: List[Dict[str, Any]],
+) -> List[str]:
+    """
+    Si Odoo no generó líneas tax para impuestos esperados (IVA o IIBB),
+    refuerza tax_ids en la primera línea de producto antes de pisar montos.
+    """
+    warnings: List[str] = []
+    expected_amounts = collect_expected_tax_amounts_from_group(group)
+    if not expected_amounts or not product_lines:
+        return warnings
+
+    tax_lines = _get_move_tax_lines(config, move_id)
+    present = {tid for line in tax_lines if (tid := _tax_line_id_raw(line)) is not None}
+    missing = [tid for tid in expected_amounts if tid not in present]
+    if not missing:
+        return warnings
+
+    content_rows = _content_rows_from_group(group)
+    if not content_rows:
+        return warnings
+
+    line = product_lines[0]
+    desired = list(_tax_ids_for_odoo_line(content_rows[0], group))
+    seen = set(desired)
+    for tid in missing:
+        if tid not in seen:
+            seen.add(tid)
+            desired.append(tid)
+    odoo_execute_kw_with_config(
+        config,
+        "account.move.line",
+        "write",
+        [[line["id"]], {"tax_ids": [(6, 0, desired)]}],
+    )
+    warnings.append(
+        f"Se reforzaron tax_ids en la primera línea para impuesto(s) faltante(s): {missing}"
+    )
+    return warnings
+
+
+def _ensure_iibb_tax_lines_on_move(
+    config: Dict[str, Any],
+    move_id: int,
+    group: List[Dict[str, Any]],
+    product_lines: List[Dict[str, Any]],
+) -> List[str]:
+    """Alias retrocompatible → _ensure_missing_tax_lines_on_move."""
+    return _ensure_missing_tax_lines_on_move(config, move_id, group, product_lines)
+
+
+def _apply_tax_line_amount_overwrites(
+    config: Dict[str, Any],
+    move_id: int,
+    group: List[Dict[str, Any]],
+    *,
+    due_date_iso: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[str], Dict[int, float]]:
+    """Pisa montos en líneas display_type=tax con los valores de FacturIA."""
+    expected_amounts = collect_expected_tax_amounts_from_group(group)
+    product_lines = _get_move_product_lines(config, move_id)
+    ensure_warnings = _ensure_missing_tax_lines_on_move(
+        config, move_id, group, product_lines
+    )
+    tax_lines = _get_move_tax_lines(config, move_id)
+    tax_line_by_id = {line["id"]: line for line in tax_lines}
+    tax_account_ids = [_m2o_id(line.get("account_id")) for line in tax_lines]
+    tax_accounts = _account_rows_by_id(config, [a for a in tax_account_ids if a])
+
+    planned_amounts, warnings = plan_tax_line_amount_overwrites(tax_lines, expected_amounts)
+    warnings = ensure_warnings + warnings
+    tax_line_updates: List[Dict[str, Any]] = []
+    for item in planned_amounts:
+        existing = tax_line_by_id.get(item["line_id"], {})
+        acc_id = _m2o_id(existing.get("account_id"))
+        write_vals = _tax_line_amount_write_vals(
+            item["new_amount"],
+            existing,
+            due_date_iso=due_date_iso,
+            account_row=tax_accounts.get(acc_id) if acc_id else None,
+        )
+        odoo_execute_kw_with_config(
+            config,
+            "account.move.line",
+            "write",
+            [[item["line_id"]], write_vals],
+        )
+        tax_line_updates.append({**item, "write_vals": write_vals})
+
+    if due_date_iso:
+        _ensure_move_line_maturity(config, move_id, due_date_iso)
+
+    return tax_line_updates, warnings, expected_amounts
+
+
 def plan_tax_line_amount_overwrites(
     tax_lines: List[Dict[str, Any]],
     expected_amounts: Dict[int, float],
@@ -1129,38 +1271,6 @@ def sync_move_taxes_from_group(
             )
 
     product_lines = _get_move_product_lines(config, move_id)
-
-    expected_amounts = collect_expected_tax_amounts_from_group(group)
-    tax_lines = _get_move_tax_lines(config, move_id)
-    tax_line_by_id = {line["id"]: line for line in tax_lines}
-    tax_account_ids = [_m2o_id(line.get("account_id")) for line in tax_lines]
-    tax_accounts = _account_rows_by_id(config, [a for a in tax_account_ids if a])
-
-    planned_amounts, warnings_amt = plan_tax_line_amount_overwrites(tax_lines, expected_amounts)
-    warnings.extend(warnings_amt)
-
-    tax_line_updates: List[Dict[str, Any]] = []
-    for item in planned_amounts:
-        existing = tax_line_by_id.get(item["line_id"], {})
-        acc_id = _m2o_id(existing.get("account_id"))
-        write_vals = _tax_line_amount_write_vals(
-            item["new_amount"],
-            existing,
-            due_date_iso=due_date_iso,
-            account_row=tax_accounts.get(acc_id) if acc_id else None,
-        )
-        odoo_execute_kw_with_config(
-            config,
-            "account.move.line",
-            "write",
-            [[item["line_id"]], write_vals],
-        )
-        tax_line_updates.append({**item, "write_vals": write_vals})
-
-    if due_date_iso:
-        _ensure_move_line_maturity(config, move_id, due_date_iso)
-
-    product_lines = _get_move_product_lines(config, move_id)
     ui_rows = _content_rows_from_group(group)
     purchase_line_updates: List[Dict[str, Any]] = []
     if _move_line_supports_purchase_link(config):
@@ -1193,6 +1303,15 @@ def sync_move_taxes_from_group(
                 warnings.append(
                     f"OC línea {po_line_id} en {item.get('line_name') or '?'}: no se pudo vincular ({exc})"
                 )
+
+    # Después de vínculos OC: Odoo puede recalcular impuestos; pisar montos al final.
+    tax_line_updates, warnings_amt, expected_amounts = _apply_tax_line_amount_overwrites(
+        config,
+        move_id,
+        group,
+        due_date_iso=due_date_iso,
+    )
+    warnings.extend(warnings_amt)
 
     return {
         "move_id": move_id,

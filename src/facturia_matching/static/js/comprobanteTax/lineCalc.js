@@ -1,5 +1,7 @@
 import { toNumberLoose } from "../utils/index.js";
 
+const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado"]);
+
 export function lineHasContent(row) {
   return !!(
     String(row?.["invoice_line_ids/name"] ?? "").trim() ||
@@ -15,6 +17,32 @@ export function ivaPctToRate(raw) {
   if (!s || s === "0" || /no corresponde/i.test(s)) return 0;
   const m = /^(\d+(?:\.\d+)?)/.exec(s);
   return m ? parseFloat(m[1]) / 100 : 0;
+}
+
+export function ivaPctRequiresLineTax(raw) {
+  const label = String(raw ?? "").trim();
+  if (IVA_ATTACHABLE_ZERO.has(label)) return true;
+  return ivaPctToRate(label) > 0;
+}
+
+export function hasOtrosImpuestosSelection(groupRows) {
+  for (const row of groupRows || []) {
+    if (String(row?.otros_impuestos ?? "").trim()) return true;
+    for (let n = 2; n <= 20; n++) {
+      if (String(row?.[`otros_impuestos_${n}`] ?? "").trim()) return true;
+    }
+  }
+  return false;
+}
+
+export function shouldShowOtrosFooter(groupRows, totals) {
+  return hasOtrosImpuestosSelection(groupRows) || (totals?.otros || 0) > 0;
+}
+
+export function shouldHideIvaFooter(groupRows) {
+  const content = (groupRows || []).filter(lineHasContent);
+  if (content.length !== 1) return false;
+  return IVA_ATTACHABLE_ZERO.has(String(content[0]?.iva_pct ?? "").trim());
 }
 
 export function lineBase(row) {

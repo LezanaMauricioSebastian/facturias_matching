@@ -51,7 +51,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 |---------|-----|
 | `index.js` | API pública del bloque comprobante (footer expandible). |
 | `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos. |
-| `footer.js` | Inputs del pie; readonly según modo tax. |
+| `footer.js` | Inputs del pie; readonly según modo tax; **`setFooterIvaAmount`** actualiza `__fac_iva_montos` vía `serializeFacIvaMontos`. |
 | `uiState.js` | Expandido/colapsado, clases CSS por modo. |
 
 ---
@@ -63,7 +63,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `index.js` | Re-exports. |
 | `totals.js` | **`classifyComprobanteTaxMode`**, **`computeComprobanteTotals`** — parity con Python. |
 | `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`. |
-| `ivaBreakdown.js` | Desglose por alícuota en el pie. |
+| `ivaBreakdown.js` | Desglose por alícuota en el pie; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
 | `groups.js` | Agrupa `state.rows` por `__comprobante_idx`. |
 | `migration.js` | Normaliza filas viejas guardadas (campos legacy). |
 
@@ -133,7 +133,7 @@ UI para comprobantes de una sola línea (colapsar detalle).
 |---------|-----|
 | `index.js` | Re-exports. |
 | `url.js` | **`getUrlParams`**, `isEmbedMode`, query `proceso`, `empresa`, `odoo_profile`. |
-| `numbers.js` | Parse/format montos AR (`2.500,50`). |
+| `numbers.js` | Parse/format montos AR (`2.500,50`); **`sanitizeNumericString`** para híbridos (`350.0,00`); usado en pie IVA y otros impuestos. |
 | `dates.js` | Parse/format fechas. |
 | `html.js` | Escape HTML, helpers DOM. |
 | `options.js` | Buscar en listas de opciones por id/label. |

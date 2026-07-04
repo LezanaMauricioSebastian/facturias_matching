@@ -1,11 +1,15 @@
-"""Consulta procesos FacturIA en MySQL (sudataco_facturia.process)."""
+"""Consulta procesos FacturIA en MySQL (schema configurable vía PROCESS_SCHEMA)."""
 
 from typing import Any, Dict, List, Optional
 
-from facturia_matching.infra.config import get_mysql_connection, get_mysql_table_columns, _mysql_table_ref
+from facturia_matching.infra.config import (
+    PROCESS_SCHEMA,
+    _mysql_table_ref,
+    get_mysql_connection,
+    get_mysql_table_columns,
+)
 
 PROCESS_TABLE = "process"
-PROCESS_SCHEMA = "sudataco_facturia"
 PROCESS_NUMBER_COL = "process_number"
 EMPRESA_COL_CANDIDATES = (
     "empresa_id",

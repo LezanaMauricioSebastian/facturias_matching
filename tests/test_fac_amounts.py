@@ -25,6 +25,13 @@ class TestFacAmounts(unittest.TestCase):
         self.assertAlmostEqual(parse_amount("3344,38"), 3344.38)
         self.assertAlmostEqual(parse_amount(57255.38), 57255.38)
 
+    def test_parse_amount_loose_hybrid_dot_comma(self):
+        from facturia_matching.core.amounts import parse_amount_loose
+
+        self.assertAlmostEqual(parse_amount_loose("350.0,00"), 350.0)
+        self.assertAlmostEqual(parse_amount_loose("350,00"), 350.0)
+        self.assertAlmostEqual(parse_amount_loose("350.00"), 350.0)
+
     def test_fac_iva_monto_str_sums_rates(self):
         self.assertEqual(fac_iva_monto_str(FAC_216), "57255.38")
 

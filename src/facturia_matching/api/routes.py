@@ -5,7 +5,12 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME
+from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME, PROCESS_SCHEMA
+from facturia_matching.odoo.empresa_profile import (
+    empresa_odoo_display_labels,
+    empresa_odoo_profile_map,
+    resolve_odoo_profile_from_empresa,
+)
 from facturia_matching.odoo.api import get_active_odoo_config
 from facturia_matching.odoo.request_context import odoo_profile_context
 from facturia_matching.odoo.env import (
@@ -30,6 +35,7 @@ from facturia_matching.core.options import build_metadata_payload, get_options
 from facturia_matching.padron.postgres import detect_padron_fields, get_table_columns
 from facturia_matching.infra.paths import CSS_DIR, HTML_DIR
 from facturia_matching.core.process import build_output_rows
+from facturia_matching.persistence.back_check import MySQLUnavailableError, ProcessTableError
 from facturia_matching.persistence.process_conversions import (
     ProcessConversionError,
     delete_conversion,
@@ -55,17 +61,26 @@ def _resolve_request_odoo_profile(
     odoo_profile_q: Optional[str] = None,
     odoo_cloud: Optional[Any] = None,
     payload: Optional[Dict[str, Any]] = None,
+    empresa: Optional[Any] = None,
 ) -> Optional[str]:
-    """odoo_cloud=1 → sudata; si no, odoo_profile / perfil en query o body."""
+    """odoo_cloud=1 → sudata; perfil explícito gana sobre ?empresa=N (PROCESS_SCHEMA)."""
     if payload:
         if is_odoo_cloud_flag(payload.get("odoo_cloud")):
             return "sudata"
         body_profile = payload.get("odoo_profile") or payload.get("perfil")
         if body_profile is not None and str(body_profile).strip() != "":
             return str(body_profile).strip()
+        if empresa is None:
+            empresa = payload.get("empresa")
     if is_odoo_cloud_flag(odoo_cloud):
         return "sudata"
-    return _coalesce_odoo_profile(perfil, odoo_profile_q)
+    explicit = _coalesce_odoo_profile(perfil, odoo_profile_q)
+    if explicit is not None and str(explicit).strip() != "":
+        return str(explicit).strip()
+    mapped = resolve_odoo_profile_from_empresa(empresa)
+    if mapped:
+        return mapped
+    return None
 
 
 def _with_odoo_profile(odoo_profile: Optional[str], fn):
@@ -161,7 +176,9 @@ def get_bootstrap(
     odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
     odoo_cloud: Optional[str] = Query(None),
 ):
-    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, empresa=empresa
+    )
     def _boot():
         meta = build_metadata_payload()
         opts = get_options(padron=False)
@@ -169,6 +186,9 @@ def get_bootstrap(
             "metadata": meta,
             "options": opts,
             "odoo_profile": current_odoo_profile(),
+            "process_schema": PROCESS_SCHEMA,
+            "empresa_odoo_profiles": empresa_odoo_profile_map(),
+            "empresa_odoo_labels": empresa_odoo_display_labels(),
         }
 
     return _with_odoo_profile(odoo_profile, _boot)
@@ -182,7 +202,9 @@ def api_options(
     odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
     odoo_cloud: Optional[str] = Query(None),
 ):
-    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, empresa=empresa
+    )
     return _with_odoo_profile(odoo_profile, lambda: get_options(padron=padron))
 
 
@@ -197,17 +219,22 @@ def odoo_health(
         if not is_odoo_configured():
             return {"ok": False, "error": "ODOO_* no configurado en .env"}
         cfg = get_active_odoo_config()
-        uid = get_odoo_uid()
-        version = odoo_xmlrpc_version()
+        verified = verify_odoo_config_connection(cfg)
+        if not verified.get("ok"):
+            return {
+                **verified,
+                "jsonrpc_url": _jsonrpc_url(),
+                "odoo_profile": current_odoo_profile(),
+            }
         return {
-            "ok": uid is not None,
-            "uid": uid,
+            "ok": True,
+            "uid": verified.get("auth_uid") or verified.get("uid") or get_odoo_uid(),
             "uid_source": "ODOO_USER_ID" if cfg.get("uid") is not None else "ODOO_USER",
             "db": cfg.get("db"),
             "base_url": cfg.get("base_url"),
             "jsonrpc_url": _jsonrpc_url(),
             "odoo_profile": current_odoo_profile(),
-            "version": version,
+            "version": verified.get("version") or odoo_xmlrpc_version(),
         }
 
     return _with_odoo_profile(odoo_profile, _health)
@@ -337,7 +364,9 @@ def get_proceso(
     odoo_cloud: Optional[str] = Query(None),
     regenerate: bool = Query(False, description="Si true, ignora conversión guardada y regenera desde json_data."),
 ):
-    odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, empresa=empresa
+    )
     def _load():
         filas, etiqueta_options, purchase_summary, source, conversion_meta = load_process_rows(
             process_number,

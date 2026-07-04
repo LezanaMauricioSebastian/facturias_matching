@@ -13,6 +13,7 @@ export function getDomRefs() {
     btnOdooImport: el("btnOdooImport"),
     btnDescargar: el("btnDescargar"),
     btnRevertir: el("btnRevertir"),
+    odooTenantBadge: el("odooTenantBadge"),
     totalGeneralEl: el("totalGeneral"),
     companyNumberEl: el("companyNumber"),
     processNumberEl: el("processNumber"),

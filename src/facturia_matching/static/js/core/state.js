@@ -28,6 +28,9 @@ export function createState() {
     skipAutoSave: false,
     saveStatus: "",
     odooProfile: "default",
+    odooProfileLocked: false,
+    empresaOdooProfiles: {},
+    empresaOdooLabels: {},
     purchaseMatching: {},
     comprobanteTaxModes: {},
   };

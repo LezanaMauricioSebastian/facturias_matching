@@ -18,11 +18,13 @@ from facturia_matching.infra.config import (
     pg_connect,
 )
 
-# account.tax purchase — ids históricos Dinner (fallback sin Odoo)
+# account.tax purchase — ids históricos Dinner (solo fallback sin Odoo)
 IVA_TAX_IDS = frozenset({53, 55, 57, 61, 63})
+# Fallback estático si no hay Odoo (dev offline). En runtime se arma desde account.tax.
 IVA_TAX_ID_TO_PCT: Dict[int, str] = {
     63: "21",
     61: "10,5",
+    65: "27",
     53: "IVA No Corresponde",
     55: "IVA No Gravado",
     57: "IVA Exento",
@@ -37,6 +39,13 @@ _LEGACY_DINNER_SPECIAL_IVA: Dict[str, int] = {
     "IVA No Gravado": 55,
     "IVA Exento": 57,
 }
+_SPECIAL_IVA_LABELS: Dict[str, str] = {
+    "IVA NO CORRESPONDE": "IVA No Corresponde",
+    "IVA NO GRAVADO": "IVA No Gravado",
+    "IVA EXENTO": "IVA Exento",
+}
+_CANONICAL_SPECIAL_IVA_LABELS = frozenset(_SPECIAL_IVA_LABELS.values())
+_ATTACHABLE_ZERO_IVA_LABELS = frozenset({"IVA Exento", "IVA No Gravado"})
 _SPECIAL_IVA_NAME_KEYS: Dict[str, Tuple[str, ...]] = {
     "IVA NO CORRESPONDE": ("IVA NO CORRESP", "IVA NO CORRESPONDE"),
     "IVA NO GRAVADO": ("IVA NO GRAV", "IVA NO GRAVADO"),
@@ -49,6 +58,8 @@ _TAX_NAME_BY_ID: Optional[Dict[int, str]] = None
 _TAX_ID_BY_NAME: Optional[Dict[str, int]] = None
 _PURCHASE_IVA_TAXES_CACHE: Optional[List[Dict[str, Any]]] = None
 _IVA_TAX_IDS_CACHE: Optional[frozenset] = None
+_PADRON_SOURCE_IVA_SEMANTICS_CACHE: Optional[Dict[int, str]] = None
+_PADRON_SOURCE_TAX_NAMES_CACHE: Optional[Dict[int, str]] = None
 
 
 def _normalize(s: Any) -> str:
@@ -154,10 +165,13 @@ def get_tax_padron_by_cuit() -> Dict[str, List[int]]:
 def clear_odoo_tax_catalog_cache() -> None:
     """Invalida catálogo IVA/nombres Odoo (cambia por perfil tenant)."""
     global _TAX_NAME_BY_ID, _TAX_ID_BY_NAME, _PURCHASE_IVA_TAXES_CACHE, _IVA_TAX_IDS_CACHE
+    global _PADRON_SOURCE_IVA_SEMANTICS_CACHE, _PADRON_SOURCE_TAX_NAMES_CACHE
     _TAX_NAME_BY_ID = None
     _TAX_ID_BY_NAME = None
     _PURCHASE_IVA_TAXES_CACHE = None
     _IVA_TAX_IDS_CACHE = None
+    _PADRON_SOURCE_IVA_SEMANTICS_CACHE = None
+    _PADRON_SOURCE_TAX_NAMES_CACHE = None
 
 
 def clear_tax_padron_cache() -> None:
@@ -358,7 +372,7 @@ def _is_purchase_iva_tax_name(name: str) -> bool:
 
 def _iva_pct_to_float(iva_pct: str) -> Optional[float]:
     s = _normalize(iva_pct)
-    if not s or s in _LEGACY_DINNER_SPECIAL_IVA:
+    if not s or s in _CANONICAL_SPECIAL_IVA_LABELS:
         return None
     digits = "".join(ch for ch in s if ch.isdigit() or ch in ".,")
     digits = digits.replace(",", ".").strip()
@@ -392,6 +406,138 @@ def _rate_matches_iva_tax_name(name: str, rate: float) -> bool:
     return abs(name_rate - rate) < 1e-6
 
 
+def _padron_tax_source_profile() -> str:
+    """Perfil Odoo del que vienen los tax id del padrón Postgres (default: Dinner)."""
+    from facturia_matching.infra.env import env_strip
+
+    p = env_strip("PADRON_TAX_SOURCE_PROFILE", "default").lower()
+    if p in ("aliare", "default", "sudata"):
+        return p
+    return "default"
+
+
+def _canonical_iva_label_from_tax(tax: Dict[str, Any]) -> Optional[str]:
+    """Etiqueta iva_pct canónica (21, 10,5, IVA Exento, …) desde un account.tax Odoo."""
+    amount = tax.get("amount")
+    try:
+        amount_f = float(amount) if amount is not None else 0.0
+    except (TypeError, ValueError):
+        amount_f = 0.0
+    if amount_f > 0:
+        return _format_iva_pct_from_amount(amount_f)
+
+    key = _ascii_upper(_normalize(tax.get("name") or ""))
+    if not key:
+        return None
+    for canon_key, human in _SPECIAL_IVA_LABELS.items():
+        aliases = _SPECIAL_IVA_NAME_KEYS.get(canon_key, (canon_key,))
+        if key == canon_key or key in aliases or any(alias in key for alias in aliases):
+            return human
+    return None
+
+
+def _parse_odoo_purchase_iva_rows(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for r in raw or []:
+        if not r.get("id"):
+            continue
+        name = _normalize(r.get("name"))
+        if not _is_purchase_iva_tax_name(name):
+            continue
+        amount = r.get("amount")
+        try:
+            amount_f = float(amount) if amount is not None else 0.0
+        except (TypeError, ValueError):
+            amount_f = 0.0
+        rows.append({"id": int(r["id"]), "name": name, "amount": amount_f})
+    return rows
+
+
+def _fetch_purchase_iva_taxes_for_profile(profile: str) -> List[Dict[str, Any]]:
+    """IVA de compra de un perfil Odoo (sin depender del contexto del request)."""
+    try:
+        from facturia_matching.odoo.api import (
+            get_odoo_uid_from_config,
+            is_odoo_config_ready,
+            odoo_search_read,
+        )
+        from facturia_matching.odoo.env import build_odoo_main_config
+
+        cfg = build_odoo_main_config(profile)
+        if not is_odoo_config_ready(cfg) or not get_odoo_uid_from_config(cfg):
+            return []
+        raw = odoo_search_read(
+            "account.tax",
+            [("type_tax_use", "=", "purchase")],
+            ["id", "name", "amount"],
+            limit=500,
+            config=cfg,
+        )
+        return _parse_odoo_purchase_iva_rows(raw)
+    except Exception:
+        return []
+
+
+def _build_iva_semantics_from_taxes(taxes: List[Dict[str, Any]]) -> Dict[int, str]:
+    out: Dict[int, str] = {}
+    for tax in taxes:
+        label = _canonical_iva_label_from_tax(tax)
+        if label and tax.get("id") is not None:
+            out[int(tax["id"])] = label
+    return out
+
+
+def _padron_source_iva_semantics_by_id() -> Dict[int, str]:
+    """
+    tax_id del padrón Postgres → etiqueta iva_pct semántica.
+    Se construye desde Odoo del perfil fuente (PADRON_TAX_SOURCE_PROFILE).
+    """
+    global _PADRON_SOURCE_IVA_SEMANTICS_CACHE
+    if _PADRON_SOURCE_IVA_SEMANTICS_CACHE is not None:
+        return _PADRON_SOURCE_IVA_SEMANTICS_CACHE
+
+    taxes = _fetch_purchase_iva_taxes_for_profile(_padron_tax_source_profile())
+    out = _build_iva_semantics_from_taxes(taxes)
+    if not out:
+        out = dict(IVA_TAX_ID_TO_PCT)
+    _PADRON_SOURCE_IVA_SEMANTICS_CACHE = out
+    return out
+
+
+def _padron_source_tax_name_by_id() -> Dict[int, str]:
+    """Nombres account.tax del perfil fuente del padrón (IVA + percepciones, etc.)."""
+    global _PADRON_SOURCE_TAX_NAMES_CACHE
+    if _PADRON_SOURCE_TAX_NAMES_CACHE is not None:
+        return _PADRON_SOURCE_TAX_NAMES_CACHE
+
+    out: Dict[int, str] = {}
+    try:
+        from facturia_matching.odoo.api import (
+            get_odoo_uid_from_config,
+            is_odoo_config_ready,
+            odoo_search_read,
+        )
+        from facturia_matching.odoo.env import build_odoo_main_config
+
+        cfg = build_odoo_main_config(_padron_tax_source_profile())
+        if is_odoo_config_ready(cfg) and get_odoo_uid_from_config(cfg):
+            rows = odoo_search_read(
+                "account.tax",
+                [("type_tax_use", "=", "purchase")],
+                ["id", "name"],
+                limit=500,
+                config=cfg,
+            )
+            for r in rows or []:
+                if r.get("id"):
+                    out[int(r["id"])] = _normalize(r.get("name"))
+    except Exception:
+        pass
+
+    _PADRON_SOURCE_TAX_NAMES_CACHE = out
+    return out
+
+
 def get_purchase_iva_taxes() -> List[Dict[str, Any]]:
     """Impuestos IVA de compra del tenant Odoo activo (id, name, amount)."""
     global _PURCHASE_IVA_TAXES_CACHE
@@ -408,18 +554,7 @@ def get_purchase_iva_taxes() -> List[Dict[str, Any]]:
                 ["id", "name", "amount"],
                 limit=500,
             )
-            for r in raw or []:
-                if not r.get("id"):
-                    continue
-                name = _normalize(r.get("name"))
-                if not _is_purchase_iva_tax_name(name):
-                    continue
-                amount = r.get("amount")
-                try:
-                    amount_f = float(amount) if amount is not None else 0.0
-                except (TypeError, ValueError):
-                    amount_f = 0.0
-                rows.append({"id": int(r["id"]), "name": name, "amount": amount_f})
+            rows = _parse_odoo_purchase_iva_rows(raw)
     except Exception:
         rows = []
     _PURCHASE_IVA_TAXES_CACHE = rows
@@ -468,6 +603,16 @@ def _resolve_special_iva_tax_id(label: str) -> Optional[int]:
     return _legacy_dinner_tax_id_for_special(label)
 
 
+def iva_pct_requires_line_tax(iva_pct: Any) -> bool:
+    """True si la fila debe llevar account.tax IVA en Odoo (incl. Exento / No Gravado)."""
+    from facturia_matching.core.comprobante_tax import iva_pct_to_rate
+
+    label = _normalize(iva_pct)
+    if label in _ATTACHABLE_ZERO_IVA_LABELS:
+        return True
+    return iva_pct_to_rate(label) > 0
+
+
 def resolve_iva_tax_id_for_pct(iva_pct: str) -> Optional[int]:
     """
     Resuelve iva_pct (21, 10,5, IVA Exento, …) al account.tax id del tenant Odoo activo.
@@ -475,7 +620,7 @@ def resolve_iva_tax_id_for_pct(iva_pct: str) -> Optional[int]:
     label = _normalize(iva_pct)
     if not label:
         return None
-    if label in _LEGACY_DINNER_SPECIAL_IVA:
+    if label in _CANONICAL_SPECIAL_IVA_LABELS:
         return _resolve_special_iva_tax_id(label)
 
     rate = _iva_pct_to_float(label)
@@ -496,12 +641,16 @@ def resolve_iva_tax_id_for_pct(iva_pct: str) -> Optional[int]:
 
 
 def _remap_legacy_padron_iva_tax_id(tax_id: int) -> Optional[int]:
-    """Remapea ids IVA del padrón Postgres (Dinner) al tenant Odoo activo."""
-    legacy_pct = IVA_TAX_ID_TO_PCT.get(int(tax_id))
-    if legacy_pct:
-        remapped = resolve_iva_tax_id_for_pct(legacy_pct)
+    """Remapea ids IVA del padrón Postgres al tenant Odoo activo vía semántica (alícuota/nombre)."""
+    from facturia_matching.odoo.env import current_odoo_profile
+
+    semantics = _padron_source_iva_semantics_by_id().get(int(tax_id))
+    if semantics:
+        remapped = resolve_iva_tax_id_for_pct(semantics)
         if remapped is not None:
             return remapped
+    if current_odoo_profile() != "default":
+        return None
     if is_iva_tax_id(tax_id):
         return int(tax_id)
     return None
@@ -579,10 +728,8 @@ def iva_pct_from_tax_id(tax_id: int) -> str:
         name_key = _ascii_upper(tax.get("name") or "")
         for label, aliases in _SPECIAL_IVA_NAME_KEYS.items():
             if name_key in aliases or name_key == label:
-                for human, _tid in _LEGACY_DINNER_SPECIAL_IVA.items():
-                    if _ascii_upper(human) == label:
-                        return human
-    return IVA_TAX_ID_TO_PCT.get(tax_id, "")
+                return _SPECIAL_IVA_LABELS.get(label, "")
+    return _padron_source_iva_semantics_by_id().get(int(tax_id), "")
 
 
 def apply_padron_taxes_to_row(
@@ -628,14 +775,6 @@ def apply_padron_taxes_to_row(
         first_other = name_by_id.get(other_ids[0]) or ""
         if first_other:
             row["otros_impuestos"] = first_other
-
-    # Impuestos adicionales (más de uno) — segundo otro en columna dinámica si existe helper
-    if len(other_ids) > 1:
-        for n, tid in enumerate(other_ids[1:], start=2):
-            key = f"otros_impuestos_{n}"
-            nm = name_by_id.get(tid) or ""
-            if nm and not _normalize(row.get(key)):
-                row[key] = nm
 
     if other_ids:
         row["_padron_other_tax_ids"] = [str(i) for i in other_ids]
@@ -696,12 +835,20 @@ def build_csv_additional_taxes(row: Dict[str, Any]) -> List[str]:
         seen_labels.add(lab_k)
         out.append(lab)
 
-    # 1) IDs no-IVA del padrón (más confiable para IIBB)
+    # 1) IDs no-IVA del padrón → nombre en perfil fuente → id en tenant activo
     iva_set = get_iva_tax_ids()
+    active_names = get_tax_name_by_id()
+    source_names = _padron_source_tax_name_by_id()
     for tid in _parse_row_padron_tax_ids(row):
         if tid in iva_set:
             continue
-        _add(tid)
+        if tid in active_names:
+            _add(tid)
+            continue
+        label = source_names.get(tid) or active_names.get(tid) or ""
+        remapped = resolve_tax_label_to_id(label) if label else None
+        if remapped is not None:
+            _add(remapped)
 
     # 2) otros_impuestos de la fila / FacturIA → id Odoo si existe
     for k in _otros_impuesto_keys_from_row(row):

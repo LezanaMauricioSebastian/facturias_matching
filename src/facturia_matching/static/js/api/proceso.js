@@ -1,4 +1,10 @@
-import { buildApiQuery, mergeEtiquetaOptions, mergeProductOptions, resolveOdooProfileParam, apiOdooQueryParams } from "../utils/index.js";
+import {
+  buildApiQuery,
+  mergeEtiquetaOptions,
+  mergeProductOptions,
+  syncOdooProfileState,
+  apiOdooQueryParams,
+} from "../utils/index.js";
 import { renderComprobantes } from "../comprobanteView/index.js";
 import { clearAutoSaveTimer } from "./autoSave.js";
 import {
@@ -12,13 +18,8 @@ import {
 export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverrides = {}) {
   const empresa = String(urlOverrides.empresa ?? refs.companyNumberEl?.value ?? "").trim();
   const pn = String(urlOverrides.proceso ?? refs.processNumberEl?.value ?? "").trim();
-  const odooProfile = String(
-    urlOverrides.odoo_profile ?? state.odooProfile ?? ""
-  ).trim();
-  const odooCloud = String(urlOverrides.odoo_cloud ?? "").trim();
-  if (odooCloud || odooProfile) {
-    state.odooProfile = resolveOdooProfileParam(odooProfile, odooCloud);
-  }
+  if (empresa) state.empresa = empresa;
+  syncOdooProfileState(state, urlOverrides);
   if (!pn) return;
 
   setStatusFn("Buscando proceso y ejecutando matching…");

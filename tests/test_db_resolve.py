@@ -140,6 +140,31 @@ class TestOdooDbResolve(unittest.TestCase):
         mock_proxy.assert_called_once()
         self.assertIn("/xmlrpc/2/db", mock_proxy.call_args[0][0])
 
+    @patch("facturia_matching.odoo.env.list_odoo_databases_web")
+    @patch("facturia_matching.odoo.env.xmlrpc.client.ServerProxy")
+    def test_list_odoo_databases_web_fallback(self, mock_proxy, mock_web):
+        mock_proxy.return_value.list.side_effect = Exception("Access Denied")
+        mock_web.return_value = ["dinner-test-34416236"]
+        self.assertEqual(
+            list_odoo_databases("https://dinner-test.odoo.com"),
+            ["dinner-test-34416236"],
+        )
+
+    @patch("facturia_matching.odoo.env._odoo_db_exists")
+    @patch("facturia_matching.odoo.env.list_odoo_databases")
+    def test_stale_explicit_db_falls_back_to_list(self, mock_list, mock_exists):
+        mock_exists.return_value = False
+        mock_list.return_value = ["dinner-test-34416236"]
+        self.assertEqual(
+            resolve_odoo_db_name(
+                "https://dinner-test.odoo.com",
+                "dinner-test-33873862",
+                login="u",
+                password="p",
+            ),
+            "dinner-test-34416236",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

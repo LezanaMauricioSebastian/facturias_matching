@@ -195,6 +195,28 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(line_a, [63, 27])
         self.assertEqual(line_b, [])
 
+    def test_tax_ids_for_odoo_line_mixed_exento_only_on_exento_line(self):
+        group = [
+            {
+                "iva_pct": "IVA Exento",
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/price_unit": "100",
+                "__fac_iva_monto": "500",
+            },
+            {"iva_pct": "0", "invoice_line_ids/name": "B", "invoice_line_ids/price_unit": "50"},
+        ]
+        with patch(
+            "facturia_matching.padron.taxes.get_purchase_iva_taxes",
+            return_value=[
+                {"id": 59, "name": "IVA Exen", "amount": 0.0},
+                {"id": 63, "name": "IVA 21%", "amount": 21.0},
+            ],
+        ):
+            line_a = _tax_ids_for_odoo_line(group[0], group)
+            line_b = _tax_ids_for_odoo_line(group[1], group)
+        self.assertEqual(line_a, [59])
+        self.assertEqual(line_b, [])
+
     def test_build_line_command_clears_taxes_when_iva_zero(self):
         _cmd, _zero, vals = _build_line_command(
             {
@@ -240,6 +262,29 @@ class TestOdooImport(unittest.TestCase):
         self.assertAlmostEqual(amounts[61], 1012.59, places=2)
         self.assertAlmostEqual(amounts[63], 19533.7, places=1)
 
+    def test_collect_expected_uses_edited_footer_after_reconcile(self):
+        from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
+        from facturia_matching.odoo.import_ import _prepare_rows_for_import
+        from facturia_matching.odoo.api import get_odoo_import_config
+        from unittest.mock import patch
+
+        rows = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_montos": '{"21": "2100"}',
+                "__fac_iva_monto": "8888",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "10000",
+            }
+        ]
+        with patch("facturia_matching.padron.taxes.resolve_iva_tax_id_for_pct", return_value=65):
+            with patch("facturia_matching.padron.taxes.is_iva_tax_id", return_value=True):
+                with patch("facturia_matching.padron.taxes.tax_id_for_csv_export", return_value="65"):
+                    cfg = get_odoo_import_config()
+                    groups, _ = _prepare_rows_for_import(cfg, rows)
+                    amounts = collect_expected_tax_amounts_from_group(groups[0])
+        self.assertEqual(amounts.get(65), 8888.0)
+
     def test_collect_expected_tax_amounts_header_mode(self):
         rows = [
             {
@@ -256,6 +301,72 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(amounts.get(63), 57255.38)
         self.assertIn(1, amounts)
         self.assertEqual(amounts[1], 150.25)
+
+    def test_collect_expected_iibb_from_header_only_row(self):
+        rows = [
+            {
+                "__solo_encabezado": True,
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "99,50",
+                "_padron_other_tax_ids": ["1"],
+            },
+            {
+                "iva_pct": "0",
+                "invoice_line_ids/name": "Producto",
+                "invoice_line_ids/price_unit": "10000",
+            },
+        ]
+        amounts = collect_expected_tax_amounts_from_group(rows)
+        self.assertEqual(amounts.get(63), 2100.0)
+        self.assertEqual(amounts.get(1), 99.5)
+
+    def test_tax_ids_header_mode_merges_iibb_from_header_row(self):
+        group = [
+            {
+                "__solo_encabezado": True,
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "99,50",
+                "_padron_other_tax_ids": ["1"],
+            },
+            {
+                "iva_pct": "0",
+                "invoice_line_ids/name": "Producto",
+                "invoice_line_ids/price_unit": "10000",
+            },
+        ]
+        with patch("facturia_matching.padron.taxes.resolve_tax_label_to_id", return_value=1):
+            first_line = _tax_ids_for_odoo_line(group[1], group)
+        self.assertEqual(first_line, [1])
+
+    def test_plan_line_tax_updates_puts_iibb_on_first_content_line(self):
+        rows = [
+            {
+                "__solo_encabezado": True,
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "99,50",
+                "_padron_other_tax_ids": ["1"],
+            },
+            {
+                "iva_pct": "0",
+                "invoice_line_ids/name": "Producto",
+                "invoice_line_ids/price_unit": "10000",
+            },
+        ]
+        product_lines = [
+            {"id": 10, "name": "Producto", "tax_ids": []},
+            {"id": 11, "name": "Otro", "tax_ids": [1]},
+        ]
+        with patch("facturia_matching.padron.taxes.resolve_tax_label_to_id", return_value=1):
+            updates, warnings = plan_line_tax_updates(product_lines, rows)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["line_id"], 10)
+        self.assertEqual(updates[0]["new_tax_ids"], [1])
 
     def test_collect_expected_tax_amounts_line_mode(self):
         rows = [
@@ -357,6 +468,37 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(classify_comprobante_tax_mode(rows), "mixed")
         amounts = collect_expected_tax_amounts_from_group(rows)
         self.assertEqual(amounts.get(63), 500.0)
+
+    def test_collect_expected_after_reconcile_keeps_footer_montos(self):
+        """Montos del pie en mixed no se reemplazan por cálculo por línea antes del import."""
+        from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
+
+        rows = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_montos": '{"21": "15893.38", "10.5": "2832.75"}',
+                "__fac_iva_monto": "18726.13",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "33019,55",
+                "invoice_line_ids/name": "A",
+            },
+            {
+                "iva_pct": "10,5",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/price_unit": "964,37",
+                "invoice_line_ids/name": "B",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "13489,27",
+                "invoice_line_ids/name": "C",
+            },
+        ]
+        reconcile_fac_iva_for_import(rows)
+        amounts = collect_expected_tax_amounts_from_group(rows)
+        self.assertAlmostEqual(amounts.get(63), 15893.38, places=2)
+        self.assertAlmostEqual(amounts.get(61), 2832.75, places=2)
 
     def test_plan_tax_line_overwrites_multi_iva_rates(self):
         tax_lines = [

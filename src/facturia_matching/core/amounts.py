@@ -101,10 +101,19 @@ def parse_amount(raw: Any) -> Optional[float]:
         return None
 
 
+def _sanitize_hybrid_amount_string(s: str) -> str:
+    """Corrige híbridos tipo 350.0,00 (punto decimal + coma es-AR)."""
+    m = re.match(r"^([+-]?)(\d+)\.(\d{1,2}),(\d+)$", s)
+    if m:
+        return f"{m.group(1)}{m.group(2)},{m.group(4)}"
+    return s
+
+
 def parse_amount_loose(raw: Any) -> Optional[float]:
     s = normalize(raw)
     if not s or s.lower() == "nan":
         return None
+    s = _sanitize_hybrid_amount_string(s)
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
     elif "." in s:

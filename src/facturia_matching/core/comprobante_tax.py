@@ -101,22 +101,34 @@ def _explicit_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, floa
         return {}
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
-        if isinstance(parsed, dict):
-            return {
-                str(k): float(v)
-                for k, v in parsed.items()
-                if str(k) != "_total"
-                and _parse_amount_key(v) is not None
-                and _parse_amount_key(v) > 0
-            }
+        if not isinstance(parsed, dict):
+            return {}
+        out: Dict[str, float] = {}
+        for k, v in parsed.items():
+            if str(k) == "_total":
+                continue
+            amt = _parse_amount_key(v)
+            if amt is not None and amt > 0:
+                out[str(k)] = amt
+        return out
     except (TypeError, ValueError, json.JSONDecodeError):
-        pass
-    return {}
+        return {}
 
 
 def fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
     """Montos IVA por alícuota desde __fac_iva_montos o sugeridos por línea."""
     explicit = _explicit_fac_iva_montos(group_rows)
+    header = fac_iva_monto(group_rows)
+    mode = classify_comprobante_tax_mode(group_rows)
+
+    if explicit and header is not None and header > 0:
+        explicit_sum = round(sum(explicit.values()), 2)
+        tol = max(_TAX_TOLERANCE, explicit_sum * 0.001)
+        if abs(explicit_sum - header) > tol and mode in ("header", "mixed"):
+            if len(explicit) == 1:
+                key = next(iter(explicit))
+                return {key: round(header, 2)}
+
     if explicit:
         return explicit
     suggested: Dict[str, float] = defaultdict(float)
@@ -197,10 +209,22 @@ def reconcile_fac_iva_for_import(group_rows: List[Dict[str, Any]]) -> None:
     """
     Import Odoo: alinea __fac_iva_monto(s) con iva_monto de filas cuando difieren
     del encabezado (p. ej. usuario editó la columna pero el JSON quedó viejo).
+
+    En header/mixed el pie FacturIA es la fuente de verdad para sobreescribir Odoo.
     """
+    mode = classify_comprobante_tax_mode(group_rows)
+    line_manual = any(
+        isinstance(r, dict) and r.get("__iva_monto_manual") for r in group_rows
+    )
+    if line_manual:
+        _write_fac_iva_montos_from_line_amounts(group_rows)
+        return
+    if mode in ("header", "mixed"):
+        if _explicit_fac_iva_montos(group_rows) or fac_iva_monto(group_rows):
+            return
     if not _lines_with_iva_rate(group_rows):
         return
-    if _line_iva_differs_from_header(group_rows) or classify_comprobante_tax_mode(group_rows) == "line":
+    if _line_iva_differs_from_header(group_rows) or mode == "line":
         _write_fac_iva_montos_from_line_amounts(group_rows)
 
 

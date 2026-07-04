@@ -13,7 +13,7 @@ import {
 } from "../rows/index.js";
 import { migrateFacIvaMontos, migrateLegacyComprobanteIva, sanitizeInflatedLineAmounts } from "../comprobanteTax/index.js";
 import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
-import { PURCHASE_COLUMN_KEYS, odooImportButtonLabel } from "./bootstrap.js";
+import { PURCHASE_COLUMN_KEYS, odooImportButtonLabel, updateOdooTenantBadge } from "./bootstrap.js";
 import { renderSummary, scheduleAutoSave } from "./autoSave.js";
 
 function cachePurchaseColumnDefs(state) {
@@ -58,7 +58,7 @@ export function purchaseStatusPart(pm) {
 export function applyProcesoPayload(state, refs, data, pn, empresa) {
   state.processNumber = pn;
   state.empresa = empresa || "";
-  if (data.odoo_profile) {
+  if (data.odoo_profile && !state.odooProfileLocked) {
     const prof = data.odoo_profile;
     state.odooProfile =
       prof === "aliare" ? "aliare" : prof === "sudata" ? "sudata" : "default";
@@ -66,6 +66,7 @@ export function applyProcesoPayload(state, refs, data, pn, empresa) {
       refs.btnOdooImport.textContent = odooImportButtonLabel(state);
     }
   }
+  updateOdooTenantBadge(state, refs);
   state.source = data.source || "generated";
   state.saveStatus = state.source === "saved" ? "synced" : "";
   state.dirty = false;

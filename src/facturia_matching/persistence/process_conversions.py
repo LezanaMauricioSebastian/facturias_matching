@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from facturia_matching.persistence.back_check import PROCESS_SCHEMA, get_process
-from facturia_matching.infra.config import _mysql_table_ref, get_mysql_connection
+from facturia_matching.persistence.back_check import get_process
+from facturia_matching.infra.config import PROCESS_SCHEMA, _mysql_table_ref, get_mysql_connection
 from facturia_matching.odoo.env import (
     ODOO_TEMPLATE_ID_ALIARE,
     ODOO_TEMPLATE_ID_DEFAULT,
@@ -61,23 +61,47 @@ def resolve_process_row(
     }
 
 
+def _otro_impuesto_slot_has_content(row: Dict[str, Any], n: int) -> bool:
+    """True si el slot N tiene datos visibles en la grilla."""
+    from facturia_matching.core.amounts import otros_impuesto_monto_key, parse_amount_loose
+    from facturia_matching.infra.normalization import normalize as norm
+
+    label_key = "otros_impuestos" if n == 1 else f"otros_impuestos_{n}"
+    monto_key = otros_impuesto_monto_key(n)
+    amt = parse_amount_loose(row.get(monto_key))
+    if amt is not None and amt > 0:
+        return True
+    # Slot 1: etiqueta del padrón / FacturIA sin monto aún.
+    if n == 1 and norm(row.get(label_key)):
+        return True
+    return False
+
+
+def _strip_empty_extra_otro_impuesto_slots(rows: List[Dict[str, Any]]) -> None:
+    """Quita otros_impuestos_2..N sin monto (legacy: una columna por tax id de padrón)."""
+    from facturia_matching.core.amounts import otros_impuesto_monto_key, parse_amount_loose
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for n in range(2, 21):
+            monto_key = otros_impuesto_monto_key(n)
+            label_key = f"otros_impuestos_{n}"
+            if parse_amount_loose(row.get(monto_key)):
+                continue
+            row.pop(label_key, None)
+            row.pop(monto_key, None)
+
+
 def infer_otro_impuesto_indices(rows: List[Dict[str, Any]]) -> List[int]:
-    """Return sorted N values for otros_impuestos_N columns present in rows."""
+    """Return sorted N values for otros_impuestos_N slots con datos en alguna fila."""
     indices: set[int] = set()
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        for key in row:
-            if key == "otros_impuestos":
-                indices.add(1)
-                continue
-            m = _OTRO_IMPUESTO_N_RE.match(key)
-            if m:
-                indices.add(int(m.group(1)))
-                continue
-            mm = _OTRO_IMPUESTO_MONTO_N_RE.match(key)
-            if mm:
-                indices.add(int(mm.group(1)))
+        for n in range(1, 21):
+            if _otro_impuesto_slot_has_content(row, n):
+                indices.add(n)
     return sorted(indices)
 
 
@@ -325,10 +349,11 @@ def load_process_rows(
             filas = remap_saved_rows_to_catalog(saved["rows"])
             filas = attach_facturia_item_quantities(filas, process_number, empresa=empresa)
             filas = backfill_fac_iva_montos_from_process(filas, process_number, empresa=empresa)
+            _strip_empty_extra_otro_impuesto_slots(filas)
             conversion_meta = {
                 "id": saved.get("id"),
                 "saved_at": _format_dt(saved.get("updated_at") or saved.get("created_at")),
-                "extra_tax_indices": saved.get("extra_tax_indices") or [],
+                "extra_tax_indices": infer_otro_impuesto_indices(filas),
                 "odoo_profile": profile,
                 "template_id": template_id,
             }
@@ -343,6 +368,7 @@ def load_process_rows(
             return (filas, etiqueta_opts, purchase_summary, "saved", conversion_meta)
 
     filas, etiqueta_opts, purchase_summary = parse_process_json(process_number, empresa=empresa)
+    _strip_empty_extra_otro_impuesto_slots(filas)
     return (filas, etiqueta_opts, purchase_summary, "generated", conversion_meta)
 
 

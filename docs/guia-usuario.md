@@ -1,0 +1,127 @@
+# Guía de usuario — FacturIA → Odoo
+
+Guía práctica para operadores que cargan procesos, revisan el matching y envían facturas a Odoo.
+
+## URL y perfil Odoo
+
+| Tenant | Parámetros en la URL |
+|--------|----------------------|
+| **Dinner** (default) | `?empresa=1&proceso=123` |
+| **Aliare** | `?empresa=1&proceso=123&odoo_profile=aliare` |
+| **Sudata** (cloud) | `?empresa=1&proceso=123&odoo_cloud=1` o `odoo_profile=sudata` |
+
+**Regla:** si trabajás contra Odoo Aliare, la URL **siempre** debe incluir `odoo_profile=aliare`. Sin eso, los impuestos se resuelven contra Dinner y los ids no coinciden con Odoo Aliare (el IVA del pie no se sobreescribe correctamente).
+
+Ejemplo dev Aliare:
+
+```text
+https://odoo-dev-….run.app/?empresa=1&proceso=48&odoo_profile=aliare
+```
+
+## Flujo habitual
+
+1. Abrí la URL con empresa, proceso y perfil correctos.
+2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica).
+3. Editá lo necesario en la tabla o en el **pie del comprobante** (IVA, otros impuestos).
+4. Esperá el autosave (o guardá explícitamente si la UI lo indica).
+5. **Importar a Odoo** — crea o actualiza borradores y sincroniza impuestos + OC.
+
+## Pie del comprobante (IVA y otros impuestos)
+
+Cada factura tiene un bloque expandible con:
+
+| Campo | Qué es |
+|-------|--------|
+| **Base imponible** | Subtotal (solo lectura) |
+| **IVA 21 % / 10,5 % / …** | Montos de IVA por alícuota (editables en modos `header` y `mixed`) |
+| **Otros impuestos** | IIBB, percepciones, etc. (editable) |
+| **Total** | Base + IVA + otros (solo lectura) |
+
+### Cuándo editar arriba vs abajo
+
+| Modo | Dónde editar IVA | Pie IVA |
+|------|------------------|---------|
+| **line** | Columna **IVA monto** en cada fila | Solo lectura (resumen) |
+| **header** | Pie del comprobante | Editable |
+| **mixed** | Depende de la fila; totales en el pie | Editable por alícuota |
+
+Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea).
+
+### Formato de números
+
+La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el servidor interpreta esos formatos en el pie y en otros impuestos.
+
+## Otros impuestos (IIBB / percepciones)
+
+- Solo deberías ver **una columna** “Otros impuestos” en la tabla (más slots extra solo si hay montos reales en `otros_impuestos_2`, `_3`, …).
+- Si ves muchas columnas vacías (legacy de versiones anteriores): **Restaurar original** y volver a guardar, o recargar el proceso tras un deploy nuevo.
+- El monto de **Otros impuestos** en el pie se consolida en la primera línea de producto al importar (junto con los `tax_ids` de IIBB del padrón).
+
+## Import a Odoo — qué esperar
+
+Al confirmar **Importar a Odoo**:
+
+1. Se crean facturas en **borrador** (`in_invoice`) o se actualizan si ya existen (mismo proveedor + número de documento).
+2. Se sincronizan líneas de producto, `tax_ids`, vínculos OC y **montos de impuesto** en las líneas `display_type=tax`.
+3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre al final del sync, después de vincular OC.
+
+Si el import dice “Actualizadas en Odoo” con “X impuestos”, los montos del pie se aplicaron. Si los montos en Odoo siguen siendo los calculados, revisá la sección [Problemas frecuentes](#problemas-frecuentes).
+
+## Aliare vs Dinner — ids de impuesto
+
+Los **números de id** de `account.tax` no son iguales entre tenants:
+
+| Alícuota | Dinner | Aliare |
+|----------|--------|--------|
+| 21 %     | 63     | 65     |
+| 10,5 %   | 61     | 63     |
+| 27 %     | 65     | 67     |
+
+No hace falta memorizarlos: la app los resuelve sola **si el perfil en la URL es correcto**.
+
+## Variables de entorno relevantes (operaciones / deploy)
+
+| Variable | Uso |
+|----------|-----|
+| `ODOO_BASE_URL_ALIARE`, `ODOO_USER_ALIARE`, `ODOO_API_KEY_ALIARE` | Credenciales import Aliare |
+| `PADRON_TAX_SOURCE_PROFILE` | Tenant del que vienen los ids del padrón Postgres (default `default` = Dinner); se remapean al perfil activo |
+| `FACTURIA_ODOO_PROFILE` | Perfil por defecto en deploy si la URL no trae `odoo_profile` |
+
+Ver `.env.example` para la lista completa.
+
+## Problemas frecuentes
+
+### El IVA en Odoo no coincide con el pie
+
+| Causa | Qué hacer |
+|-------|-----------|
+| Falta `odoo_profile=aliare` en la URL | Agregar el parámetro y recargar |
+| No se guardó la edición del pie | Editar de nuevo, esperar autosave, reimportar |
+| Factura no está en borrador | Solo se actualizan facturas `draft` |
+| Proceso con conversión vieja corrupta | **Restaurar original** y repetir ediciones |
+
+### Muchas columnas “Otros impuestos” vacías
+
+Versiones anteriores generaban una columna por cada impuesto del padrón. Tras actualizar: recargar proceso o restaurar original. Solo se muestran columnas con monto.
+
+### Error “Valor numérico inválido”
+
+Formatos híbridos raros (ej. `350.0,00`) ya se normalizan. Si persiste, reescribir el monto con formato AR estándar (`350.000,00`).
+
+### Error de fecha límite en Odoo
+
+```text
+Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite…
+```
+
+Completar **fecha de vencimiento** en FacturIA. El import propaga `invoice_date_due` y completa `date_maturity` en apuntes AP/AR. Si sigue fallando, revisar el tipo de cuenta del impuesto IIBB en Odoo.
+
+### Proceso devuelve error 400 al cargar
+
+Algunos procesos tienen `json_data` vacío o corrupto en MySQL. Probar otro número de proceso o pedir corrección del dato en FacturIA.
+
+## Más detalle técnico
+
+- [iva-y-import-odoo.md](iva-y-import-odoo.md) — pipeline de import, modos IVA, regresiones conocidas
+- [README.md](README.md) — índice para desarrolladores
+- [api.md](api.md) — endpoints REST

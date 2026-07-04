@@ -39,11 +39,57 @@ body {
   gap: 4px;
 }
 
+.contextRowTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.odooTenantBadge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--head);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.odooTenantBadge[data-profile="default"] {
+  color: #475569;
+  background: #f8fafc;
+}
+
+.odooTenantBadge[data-profile="aliare"] {
+  color: #6d28d9;
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+}
+
+.odooTenantBadge[data-profile="sudata"] {
+  color: #0369a1;
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+
+body.embed-mode .odooTenantBadge {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
 body.embed-mode .searchBar { display: none; }
 body.embed-mode .wrap { padding: 0 12px 12px; }
 body.embed-mode .grid { gap: 10px; }
 body.embed-mode .actionTitle { display: none; }
 body.embed-mode .actionHint { display: none; }
+body.embed-mode .contextRowTop {
+  justify-content: flex-end;
+  min-height: 0;
+}
 body.embed-mode .actionCard {
   position: sticky;
   top: 0;

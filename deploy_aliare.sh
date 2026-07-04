@@ -32,7 +32,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-PROJECT_ID="${PROJECT_ID:-fudo-481618}"
+# Proyecto GCP (Secret Manager + Cloud Run). No depende de `gcloud config get-value project`.
+DEFAULT_GCP_PROJECT="fudo-481618"
+PROJECT_ID="${PROJECT_ID:-${DEFAULT_GCP_PROJECT}}"
+export CLOUDSDK_CORE_PROJECT="${PROJECT_ID}"
+GCLOUD_SECRET_ACCESS_ERROR=""
 REGION="${REGION:-southamerica-east1}"
 SERVICE_NAME="${SERVICE_NAME:-matching-ui-aliare}"
 REPO_NAME="${REPO_NAME:-containers}"
@@ -84,7 +88,37 @@ IMAGE_URI="${AR_HOST}/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${TAG}"
 
 secret_exists() {
   local name="$1"
-  gcloud secrets describe "${name}" --project "${PROJECT_ID}" >/dev/null 2>&1
+  local err=""
+  if gcloud secrets describe "${name}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+    return 0
+  fi
+  err="$(gcloud secrets describe "${name}" --project "${PROJECT_ID}" 2>&1 >/dev/null || true)"
+  if [[ "${err}" == *"Reauthentication"* ]] \
+    || [[ "${err}" == *"PERMISSION_DENIED"* ]] \
+    || [[ "${err}" == *"Permission denied"* ]] \
+    || [[ "${err}" == *"does not have"* ]]; then
+    GCLOUD_SECRET_ACCESS_ERROR="${err}"
+  fi
+  return 1
+}
+
+report_secret_access_failure() {
+  if [[ -n "${GCLOUD_SECRET_ACCESS_ERROR}" ]]; then
+    echo "" >&2
+    echo "ERROR: gcloud no puede leer Secret Manager en proyecto ${PROJECT_ID}." >&2
+    echo "  Cuenta activa: $(gcloud config get-value account 2>/dev/null || echo '?')" >&2
+    echo "  Probá: gcloud auth login" >&2
+    echo "  (Los secrets pueden existir en la consola; la CLI no los ve sin auth/permisos.)" >&2
+    exit 1
+  fi
+}
+
+report_required_secret_missing() {
+  local label="$1"
+  report_secret_access_failure
+  echo "ERROR: falta secret obligatorio ${label}" >&2
+  echo "Ejecutá: $0 --setup-secrets" >&2
+  exit 1
 }
 
 build_default_secrets_arg() {
@@ -104,26 +138,27 @@ build_default_secrets_arg() {
 check_secrets() {
   local missing=()
   local i gcp_name
+  GCLOUD_SECRET_ACCESS_ERROR=""
   echo "Verificando secrets _ALIARE en proyecto ${PROJECT_ID}..."
+  echo "  Cuenta gcloud: $(gcloud config get-value account 2>/dev/null || echo '?')"
   for i in "${!SECRET_GCP_NAMES[@]}"; do
     gcp_name="${SECRET_GCP_NAMES[$i]}"
     if secret_exists "${gcp_name}"; then
       echo "  OK  ${gcp_name}"
     else
+      report_secret_access_failure
       echo "  --  ${gcp_name} (no existe; opcional si no usás esa credencial)"
       missing+=("${gcp_name}")
     fi
   done
 
+  report_secret_access_failure
+
   local required=(DB_PASSWORD_ALIARE DB_PASSWORD_MYSQL_ALIARE)
   local req
   for req in "${required[@]}"; do
     if ! secret_exists "${req}"; then
-      echo "ERROR: falta secret obligatorio ${req}" >&2
-      echo "  DB_PASSWORD_ALIARE = contraseña Postgres padrón (DB_PASSWORD del .env)" >&2
-      echo "  DB_PASSWORD_MYSQL_ALIARE = contraseña MySQL FacturIA" >&2
-      echo "Ejecutá: $0 --setup-secrets" >&2
-      exit 1
+      report_required_secret_missing "${req}"
     fi
   done
 

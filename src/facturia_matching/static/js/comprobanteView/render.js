@@ -6,7 +6,7 @@ import {
 } from "../comprobanteTax/index.js";
 import { formatMoney, findOptionLabel, escapeHtml } from "../utils/index.js";
 import { captureTableUiState, restoreTableUiState } from "./uiState.js";
-import { renderFooterHtml, attachComprobanteFooterHandlers } from "./footer.js";
+import { renderFooterHtml, attachComprobanteFooterHandlers, updateComprobanteFooters } from "./footer.js";
 
 function comprobanteTitle(state, groupRows, compIdx) {
   const first = groupRows[0] || {};
@@ -31,6 +31,7 @@ export function renderComprobantes(state, refs, handlers) {
 
   const groups = listComprobanteGroups(state.rows);
   state.comprobanteTaxModes = {};
+  state.comprobanteFooterStructure = {};
   const cards = [];
 
   for (const g of groups) {
@@ -62,6 +63,7 @@ export function renderComprobantes(state, refs, handlers) {
   });
 
   attachComprobanteFooterHandlers(wrap, state, refs, handlers);
+  updateComprobanteFooters(state, refs);
   wrap.querySelectorAll(".comprobanteModeHint, .comprobanteWarnings").forEach((el) => el.remove());
   restoreTableUiState(refs, uiState);
   updateTotals(state, refs);

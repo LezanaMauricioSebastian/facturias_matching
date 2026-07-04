@@ -86,7 +86,14 @@ Cada fila del array `rows` es un objeto plano. Claves importantes:
 
 ### Montos FacturIA (encabezado)
 
-`__fac_subtotal`, `__fac_iva_monto`, `__fac_iva_montos` (JSON por alícuota), `otros_impuestos_monto`, slots `otros_impuestos_N` / `otros_impuestos_N_monto`.
+`__fac_subtotal`, `__fac_iva_monto`, `__fac_iva_montos` (JSON por alícuota; valores en formato es-AR aceptados), `otros_impuestos_monto`, slots `otros_impuestos_N` / `otros_impuestos_N_monto`.
+
+**Otros impuestos — reglas de columnas:**
+
+- Slot 1 (`otros_impuestos`): puede tener solo etiqueta del padrón.
+- Slots `_2..N`: solo si hay monto > 0 en alguna fila (no se generan columnas vacías por ids del padrón).
+- Al cargar conversión guardada: `_strip_empty_extra_otro_impuesto_slots` limpia legacy.
+- Metadata padrón: `_padron_other_tax_ids` conserva todos los ids no-IVA para import aunque la UI muestre una sola columna.
 
 ### Purchase matching
 
@@ -152,6 +159,12 @@ En desarrollo con `--reload`, los procesos hijos de uvicorn resetean caches al r
 - **sudata**: sufijo `_SUDATA` o flag `odoo_cloud`
 
 `get_conversion_template_id()` asocia cada perfil a un `export_templates.id` en MySQL (99 default, ids Aliare/Sudata en env).
+
+### Impuestos multi-tenant
+
+- Resolución de IVA y percepciones: catálogo `account.tax` del perfil activo (`padron/taxes.py`).
+- Padrón Postgres con ids numéricos legacy: remapeo con `PADRON_TAX_SOURCE_PROFILE` (tenant fuente, default Dinner).
+- Import: pie del comprobante manda en header/mixed; sobreescritura de montos en líneas `display_type=tax` al final de `sync_move_taxes_from_group`. Detalle en [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
 ## Despliegue
 

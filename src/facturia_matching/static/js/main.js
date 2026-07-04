@@ -3,6 +3,7 @@ import { getDomRefs, setStatus } from "./core/dom.js";
 import {
   loadMetaAndOptions,
   odooImportButtonLabel,
+  updateOdooTenantBadge,
   buscarProceso,
   descargarCsv,
   importarOdoo,
@@ -33,6 +34,7 @@ async function init() {
     if (refs.btnOdooImport) {
       refs.btnOdooImport.textContent = odooImportButtonLabel(state);
     }
+    updateOdooTenantBadge(state, refs);
     setStatusBound("");
     refs.btnBuscar.disabled = false;
   } catch (e) {

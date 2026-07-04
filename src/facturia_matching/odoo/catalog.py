@@ -15,6 +15,7 @@ from facturia_matching.odoo.api import (
     get_odoo_uid_from_config,
     is_odoo_config_ready,
     odoo_search_read,
+    probe_odoo_db_exists,
 )
 from facturia_matching.odoo.document_types_i18n import prepare_document_types_for_ui
 from facturia_matching.odoo.env import current_odoo_profile, get_odoo_main_config, supports_rubro_field
@@ -521,6 +522,15 @@ def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Opt
     if get_odoo_uid_from_config(config) is None:
         logger.warning(
             "Odoo configurado pero no hay uid (ODOO_USER_ID numérico o ODOO_USER + ODOO_PASSWORD)"
+        )
+        return None, False
+
+    db_exists, _, _ = probe_odoo_db_exists(config)
+    if db_exists is False:
+        logger.warning(
+            "Odoo db %r no existe en %s; catálogo desde Postgres",
+            config.get("db"),
+            config.get("base_url"),
         )
         return None, False
 

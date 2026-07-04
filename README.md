@@ -1,6 +1,8 @@
 # FacturIA → Odoo (matching UI)
 
-Pantalla web para cargar un proceso de FacturIA, revisar el matching contra el padrón y Odoo, editar filas y exportar CSV para importación en Odoo. También permite importar borradores a Odoo TEST.
+Pantalla web para cargar un proceso de FacturIA, revisar el matching contra el padrón y Odoo, editar filas y exportar CSV para importación en Odoo. También permite importar borradores a Odoo (Dinner TEST, Aliare, Sudata según perfil).
+
+**Perfil Odoo:** agregar `?odoo_profile=aliare` (o `sudata` / `odoo_cloud=1`) a la URL cuando el tenant no es Dinner. Guía operativa: [docs/guia-usuario.md](docs/guia-usuario.md). Detalle técnico: [docs/iva-y-import-odoo.md](docs/iva-y-import-odoo.md).
 
 ## Qué hace
 
@@ -84,6 +86,7 @@ docs/                    # documentación técnica
 
 Índice general: **[docs/README.md](docs/README.md)** — arquitectura, módulos Python/JS, API, tests y guías por tarea.
 
+- **[Guía de usuario](docs/guia-usuario.md)** — URL, perfil Odoo, pie IVA, import, problemas frecuentes
 - [Arquitectura y flujo de datos](docs/arquitectura.md)
 - [Módulos Python](docs/modulos-python.md)
 - [Módulos frontend](docs/modulos-frontend.md)

@@ -290,6 +290,90 @@ class TestComprobanteTax(unittest.TestCase):
         amounts = collect_expected_tax_amounts_from_group(rows)
         self.assertEqual(amounts.get(63), 60000.0)
 
+    def test_reconcile_preserves_footer_iva_montos_in_mixed_mode(self):
+        """Regresión: montos del pie distintos al cálculo por línea no se pisan al importar."""
+        rows = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_montos": '{"21": "15893.38", "10.5": "2832.75"}',
+                "__fac_iva_monto": "18726.13",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "33019,55",
+                "invoice_line_ids/name": "A",
+            },
+            {
+                "iva_pct": "10,5",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/price_unit": "964,37",
+                "invoice_line_ids/name": "B",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "13489,27",
+                "invoice_line_ids/name": "C",
+            },
+        ]
+        self.assertEqual(classify_comprobante_tax_mode(rows), "mixed")
+        reconcile_fac_iva_for_import(rows)
+        montos = json.loads(rows[0]["__fac_iva_montos"])
+        self.assertAlmostEqual(float(montos["21"]), 15893.38, places=2)
+        self.assertAlmostEqual(float(montos["10.5"]), 2832.75, places=2)
+
+    def test_fac_iva_montos_prefers_edited_footer_total_over_stale_json(self):
+        rows = [
+            {
+                "iva_pct": "0",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "10000",
+                "__fac_iva_montos": '{"21": "2100"}',
+                "__fac_iva_monto": "9999",
+            }
+        ]
+        self.assertEqual(classify_comprobante_tax_mode(rows), "header")
+        montos = fac_iva_montos(rows)
+        self.assertEqual(montos, {"21": 9999.0})
+
+    def test_reconcile_preserves_footer_edit_in_header_mode(self):
+        rows = [
+            {
+                "iva_pct": "0",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "10000",
+                "__fac_iva_montos": '{"21": "2100"}',
+                "__fac_iva_monto": "9999",
+            }
+        ]
+        reconcile_fac_iva_for_import(rows)
+        self.assertEqual(float(rows[0]["__fac_iva_monto"]), 9999.0)
+        self.assertEqual(json.loads(rows[0]["__fac_iva_montos"])["21"], "2100")
+
+    def test_explicit_fac_iva_montos_parses_ar_format_strings(self):
+        """Regresión: JSON del pie con formato es-AR no debe caer al cálculo por línea."""
+        rows = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_montos": '{"21": "53.515,40", "10.5": "17.099,36"}',
+                "__fac_iva_monto": "70.614,76",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "11.342,71",
+                "invoice_line_ids/name": "A",
+            },
+            {
+                "iva_pct": "10,5",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "11.940,03",
+                "invoice_line_ids/name": "B",
+            },
+        ]
+        self.assertEqual(classify_comprobante_tax_mode(rows), "mixed")
+        montos = fac_iva_montos(rows)
+        self.assertAlmostEqual(montos["21"], 53515.40, places=2)
+        self.assertAlmostEqual(montos["10.5"], 17099.36, places=2)
+        amounts = collect_expected_tax_amounts_from_group(rows)
+        self.assertAlmostEqual(amounts.get(63), 53515.40, places=2)
+        self.assertAlmostEqual(amounts.get(61), 17099.36, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

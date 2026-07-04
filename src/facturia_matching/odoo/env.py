@@ -6,6 +6,8 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+import requests
+
 from facturia_matching.infra.env import env_strip as _env_strip
 from facturia_matching.odoo.request_context import get_request_odoo_profile
 
@@ -82,6 +84,24 @@ def _odoo_db_from_url(base_url: str) -> str:
     return host
 
 
+def list_odoo_databases_web(base_url: str) -> Optional[List[str]]:
+    """Fallback HTTP (Odoo.sh expone /web/database/list cuando xmlrpc db.list está denegado)."""
+    base = (base_url or "").rstrip("/")
+    if not base:
+        return None
+    try:
+        resp = requests.get(f"{base}/web/database/list", timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        result = data.get("result")
+        if isinstance(result, list):
+            names = [str(x).strip() for x in result if x]
+            return names or None
+    except Exception as e:
+        logger.debug("web/database/list falló en %s: %s", base, e)
+    return None
+
+
 def list_odoo_databases(base_url: str) -> Optional[List[str]]:
     base = (base_url or "").rstrip("/")
     if not base:
@@ -89,10 +109,11 @@ def list_odoo_databases(base_url: str) -> Optional[List[str]]:
     try:
         dbsvc = xmlrpc.client.ServerProxy(f"{base}/xmlrpc/2/db", allow_none=True)
         rows = dbsvc.list()
-        return list(rows) if rows else []
+        if rows:
+            return list(rows)
     except Exception as e:
         logger.debug("db.list() falló en %s: %s", base, e)
-        return None
+    return list_odoo_databases_web(base)
 
 
 def _odoo_db_exists(base_url: str, db_name: str) -> Optional[bool]:
@@ -119,15 +140,23 @@ def resolve_odoo_db_name(
     password: str = "",
 ) -> str:
     """
-    Nombre explícito, única base en db.list(), auth contra candidatos,
-    o hostname solo si db_exist / authenticate confirman.
+    Nombre explícito (si existe), única base en db.list()/web/database/list,
+    auth contra candidatos, o hostname si db_exist / authenticate confirman.
     """
-    explicit = (configured or "").strip()
-    if explicit:
-        return explicit
     base = (base_url or "").rstrip("/")
     if not base:
         return ""
+
+    explicit = (configured or "").strip()
+    if explicit:
+        exists = _odoo_db_exists(base, explicit)
+        if exists is not False:
+            return explicit
+        logger.warning(
+            "ODOO_DB=%r no existe en %s; se intenta resolver solo con credenciales",
+            explicit,
+            base,
+        )
 
     dbs: List[str] = list_odoo_databases(base) or []
     if len(dbs) == 1:
@@ -330,3 +359,16 @@ def get_odoo_main_config(profile: str) -> Dict[str, Any]:
 def build_odoo_import_config(profile: Optional[str] = None) -> Dict[str, Any]:
     """Import de facturas: misma instancia Odoo que catálogos/health del perfil activo."""
     return dict(build_odoo_main_config(profile or resolve_odoo_profile()))
+
+
+def resolve_odoo_lang(profile: Optional[str] = None) -> str:
+    """
+    Idioma RPC (context.lang). Sudata Cloud no trae es_AR → sin lang por defecto.
+    Override: ODOO_LANG_SUDATA / ODOO_LANG_ALIARE / ODOO_LANG.
+    """
+    prof = resolve_odoo_profile(profile)
+    if prof == "sudata":
+        return _env_strip("ODOO_LANG_SUDATA")
+    if prof == "aliare":
+        return _env_strip("ODOO_LANG_ALIARE") or _env_strip("ODOO_LANG", "es_AR")
+    return _env_strip("ODOO_LANG", "es_AR")

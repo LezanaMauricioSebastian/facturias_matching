@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import dotenv
 from mysql.connector import connect as connect_mysql
@@ -59,6 +60,16 @@ try:
 except ValueError:
     DB_PORT_MYSQL = 3306
 DB_URL_MYSQL = f"mysql://{DB_USER_MYSQL}:{DB_PASSWORD_MYSQL}@{DB_HOST_MYSQL}:{DB_PORT_MYSQL}/{DB_NAME_MYSQL}"
+
+# MySQL schema para process / process_conversions / export_templates (dev: sudataco_staging).
+def resolve_process_schema(configured: Optional[str] = None) -> str:
+    explicit = (
+        configured if configured is not None else _env_strip("PROCESS_SCHEMA")
+    ).strip()
+    return explicit or "sudataco_facturia"
+
+
+PROCESS_SCHEMA = resolve_process_schema()
 
 DB_TABLE_NAME_TAXES = (
     os.getenv("DB_TABLE_NAME_TAXES", "").strip() or "view_padron_facturia_actualizado"

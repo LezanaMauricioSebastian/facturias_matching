@@ -32,8 +32,8 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
-| `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; `sanitize_inflated_line_amounts`; `reconcile_fac_iva_for_import`. **Debe parity con JS.** |
-| `amounts.py` | Parseo de montos FacturIA (`fac_header_amount_str`, percepciones, qty/price). |
+| `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie); `sanitize_inflated_line_amounts`; **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS.** |
+| `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); `fac_header_amount_str`, percepciones, qty/price. |
 | `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). |
 | `constants.py` | `OUTPUT_HEADERS`, headers CSV, columnas purchase, `IVA_OPTIONS`, `append_purchase_columns`. |
 | `__init__.py` | Re-exports si aplica. |
@@ -46,7 +46,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `postgres.py` | Cache de vista padrón; `detect_padron_fields`; **`match_proveedor`** (fuzzy CUIT/nombre); `get_table_columns`. Respeta `PADRON_SOURCE` y orden Odoo-first en Aliare/Sudata. |
 | `odoo.py` | **`build_padron_rows_from_odoo`**: últimas facturas proveedor → filas estilo padrón (rubro, cuenta, diario). |
-| `taxes.py` | Padrón fiscal de impuestos; **`match_padron_taxes`**, **`apply_padron_taxes_to_row`**; resolución label → tax id (rapidfuzz); IVA purchase taxes por alícuota; IIBB por jurisdicción. |
+| `taxes.py` | Padrón fiscal; **`match_padron_taxes`**, **`apply_padron_taxes_to_row`** (solo slot 1 en UI; `_padron_other_tax_ids` para import); resolución label → tax id; IVA por alícuota desde catálogo Odoo del perfil activo; remapeo ids padrón vía `PADRON_TAX_SOURCE_PROFILE`; IIBB/percepciones por nombre. |
 | `__init__.py` | Marcador. |
 
 ---
@@ -60,7 +60,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks. |
 | `catalog.py` | **`get_catalog`** (cache): proveedores, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
-| `import_.py` | Pipeline completo de import: **`group_rows_into_invoices`**, **`import_rows_to_odoo`**, **`sync_move_taxes_from_group`**, planes de update de líneas/impuestos/OC. Archivo más grande del proyecto. |
+| `import_.py` | Pipeline de import: **`group_rows_into_invoices`**, **`import_rows_to_odoo`**, **`sync_move_taxes_from_group`**, **`collect_expected_tax_amounts_from_group`**, **`_ensure_missing_tax_lines_on_move`**, **`_apply_tax_line_amount_overwrites`** (montos tax al final, tras vínculos OC), consolidación IIBB en primera línea (`_comprobante_non_iva_tax_ids`). Archivo más grande del proyecto. |
 | `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. |
 | `__init__.py` | Marcador. |
 
@@ -71,7 +71,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
-| `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**. Tabla `process_conversions` + FK `export_templates`. |
+| `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
 | `__init__.py` | Marcador. |
 
@@ -119,6 +119,10 @@ import_rows_to_odoo (odoo/import_)
   ├── group_rows_into_invoices
   ├── reconcile_fac_iva_for_import (core/comprobante_tax)
   └── sync_move_taxes_from_group
+        ├── contenido + tax_ids en líneas de producto
+        ├── vínculos OC (purchase_line_id)
+        ├── _ensure_missing_tax_lines_on_move   # IVA + IIBB faltantes
+        └── _apply_tax_line_amount_overwrites   # último paso
 ```
 
 ---
@@ -141,6 +145,6 @@ Agrupadas por consumidor:
 - **MySQL**: `DB_HOST_MYSQL`, `DB_USER_MYSQL`, `DB_PASSWORD_MYSQL`, `DB_NAME_MYSQL`
 - **Odoo default**: `ODOO_BASE_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_PASSWORD` / `ODOO_API_KEY`
 - **Odoo Aliare/Sudata**: mismas claves con sufijo `_ALIARE` / `_SUDATA`
-- **Comportamiento**: `PADRON_SOURCE`, `PADRON_FUZZY_MIN_SCORE`, `PADRON_LIMIT`
+- **Comportamiento**: `PADRON_SOURCE`, `PADRON_TAX_SOURCE_PROFILE`, `PADRON_FUZZY_MIN_SCORE`, `PADRON_LIMIT`
 
 Definición en `infra/config.py` y `odoo/env.py`.

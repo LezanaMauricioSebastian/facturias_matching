@@ -72,6 +72,25 @@ def parse_process_json(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo parsear json_data del proceso: {e}")
 
+    if isinstance(obj, str):
+        if not obj.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="El proceso tiene json_data vacío o corrupto.",
+            )
+        try:
+            obj = json.loads(obj)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"json_data no es un objeto JSON válido: {e}",
+            )
+    if not isinstance(obj, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="json_data del proceso debe ser un objeto JSON.",
+        )
+
     facturas = obj.get("facturas") or []
     out_rows: List[Dict[str, Any]] = []
     etiqueta_opts: List[str] = []

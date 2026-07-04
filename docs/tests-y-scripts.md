@@ -21,16 +21,16 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 
 | Archivo | Qué cubre |
 |---------|-----------|
-| `test_fac_amounts.py` | `core/amounts.py` — parseo montos FacturIA |
-| `test_comprobante_tax.py` | `core/comprobante_tax.py` — modos y totales |
+| `test_fac_amounts.py` | `core/amounts.py` — parseo montos FacturIA, híbridos `350.0,00` |
+| `test_comprobante_tax.py` | `core/comprobante_tax.py` — modos, totales, JSON es-AR en `__fac_iva_montos` |
 | `test_tax_pipeline.py` | Pipeline fiscal end-to-end en Python |
-| `test_iva_tax_resolve.py` | Resolución IVA → tax id |
+| `test_iva_tax_resolve.py` | Resolución IVA → tax id; remapeo padrón Dinner → Aliare |
 | `test_js_python_parity.py` | Mismos escenarios que JS en fixtures |
-| `test_process_conversions.py` | Guardar/cargar conversiones MySQL (mock o DB) |
+| `test_process_conversions.py` | Guardar/cargar conversiones; `infer_otro_impuesto_indices`; strip slots otros impuestos legacy |
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
-| `test_odoo_import.py` | Agrupación, validación, planes de import |
+| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB en primera línea, montos tax tras reconcile |
 | `test_purchase_matching.py` | Matching OC, UM, fuzzy líneas |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
 | `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo |

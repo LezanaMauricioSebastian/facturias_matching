@@ -16,6 +16,10 @@ import {
   lineIvaMonto,
   lineIvaSuggested,
   sumLineIvaMontos,
+  shouldHideIvaFooter,
+  shouldShowOtrosFooter,
+  hasOtrosImpuestosSelection,
+  ivaPctRequiresLineTax,
 } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
 import { migrateLegacyComprobanteIva, migrateFacIvaMontos } from "../../src/facturia_matching/static/js/comprobanteTax/migration.js";
 
@@ -173,5 +177,50 @@ describe("line mode manual iva stays line for import", () => {
     ];
     assert.equal(classifyComprobanteTaxMode(rows), "line");
     assert.equal(computeComprobanteTotals(rows).ivaOdoo, 60000);
+  });
+});
+
+describe("IVA Exento / No Gravado", () => {
+  it("ivaPctRequiresLineTax distinguishes special zero labels", () => {
+    assert.equal(ivaPctRequiresLineTax("IVA Exento"), true);
+    assert.equal(ivaPctRequiresLineTax("IVA No Gravado"), true);
+    assert.equal(ivaPctRequiresLineTax("IVA No Corresponde"), false);
+    assert.equal(ivaPctRequiresLineTax("0"), false);
+    assert.equal(ivaPctRequiresLineTax("21"), true);
+  });
+
+  it("shouldHideIvaFooter for single line IVA Exento or No Gravado", () => {
+    const exento = [
+      {
+        iva_pct: "IVA Exento",
+        "invoice_line_ids/name": "X",
+        "invoice_line_ids/price_unit": "100",
+        "invoice_line_ids/quantity": "1",
+      },
+    ];
+    const noGravado = [{ ...exento[0], iva_pct: "IVA No Gravado" }];
+    const twoLines = [exento[0], { ...exento[0], "invoice_line_ids/name": "Y" }];
+    assert.equal(shouldHideIvaFooter(exento), true);
+    assert.equal(shouldHideIvaFooter(noGravado), true);
+    assert.equal(shouldHideIvaFooter(twoLines), false);
+  });
+});
+
+describe("otros impuestos footer visibility", () => {
+  it("hidden without selection and zero amount", () => {
+    const rows = [{ otros_impuestos: "", otros_impuestos_monto: "" }];
+    assert.equal(hasOtrosImpuestosSelection(rows), false);
+    assert.equal(shouldShowOtrosFooter(rows, { otros: 0 }), false);
+  });
+
+  it("visible with selection and zero amount", () => {
+    const rows = [{ otros_impuestos: "Percepción IIBB CABA Sufrida" }];
+    assert.equal(hasOtrosImpuestosSelection(rows), true);
+    assert.equal(shouldShowOtrosFooter(rows, { otros: 0 }), true);
+  });
+
+  it("visible when amount is positive even without selection label", () => {
+    const rows = [{ otros_impuestos: "", otros_impuestos_monto: "150" }];
+    assert.equal(shouldShowOtrosFooter(rows, { otros: 150 }), true);
   });
 });

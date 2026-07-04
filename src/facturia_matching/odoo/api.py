@@ -14,8 +14,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from facturia_matching.infra.config import ODOO_CONFIG, ODOO_LANG
-from facturia_matching.odoo.env import build_odoo_import_config, current_odoo_profile, get_odoo_main_config
+from facturia_matching.infra.config import ODOO_CONFIG
+from facturia_matching.odoo.env import (
+    build_odoo_import_config,
+    current_odoo_profile,
+    get_odoo_main_config,
+    resolve_odoo_lang,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,14 +268,35 @@ def _jsonrpc(method: str, params: Dict[str, Any]) -> Any:
     return _jsonrpc_call(get_active_odoo_config(), method, params)
 
 
-def _merge_odoo_call_kwargs(kwargs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Inyecta context.lang (p. ej. es_AR) en todas las llamadas execute_kw."""
+def _is_invalid_lang_error(exc: BaseException) -> bool:
+    return "invalid language code" in str(exc).lower()
+
+
+def _kwargs_without_lang(kwargs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = dict(kwargs or {})
-    if not ODOO_LANG:
+    ctx = dict(merged.get("context") or {})
+    if "lang" not in ctx:
+        return merged
+    ctx.pop("lang", None)
+    if ctx:
+        merged["context"] = ctx
+    else:
+        merged.pop("context", None)
+    return merged
+
+
+def _merge_odoo_call_kwargs(
+    kwargs: Optional[Dict[str, Any]],
+    profile: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Inyecta context.lang según perfil (Sudata: sin lang por defecto)."""
+    merged = dict(kwargs or {})
+    lang = resolve_odoo_lang(profile or current_odoo_profile())
+    if not lang:
         return merged
     ctx = dict(merged.get("context") or {})
     if "lang" not in ctx:
-        ctx["lang"] = ODOO_LANG
+        ctx["lang"] = lang
     merged["context"] = ctx
     return merged
 
@@ -289,21 +315,54 @@ def odoo_execute_kw_with_config(
     if uid is None:
         raise RuntimeError("No hay uid Odoo (login/password o uid en config)")
     args = args if args is not None else []
-    kwargs = _merge_odoo_call_kwargs(kwargs)
+    profile = current_odoo_profile()
+    kwargs = _merge_odoo_call_kwargs(kwargs, profile)
+
+    def _call(call_kwargs: Dict[str, Any]) -> Any:
+        try:
+            return _jsonrpc_call(
+                config,
+                "call",
+                {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [db, uid, password, model, method, args, call_kwargs],
+                },
+            )
+        except Exception as e:
+            logger.debug("execute_kw JSON-RPC %s.%s: %s", model, method, e)
+            if _is_invalid_lang_error(e) and (call_kwargs.get("context") or {}).get("lang"):
+                return _jsonrpc_call(
+                    config,
+                    "call",
+                    {
+                        "service": "object",
+                        "method": "execute_kw",
+                        "args": [
+                            db,
+                            uid,
+                            password,
+                            model,
+                            method,
+                            args,
+                            _kwargs_without_lang(call_kwargs),
+                        ],
+                    },
+                )
+            raise
+
     try:
-        return _jsonrpc_call(
-            config,
-            "call",
-            {
-                "service": "object",
-                "method": "execute_kw",
-                "args": [db, uid, password, model, method, args, kwargs],
-            },
-        )
-    except Exception as e:
-        logger.debug("execute_kw JSON-RPC %s.%s: %s", model, method, e)
-    models = xmlrpc.client.ServerProxy(_xmlrpc_url("object", config), allow_none=True)
-    return models.execute_kw(db, uid, password, model, method, args, kwargs)
+        return _call(kwargs)
+    except Exception:
+        models = xmlrpc.client.ServerProxy(_xmlrpc_url("object", config), allow_none=True)
+        try:
+            return models.execute_kw(db, uid, password, model, method, args, kwargs)
+        except Exception as e:
+            if _is_invalid_lang_error(e) and (kwargs.get("context") or {}).get("lang"):
+                return models.execute_kw(
+                    db, uid, password, model, method, args, _kwargs_without_lang(kwargs)
+                )
+            raise
 
 
 def odoo_execute_kw(
@@ -342,7 +401,7 @@ def odoo_search_read(
         kwargs["order"] = order
     if context:
         kwargs["context"] = {**(kwargs.get("context") or {}), **context}
-    kwargs = _merge_odoo_call_kwargs(kwargs)
+    kwargs = _merge_odoo_call_kwargs(kwargs, current_odoo_profile())
     try:
         rows = odoo_execute_kw_with_config(cfg, model, "search_read", [domain], kwargs)
         return rows or []

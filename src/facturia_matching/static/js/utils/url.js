@@ -80,19 +80,88 @@ export function resolveOdooProfileParam(raw, odooCloud) {
   return "default";
 }
 
-/** Perfil Odoo activo: state, si no URL (?odoo_profile= / ?odoo_cloud=1). */
+/** true si la URL trae perfil Odoo explícito (no inferido por empresa). */
+export function hasExplicitOdooProfileInUrl() {
+  const url = getUrlParams();
+  return Boolean(isOdooCloudFlag(url.odoo_cloud) || url.odoo_profile);
+}
+
+/** true si el perfil Odoo fue fijado por URL (?odoo_profile / ?odoo_cloud). */
+export function hasExplicitOdooProfileOverride(state) {
+  if (state?.odooProfileLocked) return true;
+  return hasExplicitOdooProfileInUrl();
+}
+
+/**
+ * Sincroniza perfil Odoo en state.
+ * ?odoo_profile=aliare (u odoo_cloud) gana sobre el mapeo ?empresa=N.
+ */
+export function syncOdooProfileState(state, urlParams = {}) {
+  const url = { ...getUrlParams(), ...(urlParams || {}) };
+  const odooProfile = String(url.odoo_profile || "").trim();
+  const odooCloud = String(url.odoo_cloud || "").trim();
+  const locked = Boolean(isOdooCloudFlag(odooCloud) || odooProfile);
+
+  state.odooProfileLocked = locked;
+  if (locked) {
+    state.odooProfile = resolveOdooProfileParam(odooProfile, odooCloud);
+    return;
+  }
+
+  const empresa = String(url.empresa || state?.empresa || "").trim();
+  if (empresa) {
+    const fromEmpresa = resolveOdooProfileFromEmpresa(empresa, state?.empresaOdooProfiles);
+    if (fromEmpresa) {
+      state.odooProfile = fromEmpresa;
+      return;
+    }
+  }
+}
+
+/** Perfil Odoo desde ?empresa=N (mapa del bootstrap o fallback prod/staging). */
+export function resolveOdooProfileFromEmpresa(empresa, profileMap = null) {
+  const key = String(empresa || "").trim();
+  if (!key) return null;
+  const map = profileMap || {};
+  const profile = map[key];
+  if (profile === "aliare" || profile === "sudata" || profile === "default") {
+    return profile;
+  }
+  return null;
+}
+
+/** Perfil Odoo activo: override explícito → empresa → state → default. */
 export function activeOdooProfile(state) {
+  if (hasExplicitOdooProfileOverride(state)) {
+    const url = getUrlParams();
+    if (isOdooCloudFlag(url.odoo_cloud)) return "sudata";
+    if (url.odoo_profile) return resolveOdooProfileParam(url.odoo_profile);
+    return resolveOdooProfileParam(state?.odooProfile);
+  }
+
   const fromState = state?.odooProfile;
   if (fromState && fromState !== "default") return resolveOdooProfileParam(fromState);
+
   const url = getUrlParams();
-  if (isOdooCloudFlag(url.odoo_cloud)) return "sudata";
-  if (url.odoo_profile) return resolveOdooProfileParam(url.odoo_profile);
+  const empresa = String(state?.empresa || url.empresa || "").trim();
+  const fromEmpresa = resolveOdooProfileFromEmpresa(empresa, state?.empresaOdooProfiles);
+  if (fromEmpresa) return fromEmpresa;
+
+  if (fromState) return resolveOdooProfileParam(fromState);
   return "default";
 }
 
 /** Params Odoo para query API según perfil activo. */
 export function apiOdooQueryParams(state) {
   const profile = activeOdooProfile(state);
+  if (hasExplicitOdooProfileOverride(state)) {
+    return { odoo_profile: profile };
+  }
+  const url = getUrlParams();
+  const empresa = String(state?.empresa || url.empresa || "").trim();
+  if (empresa && resolveOdooProfileFromEmpresa(empresa, state?.empresaOdooProfiles)) {
+    return { odoo_profile: profile };
+  }
   if (profile === "default") return {};
   return { odoo_profile: profile };
 }
@@ -101,6 +170,8 @@ export function apiContextBody(state) {
   const body = {};
   if (state.empresa) body.empresa = state.empresa;
   const profile = activeOdooProfile(state);
-  if (profile !== "default") body.odoo_profile = profile;
+  if (hasExplicitOdooProfileOverride(state) || profile !== "default") {
+    body.odoo_profile = profile;
+  }
   return body;
 }

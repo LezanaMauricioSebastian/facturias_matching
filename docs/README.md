@@ -94,10 +94,15 @@ El parámetro `odoo_profile` (query, body o `perfil`) cambia tenant, padrón y c
 
 Contexto por request: `odoo/request_context.py` + `odoo/env.py`.
 
+**Importante:** los ids de `account.tax` no son portables entre tenants. En Aliare/Sudata la URL y el import deben incluir `odoo_profile` (ej. `?empresa=1&proceso=48&odoo_profile=aliare`). Ver [iva-y-import-odoo.md](iva-y-import-odoo.md).
+
+El padrón Postgres puede traer tax ids de Dinner; `PADRON_TAX_SOURCE_PROFILE` (default `default`) define el tenant fuente para remapear a ids del perfil activo (`padron/taxes.py`).
+
 ## Índice de documentos
 
 | Documento | Contenido |
 |-----------|-----------|
+| [guia-usuario.md](guia-usuario.md) | **Guía para operadores**: URL, perfil Odoo, pie IVA, import, problemas frecuentes |
 | [arquitectura.md](arquitectura.md) | Capas, dependencias, convenciones de filas/columnas |
 | [modulos-python.md](modulos-python.md) | Cada paquete y archivo `.py` del backend |
 | [modulos-frontend.md](modulos-frontend.md) | Módulos ES6 en `static/js/` |
@@ -131,7 +136,7 @@ facturia-matching-ui/
 |---------|----------------|
 | Cambiar columnas de la tabla | `core/constants.py`, `static/js/table/columns.js` |
 | Arreglar matching de proveedor | `padron/postgres.py`, `odoo/catalog.py` |
-| Impuestos / IVA | `padron/taxes.py`, `core/comprobante_tax.py`, `docs/iva-y-import-odoo.md` |
+| Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, `odoo/import_.py`, [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
 | Import a Odoo | `odoo/import_.py` |
 | Matching con OC | `odoo/purchase_matching.py`, `static/js/ocPicker/` |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |

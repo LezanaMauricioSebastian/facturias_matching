@@ -13,7 +13,9 @@ Muchos endpoints aceptan:
 | `odoo_cloud` | query / body | `1` / `true` → fuerza perfil `sudata` |
 | `empresa` | query / body | Filtro `company_id` en MySQL |
 
-El perfil activo queda en contexto via `odoo_profile_context` y afecta catálogo, padrón e import.
+El perfil activo queda en contexto via `odoo_profile_context` y afecta catálogo, padrón, resolución de tax ids e import.
+
+**Aliare / Sudata:** sin `odoo_profile` correcto, los ids de IVA en la UI no coinciden con Odoo (ej. 21 % → id Dinner 63 vs Aliare 65). Usar siempre `?odoo_profile=aliare` en la URL de la app y en el body/query del import.
 
 ---
 
@@ -118,7 +120,7 @@ Carga filas para la UI.
 }
 ```
 
-**Errores**: 503 MySQL no disponible; 400 conversión inválida; 500 sin `json_data`.
+**Errores**: 503 MySQL no disponible; 400 conversión inválida o `json_data` vacío/corrupto en el proceso; 500 sin `json_data`.
 
 ### `PUT /api/proceso/{process_number}/conversion`
 

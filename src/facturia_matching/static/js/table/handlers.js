@@ -86,12 +86,14 @@ export function handleSelectionChange(state, r, k, ctx) {
   }
   if (k === "iva_pct") {
     state.rows[r].__iva_monto_manual = false;
-    maybeRerenderOnTaxModeChange(state, r, handlers);
-    handlers.onRerender?.();
+    if (!maybeRerenderOnTaxModeChange(state, r, handlers)) {
+      handlers.onUpdateComprobanteFooters?.();
+    }
     return;
   }
   if (k === "otros_impuestos" || /^otros_impuestos_\d+$/.test(k)) {
     updateRowTotals(state, refs, r);
     handlers.onUpdateComprobanteFooters?.();
+    return;
   }
 }

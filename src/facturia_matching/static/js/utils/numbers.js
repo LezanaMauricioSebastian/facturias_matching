@@ -1,6 +1,17 @@
+/** Corrige híbridos tipo "350.0,00" (punto + coma) antes de parsear. */
+export function sanitizeNumericString(raw) {
+  let s = String(raw ?? "").trim().replace(/\s+/g, "");
+  if (!s) return s;
+  const hybrid = /^([+-]?)(\d+)\.(\d{1,2}),(\d+)$/.exec(s);
+  if (hybrid) {
+    s = `${hybrid[1]}${hybrid[2]},${hybrid[4]}`;
+  }
+  return s;
+}
+
 export function toNumberLoose(v) {
   if (v == null) return 0;
-  const s = String(v).trim();
+  const s = sanitizeNumericString(String(v).trim());
   if (!s) return 0;
   const hasComma = s.includes(",");
   const dotCount = (s.match(/\./g) || []).length;
@@ -19,13 +30,12 @@ export function toNumberLoose(v) {
 export function tryParseNumericString(raw) {
   if (raw == null) return null;
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const s = String(raw).trim();
+  const s = sanitizeNumericString(String(raw).trim());
   if (!s) return null;
-  const cleaned = s.replace(/\s+/g, "");
-  const okEsAr = /^[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?$/.test(cleaned);
-  const okDotDecimal = /^[+-]?\d+\.\d+$/.test(cleaned) && !cleaned.includes(",");
+  const okEsAr = /^[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?$/.test(s);
+  const okDotDecimal = /^[+-]?\d+\.\d+$/.test(s) && !s.includes(",");
   if (!okEsAr && !okDotDecimal) return null;
-  const num = toNumberLoose(cleaned);
+  const num = toNumberLoose(s);
   return Number.isFinite(num) ? num : null;
 }
 
