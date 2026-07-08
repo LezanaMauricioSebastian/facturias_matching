@@ -1,0 +1,47 @@
+---
+description: Leer documentación del repo antes de tocar código (import Odoo, IVA, impuestos, pipeline)
+alwaysApply: true
+---
+
+# Docs primero, código después
+
+Antes de investigar, modificar o depurar comportamiento en este proyecto, **leer la documentación relevante en `docs/`** y solo después abrir el código fuente.
+
+## Por qué
+
+La lógica de negocio (orden del sync, modos IVA, IIBB, OC, perfiles Odoo) está documentada en los MD. Saltar directo al código suele llevar a fixes que contradicen el pipeline o a regresiones (ej. aplicar montos tax antes de re-aplicar precio).
+
+## Mapa rápido
+
+| Tema | Leer primero |
+|------|----------------|
+| Visión general | `docs/README.md`, `docs/arquitectura.md` |
+| Import Odoo | `docs/import-odoo/README.md` → índice de la carpeta |
+| Pipeline / orden de pasos | `docs/import-odoo/pipeline.md` |
+| Impuestos (IVA, IIBB, otros) | `docs/import-odoo/impuestos.md`, `docs/iva-y-import-odoo.md` |
+| OC / precio tras vínculo | `docs/import-odoo/purchase-oc.md` |
+| Módulos Python del import | `docs/import-odoo/modulos.md`, `docs/modulos-python.md` |
+| Frontend / pie comprobante | `docs/modulos-frontend.md` |
+| Tests y regresiones | `docs/import-odoo/testing.md`, `docs/tests-y-scripts.md` |
+| Uso / síntomas en prod | `docs/guia-usuario.md` |
+
+## Flujo obligatorio
+
+1. **Identificar el dominio** (import, IVA, OC, UI, padrón, etc.) y abrir el MD correspondiente del mapa.
+2. **Leer el pipeline y el orden crítico** si el bug toca Odoo, impuestos o sync — en especial `pipeline.md` y la tabla “Orden crítico”.
+3. **Anotar invariantes** del doc (qué va último, qué no reordenar, perfiles `odoo_profile`, borrador `draft`).
+4. **Recién entonces** abrir código en `src/facturia_matching/` (y `static/js/` si es UI).
+5. Si el código y el doc difieren, **tratar el doc como fuente de verdad de intención** salvo que esté obviamente desactualizado; en ese caso corregir doc y código juntos.
+
+## Código tras leer docs
+
+| Área | Ruta típica |
+|------|-------------|
+| Import / sync Odoo | `src/facturia_matching/odoo/import_/` (`sync.py`, `taxes.py`, `planning.py`) |
+| Dominio fiscal | `src/facturia_matching/core/comprobante_tax.py`, `padron/taxes.py` |
+| UI impuestos | `src/facturia_matching/static/js/comprobanteTax/`, `comprobanteView/` |
+
+## Al terminar un fix
+
+- Si cambiaste orden de pasos, contratos o síntomas conocidos, **actualizar el MD** que describe ese flujo (no dejar solo el código).
+- Añadir o ajustar test de regresión citado en `docs/import-odoo/testing.md` cuando aplique.

@@ -89,7 +89,7 @@ El parámetro `odoo_profile` (query, body o `perfil`) cambia tenant, padrón y c
 | Perfil | Uso típico | Padrón primero | Rubro (`x_studio_category`) |
 |--------|------------|----------------|-----------------------------|
 | `default` / Dinner | Odoo on-prem Dinner | Postgres | No |
-| `aliare` | Tenant Aliare | Odoo → Postgres | Sí |
+| `aliare` | Tenant Aliare | Odoo → Postgres | Sí (catálogo: todos los contactos, no solo `supplier_rank`) |
 | `sudata` | Odoo Cloud Sudata (`odoo_cloud=1`) | Odoo → Postgres | Sí |
 
 Contexto por request: `odoo/request_context.py` + `odoo/env.py`.

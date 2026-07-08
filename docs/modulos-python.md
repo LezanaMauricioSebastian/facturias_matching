@@ -58,7 +58,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `env.py` | Perfiles, URLs, DB name resolution, `build_odoo_*_config`, `get_conversion_template_id`, flags `is_odoo_aliare_profile`, `uses_odoo_padron_first`. |
 | `request_context.py` | `contextvars` para `odoo_profile` del request actual. |
 | `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks. |
-| `catalog.py` | **`get_catalog`** (cache): proveedores, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. |
+| `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
 | `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. `fetch_partner_po_lines` excluye OCs con `receipt_status=pending` (Odoo «No recibido»). |

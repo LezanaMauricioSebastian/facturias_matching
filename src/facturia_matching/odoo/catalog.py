@@ -383,24 +383,24 @@ def resolve_doc_type_id(label: str, doc_type_label_map: Dict[str, int]) -> str:
     return ""
 
 
-def _fetch_catalog_raw(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-    journals = odoo_search_read(
-        "account.journal",
-        [("active", "=", True)],
-        ["id", "name"],
-        limit=500,
-        order="name",
-        config=config,
-    )
+def _partner_catalog_domain(profile: str) -> List[Any]:
+    """Aliare: todos los contactos; otros perfiles: solo proveedores (supplier_rank > 0)."""
+    if profile == "aliare":
+        return []
+    return [("supplier_rank", ">", 0)]
+
+
+def _fetch_partners_for_catalog(config: Dict[str, Any], profile: str) -> List[Dict[str, Any]]:
+    domain = _partner_catalog_domain(profile)
     partners = odoo_search_read(
         "res.partner",
-        [("supplier_rank", ">", 0)],
+        domain,
         ["id", "name", "vat"],
         limit=20000,
         order="name",
         config=config,
     )
-    if not partners:
+    if not partners and domain:
         partners = odoo_search_read(
             "res.partner",
             [],
@@ -409,6 +409,19 @@ def _fetch_catalog_raw(config: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]
             order="name",
             config=config,
         )
+    return partners or []
+
+
+def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[Dict[str, Any]]]:
+    journals = odoo_search_read(
+        "account.journal",
+        [("active", "=", True)],
+        ["id", "name"],
+        limit=500,
+        order="name",
+        config=config,
+    )
+    partners = _fetch_partners_for_catalog(config, profile)
     accounts = odoo_search_read(
         "account.account",
         [],
@@ -540,7 +553,7 @@ def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Opt
         return cache["data"], True
 
     try:
-        raw = _fetch_catalog_raw(config)
+        raw = _fetch_catalog_raw(config, profile)
     except Exception as e:
         logger.warning("No se pudo cargar catálogo Odoo: %s", e)
         return None, False
