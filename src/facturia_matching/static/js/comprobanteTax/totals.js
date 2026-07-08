@@ -9,7 +9,7 @@ import {
   sumOtrosImpuestos,
   ivaPctToRate,
 } from "./lineCalc.js";
-import { computeIvaBreakdown, explicitFacIvaMontos } from "./ivaBreakdown.js";
+import { computeIvaBreakdown } from "./ivaBreakdown.js";
 
 const TOLERANCE = 0.02;
 
@@ -96,15 +96,12 @@ export function computeComprobanteTotals(groupRows, mode) {
   let ivaOdoo = 0;
   if (taxMode === "line") {
     ivaOdoo = sumLineIvaMontos(groupRows);
+  } else if (breakdown.length) {
+    ivaOdoo = breakdown.reduce((acc, row) => acc + (row.amount || 0), 0);
+  } else if (ivaFac != null && ivaFac > 0) {
+    ivaOdoo = ivaFac;
   } else {
-    const explicitMontos = explicitFacIvaMontos(groupRows);
-    if (explicitMontos) {
-      ivaOdoo = Object.values(explicitMontos).reduce((acc, v) => acc + v, 0);
-    } else if (ivaFac != null && ivaFac > 0) {
-      ivaOdoo = ivaFac;
-    } else {
-      ivaOdoo = ivaFac || 0;
-    }
+    ivaOdoo = ivaFac || 0;
   }
 
   let baseOdoo;

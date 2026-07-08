@@ -316,6 +316,69 @@ def sanitize_inflated_line_amounts(rows: List[Dict[str, Any]]) -> int:
     return fixed
 
 
+def _suggested_iva_by_rate(group_rows: List[Dict[str, Any]], mode: str) -> Dict[str, float]:
+    out: Dict[str, float] = defaultdict(float)
+    for row in group_rows:
+        if not isinstance(row, dict) or not _line_has_content(row):
+            continue
+        rate_key = _iva_rate_key_from_pct(row.get("iva_pct"))
+        if not rate_key:
+            continue
+        add = line_iva_monto(row) if mode == "line" else line_iva_suggested(row)
+        out[rate_key] += add
+    return out
+
+
+def compute_iva_breakdown(
+    group_rows: List[Dict[str, Any]], *, mode: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Desglose de IVA por alícuota (paridad con JS computeIvaBreakdown)."""
+    tax_mode = mode or classify_comprobante_tax_mode(group_rows)
+    stored = _explicit_fac_iva_montos(group_rows)
+    suggested = _suggested_iva_by_rate(group_rows, tax_mode)
+    rate_keys = set(suggested.keys()) | set(stored.keys())
+
+    if not rate_keys:
+        header_amt = fac_iva_monto(group_rows)
+        if header_amt is not None and header_amt > 0:
+            return [
+                {
+                    "rate_key": "_total",
+                    "label": "IVA",
+                    "amount": header_amt,
+                    "suggested": header_amt,
+                    "editable": tax_mode != "line",
+                }
+            ]
+        return []
+
+    header_amt = fac_iva_monto(group_rows)
+    single_rate = len(rate_keys) == 1
+    rows: List[Dict[str, Any]] = []
+    for rate_key in sorted(rate_keys, key=lambda k: float(k), reverse=True):
+        sug = suggested.get(rate_key, 0.0)
+        stored_amt = stored.get(rate_key, 0.0)
+        if tax_mode == "line":
+            amount = sug
+        elif stored_amt > 0:
+            amount = stored_amt
+        elif header_amt is not None and header_amt > 0 and single_rate:
+            amount = header_amt
+        else:
+            amount = sug
+        label = "IVA" if rate_key == "_total" else f"IVA {str(rate_key).replace('.', ',')}%"
+        rows.append(
+            {
+                "rate_key": rate_key,
+                "label": label,
+                "amount": amount,
+                "suggested": sug,
+                "editable": tax_mode != "line",
+            }
+        )
+    return rows
+
+
 def classify_comprobante_tax_mode(group_rows: List[Dict[str, Any]]) -> str:
     """Return 'line', 'header', or 'mixed'."""
     if not group_rows:
@@ -373,11 +436,11 @@ def compute_comprobante_totals(group_rows: List[Dict[str, Any]], mode: Optional[
     line_iva_sum = sum_line_iva(group_rows)
     otros = sum_otros_impuestos(group_rows)
 
-    explicit_montos = _explicit_fac_iva_montos(group_rows)
+    breakdown = compute_iva_breakdown(group_rows, mode=mode)
     if mode == "line":
         iva_odoo = round(sum_line_iva_montos(group_rows), 2)
-    elif explicit_montos:
-        iva_odoo = round(sum(explicit_montos.values()), 2)
+    elif breakdown:
+        iva_odoo = round(sum(row["amount"] for row in breakdown), 2)
     elif iva_fac is not None and iva_fac > 0:
         iva_odoo = iva_fac
     else:

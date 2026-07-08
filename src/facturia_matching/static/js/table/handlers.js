@@ -6,7 +6,7 @@ import {
   isFacturaCTypeId,
   findOptionLabel,
 } from "../utils/index.js";
-import { groupBounds, isFirstRowOfComprobante } from "../singleLine/index.js";
+import { groupBounds } from "../singleLine/index.js";
 import { updateRowTotals } from "./totals.js";
 import { DOC_NUM_KEY } from "./constants.js";
 import { comprobanteDigitUiHint } from "../validation/index.js";
@@ -55,7 +55,7 @@ export function refreshComprobanteHints(tableWrap, state) {
 export function handleSelectionChange(state, r, k, ctx) {
   const { refs, handlers } = ctx;
   const tableWrap = refs?.tableWrap;
-  if (k === "invoice_line_ids/account_id" && isFirstRowOfComprobante(state.rows, r)) {
+  if (k === "invoice_line_ids/account_id") {
     propagateAccountDown(state.rows);
     handlers.onRerender?.();
     return;

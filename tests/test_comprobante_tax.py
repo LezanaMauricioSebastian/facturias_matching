@@ -11,6 +11,7 @@ from facturia_matching.core.comprobante_tax import (
     _explicit_fac_iva_montos,
     classify_comprobante_tax_mode,
     compute_comprobante_totals,
+    compute_iva_breakdown,
     fac_iva_monto,
     fac_iva_montos,
     line_base,
@@ -373,6 +374,57 @@ class TestComprobanteTax(unittest.TestCase):
         amounts = collect_expected_tax_amounts_from_group(rows)
         self.assertAlmostEqual(amounts.get(63), 53515.40, places=2)
         self.assertAlmostEqual(amounts.get(61), 17099.36, places=2)
+
+    def test_partial_multi_rate_breakdown_includes_all_iva_in_total(self):
+        rows = [
+            {
+                "__fac_subtotal": "64242",
+                "__fac_iva_monto": "29020.14",
+                "__fac_iva_montos": '{"21": "29020.14"}',
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "138200",
+                "iva_pct": "21",
+            },
+            {
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "22242",
+                "iva_pct": "10,5",
+            },
+            {
+                "otros_impuestos_monto": "3000",
+            },
+        ]
+        mode = classify_comprobante_tax_mode(rows)
+        totals = compute_comprobante_totals(rows, mode)
+        breakdown = compute_iva_breakdown(rows, mode=mode)
+        self.assertEqual(mode, "mixed")
+        breakdown_sum = sum(row["amount"] for row in breakdown)
+        self.assertAlmostEqual(totals["iva_odoo"], breakdown_sum, places=2)
+        self.assertAlmostEqual(totals["iva_odoo"], 31355.55, places=2)
+        self.assertAlmostEqual(
+            totals["total_odoo"],
+            totals["base_odoo"] + totals["iva_odoo"] + totals["otros"],
+            places=2,
+        )
+        self.assertGreater(abs(totals["total_odoo"] - 96262.14), 1.0)
+
+    def test_header_partial_fac_iva_montos_matches_footer_total(self):
+        rows = [
+            {
+                "__fac_subtotal": "64242",
+                "__fac_iva_monto": "29020.14",
+                "__fac_iva_montos": '{"21": "29020.14"}',
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "22242",
+                "iva_pct": "10,5",
+                "otros_impuestos_monto": "3000",
+            },
+        ]
+        mode = classify_comprobante_tax_mode(rows)
+        totals = compute_comprobante_totals(rows, mode)
+        self.assertEqual(mode, "header")
+        self.assertAlmostEqual(totals["base_odoo"], 64242.0, places=2)
+        self.assertAlmostEqual(totals["total_odoo"], 98597.55, places=2)
 
 
 if __name__ == "__main__":

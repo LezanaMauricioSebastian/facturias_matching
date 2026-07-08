@@ -250,6 +250,60 @@ describe("IVA Exento / No Gravado", () => {
   });
 });
 
+describe("partial multi-rate IVA breakdown total", () => {
+  it("sums all footer IVA rows when only one rate is stored in __fac_iva_montos", () => {
+    const rows = [
+      {
+        "__fac_subtotal": "64242",
+        "__fac_iva_monto": "29020.14",
+        "__fac_iva_montos": '{"21": "29020.14"}',
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "138200",
+        "iva_pct": "21",
+      },
+      {
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "22242",
+        "iva_pct": "10,5",
+      },
+      {
+        "otros_impuestos_monto": "3000",
+      },
+    ];
+    const mode = classifyComprobanteTaxMode(rows);
+    const totals = computeComprobanteTotals(rows, mode);
+    const breakdown = computeIvaBreakdown(rows, { mode });
+    assert.equal(mode, "mixed");
+    assert.equal(breakdown.length, 2);
+    assert.ok(Math.abs(breakdown.find((b) => b.rateKey === "21")?.amount - 29020.14) <= 0.02);
+    assert.ok(Math.abs(breakdown.find((b) => b.rateKey === "10.5")?.amount - 2335.41) <= 0.02);
+    const breakdownSum = breakdown.reduce((acc, row) => acc + (row.amount || 0), 0);
+    assert.ok(Math.abs(totals.ivaOdoo - breakdownSum) <= 0.02);
+    assert.ok(Math.abs(totals.ivaOdoo - 31355.55) <= 0.02);
+    assert.ok(Math.abs(totals.totalOdoo - (totals.baseOdoo + totals.ivaOdoo + totals.otros)) <= 0.02);
+    assert.ok(Math.abs(totals.totalOdoo - 96262.14) > 1);
+  });
+
+  it("matches screenshot: header base with partial __fac_iva_montos and extra line rate", () => {
+    const rows = [
+      {
+        "__fac_subtotal": "64242",
+        "__fac_iva_monto": "29020.14",
+        "__fac_iva_montos": '{"21": "29020.14"}',
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "22242",
+        "iva_pct": "10,5",
+        "otros_impuestos_monto": "3000",
+      },
+    ];
+    const mode = classifyComprobanteTaxMode(rows);
+    const totals = computeComprobanteTotals(rows, mode);
+    assert.equal(mode, "header");
+    assert.ok(Math.abs(totals.baseOdoo - 64242) <= 0.02);
+    assert.ok(Math.abs(totals.totalOdoo - 98597.55) <= 0.02);
+  });
+});
+
 describe("otros impuestos footer visibility", () => {
   it("hidden without selection and zero amount", () => {
     const rows = [{ otros_impuestos: "", otros_impuestos_monto: "" }];

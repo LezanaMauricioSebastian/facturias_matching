@@ -516,7 +516,7 @@ default_prod_dinner_env_pairs() {
     "ODOO_BASE_URL=https://dinner.odoo.com" \
     "ODOO_ENDPOINT=/jsonrpc" \
     "ODOO_DB=somoswilox-dinner-main-20779820" \
-    "ODOO_USER_ID=29"
+    "ODOO_USER=fundacion.sud@gmail.com"
 }
 
 # odoo-dev: Dinner TEST (lectura-escritura para pruebas).

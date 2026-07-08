@@ -40,12 +40,14 @@ export function propagateAccountDown(rows) {
   let i = 0;
   while (i < rows.length) {
     const [start, end] = groupBounds(rows, i);
-    const account = String(rows[start]?.[accountKey] ?? "").trim();
-    if (account) {
+    const headerAccount = String(rows[start]?.[accountKey] ?? "").trim();
+    if (headerAccount) {
       for (let j = start + 1; j < end; j++) {
         const cur = rows[j];
         if (!cur || typeof cur !== "object") continue;
-        if (!String(cur[accountKey] ?? "").trim()) cur[accountKey] = account;
+        if (!String(cur[accountKey] ?? "").trim()) {
+          cur[accountKey] = rows[start][accountKey];
+        }
       }
     }
     i = end;

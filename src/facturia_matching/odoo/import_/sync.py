@@ -218,7 +218,7 @@ def sync_move_taxes_from_group(
         "state": move.get("state"),
         "product_lines_updated": len(product_updates),
         "content_lines_updated": len(content_line_updates),
-        "purchase_lines_updated": len(purchase_lines_updated),
+        "purchase_lines_updated": len(purchase_line_updates),
         "price_qty_reapply_updates": price_qty_reapply_updates,
         "tax_lines_updated": len(tax_line_updates),
         "lines_updated": len(tax_line_updates),
