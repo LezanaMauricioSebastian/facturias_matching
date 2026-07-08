@@ -99,6 +99,8 @@ Cada fila del array `rows` es un objeto plano. Claves importantes:
 
 `__purchase_order_id`, `__purchase_line_id`, `invoice_line_ids/purchase_line_id`, campos de resumen en `purchase_matching` a nivel respuesta API.
 
+Solo entran OCs con recepción iniciada: `fetch_partner_po_lines` filtra `purchase.order` con `receipt_status != pending` (en la UI de Odoo, estado de entrega distinto de «No recibido»). Detalle en [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md#filtro-de-ocs-en-matching).
+
 ### Solo UI (pueden no persistir)
 
 `__iva_monto_manual`, flags de modo tax en `state.comprobanteTaxModes`.

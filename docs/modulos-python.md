@@ -61,7 +61,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `catalog.py` | **`get_catalog`** (cache): proveedores, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. |
+| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. `fetch_partner_po_lines` excluye OCs con `receipt_status=pending` (Odoo «No recibido»). |
 | `__init__.py` | Marcador. |
 
 ---

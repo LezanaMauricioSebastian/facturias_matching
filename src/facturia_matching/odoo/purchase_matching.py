@@ -285,6 +285,15 @@ def _resolve_po_partner_scope(partner_id: int) -> int:
     return partner_id
 
 
+def _partner_po_search_domain(scope_id: int) -> List[Any]:
+    """OC confirmadas con recepción iniciada (excluye receipt_status=pending / «No recibido»)."""
+    return [
+        ("partner_id", "child_of", scope_id),
+        ("state", "in", ["purchase", "done"]),
+        ("receipt_status", "!=", "pending"),
+    ]
+
+
 def fetch_partner_po_lines(partner_id: int, *, limit_orders: int = 12) -> List[Dict[str, Any]]:
     if partner_id in _po_cache:
         return _po_cache[partner_id]["lines"]
@@ -295,10 +304,7 @@ def fetch_partner_po_lines(partner_id: int, *, limit_orders: int = 12) -> List[D
 
     cfg = _purchase_odoo_config()
     scope_id = _resolve_po_partner_scope(partner_id)
-    po_domain = [
-        ("partner_id", "child_of", scope_id),
-        ("state", "in", ["purchase", "done"]),
-    ]
+    po_domain = _partner_po_search_domain(scope_id)
     orders = odoo_search_read(
         "purchase.order",
         po_domain,

@@ -97,9 +97,9 @@ filas UI
             3. contenido de líneas de producto
             4. tax_ids en líneas de producto (ver reglas abajo)
             5. vínculos OC (purchase_line_id + product_id)
-            6. _ensure_missing_tax_lines_on_move   # crea líneas tax faltantes (IVA + IIBB)
-            7. montos en líneas display_type=tax   ← Odoo recalcula al vincular OC
-            8. re-aplicar price_unit / quantity en todas las líneas de producto   ← último paso
+            6. re-aplicar price_unit / quantity en todas las líneas de producto
+            7. _ensure_missing_tax_lines_on_move   # crea líneas tax faltantes (IVA + IIBB)
+            8. montos en líneas display_type=tax   ← último paso (pisa recálculo Odoo)
 ```
 
 ### `reconcile_fac_iva_for_import`
@@ -141,7 +141,7 @@ Si el modo se clasifica mal como `header` cuando el usuario editó `iva_monto` e
 
 Si falta una línea `display_type=tax` en Odoo para un impuesto esperado, `_ensure_missing_tax_lines_on_move` refuerza `tax_ids` en la primera línea de producto (incluye IVA faltante en header) y luego se pisan los montos.
 
-Odoo puede recalcular impuestos al actualizar `tax_ids` o al vincular `purchase_line_id`. Por eso la sobreescritura de montos ocurre **después** de los vínculos OC, como último paso de `sync_move_taxes_from_group`.
+Odoo puede recalcular impuestos al actualizar `tax_ids`, al vincular `purchase_line_id` o al re-aplicar precio. Por eso la sobreescritura de montos ocurre **al final** de `sync_move_taxes_from_group`, **después** del reapply de precio/cantidad.
 
 ### Precio de línea con Orden de Compra
 
@@ -149,8 +149,8 @@ Cuando una fila tiene match de OC (`__oc_line_id`), el import:
 
 1. Escribe primero `price_unit` y `quantity` desde la UI / FacturIA (`invoice_line_ids/price_unit`, `invoice_line_ids/quantity`) en el paso de contenido de líneas.
 2. Vincula `purchase_line_id` + `product_id` en un write separado (`_po_link_write_vals`).
-3. Re-aplica montos de impuesto en líneas `display_type=tax` (Odoo recalcula al vincular OC).
-4. **Re-aplica** precio y cantidad con `plan_product_price_quantity_reapply` en **todas** las líneas de producto — emparejando por `purchase_line_id` cuando hay OC, o por orden — como **último paso**, porque Odoo puede resetear `price_unit` al vincular OC, al asignar `product_id` o al recalcular impuestos.
+3. **Re-aplica** precio y cantidad con `plan_product_price_quantity_reapply` — Odoo puede resetear `price_unit` al vincular OC.
+4. Re-aplica montos de impuesto en líneas `display_type=tax` (**último paso**) — IVA e IIBB del pie sobreescriben el recálculo de Odoo.
 
 La UI y el matching OC (`purchase_matching.py`) **no** pisan `invoice_line_ids/price_unit`: solo asignan `product_id`, metadata de OC y, si aplica, cantidad re-escalada por UM. La fuente de verdad del precio al importar sigue siendo la columna **Precio** de la tabla (origen FacturIA o edición manual).
 
@@ -212,11 +212,13 @@ Ejemplo: tres líneas con 21 % y 10,5 %, pero en el pie el usuario fija IVA 21 %
 - `__fac_iva_montos` del pie debe importarse tal cual y **sobreescribir** las líneas tax de Odoo.
 - Tests: `test_reconcile_preserves_footer_iva_montos_in_mixed_mode`, `test_fac_iva_montos_prefers_edited_footer_total_over_stale_json`, `test_collect_expected_uses_edited_footer_after_reconcile`
 
-### IIBB / percepciones
+### IIBB / percepciones (CABA, ARBA, …)
 
 - Montos desde el pie y slots `otros_impuestos_N` en cualquier fila del comprobante.
 - Primera línea de producto recibe los `tax_ids` no-IVA del comprobante en header/mixed.
-- Tests: `test_collect_expected_iibb_from_header_only_row`, `test_plan_line_tax_updates_puts_iibb_on_first_content_line`
+- Si al **primer** import el monto en Odoo no coincide pero al **segundo** clic sí: el deploy anterior aplicaba montos tax **antes** de re-aplicar precio; Odoo recalculaba la percepción encima. Con el orden correcto (precio → montos tax) debe bastar **un** clic.
+- **No** borrar `tax_ids` con `(5,)` para forzar líneas tax: en Aliare puede desaparecer la etiqueta del impuesto en el borrador.
+- Tests: `test_collect_expected_iibb_from_header_only_row`, `test_plan_line_tax_updates_puts_iibb_on_first_content_line`, `test_sync_applies_tax_amounts_after_all_line_writes`
 
 ### Columnas “Otros impuestos” (slots N)
 

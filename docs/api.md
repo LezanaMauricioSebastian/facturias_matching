@@ -141,7 +141,7 @@ Borra conversión guardada y regenera desde `json_data` original.
 
 ### `POST /api/proceso/{process_number}/select-oc`
 
-Aplica una orden de compra elegida a un comprobante.
+Aplica una orden de compra elegida a un comprobante. Las candidatas en `purchase_matching.oc_candidates_by_comprobante` **excluyen** OCs con estado de entrega «No recibido» en Odoo (`receipt_status=pending`). Ver [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md#filtro-de-ocs-en-matching).
 
 **Body**:
 ```json

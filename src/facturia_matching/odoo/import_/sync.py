@@ -43,10 +43,9 @@ def sync_move_taxes_from_group(
     1. invoice_origin del encabezado.
     2. product_id, cantidad, precio, etiqueta y cuenta en líneas de producto.
     3. tax_ids en líneas de producto.
-    4. Montos en líneas display_type=tax (iva_monto / otros_impuestos_monto).
-    5. Vínculos OC (purchase_line_id + product_id) — al final, en un solo write por línea.
-    6. Montos en líneas display_type=tax — re-aplicar (Odoo recalcula al vincular OC).
-    7. Re-aplicar price_unit / quantity — último paso (Odoo puede pisar precio OC al vincular o recalcular impuestos).
+    4. Vínculos OC (purchase_line_id + product_id).
+    5. Re-aplicar price_unit / quantity (Odoo puede pisar precio OC al vincular).
+    6. Montos en líneas display_type=tax — último paso (IVA / IIBB del pie de FacturIA).
     """
     move_rows = odoo_execute_kw_with_config(
         config,
@@ -190,15 +189,6 @@ def sync_move_taxes_from_group(
         if purchase_line_updates:
             product_lines = _get_move_product_lines(config, move_id)
 
-    # Después de vínculos OC: Odoo puede recalcular impuestos; pisar montos antes del precio final.
-    tax_line_updates, warnings_amt, expected_amounts = _apply_tax_line_amount_overwrites(
-        config,
-        move_id,
-        group,
-        due_date_iso=due_date_iso,
-    )
-    warnings.extend(warnings_amt)
-
     price_qty_reapply_updates: List[Dict[str, Any]] = []
     if _move_line_supports_purchase_link(config):
         product_lines = _get_move_product_lines(config, move_id)
@@ -210,6 +200,15 @@ def sync_move_taxes_from_group(
             price_qty_reapply_updates = _batch_write_move_lines(
                 config, move_id, planned_reapply, warnings, context="precio"
             )
+
+    # Último paso: pisar montos IVA / IIBB tras cualquier recálculo de Odoo (OC, precio, tax_ids).
+    tax_line_updates, warnings_amt, expected_amounts = _apply_tax_line_amount_overwrites(
+        config,
+        move_id,
+        group,
+        due_date_iso=due_date_iso,
+    )
+    warnings.extend(warnings_amt)
 
     return {
         "move_id": move_id,

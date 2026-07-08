@@ -141,12 +141,13 @@ Ver [iva-y-import-odoo.md § Perfil Odoo](../iva-y-import-odoo.md#perfil-odoo-od
 flowchart LR
   A[plan_line_tax_updates] --> B[batch write tax_ids]
   B --> C[plan_purchase_line_updates]
-  C --> D[_apply_tax_line_amount_overwrites]
-  D --> E[collect_expected_tax_amounts]
-  E --> F[ensure_missing_tax_lines]
-  F --> G[plan_tax_line_amount_overwrites]
-  G --> H[batch write montos tax]
-  H --> I[plan_product_price_quantity_reapply]
+  C --> D[batch write OC]
+  D --> E[plan_product_price_quantity_reapply]
+  E --> F[batch write precio]
+  F --> G[_apply_tax_line_amount_overwrites]
+  G --> H[ensure_missing_tax_lines]
+  H --> I[plan_tax_line_amount_overwrites]
+  I --> J[batch write montos tax]
 ```
 
 ---

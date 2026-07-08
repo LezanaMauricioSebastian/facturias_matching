@@ -8,6 +8,35 @@ Vínculo entre filas UI y `purchase.order.line` en Odoo (`purchase_line_id`).
 
 ---
 
+## Filtro de OCs en matching
+
+`fetch_partner_po_lines` (`purchase_matching.py`) solo trae órdenes de compra **con recepción iniciada** en Odoo.
+
+| Odoo (`purchase.order`) | UI (español) | ¿Se considera? |
+|-------------------------|--------------|----------------|
+| `receipt_status = pending` | Estado de entrega **No recibido** | No |
+| `receipt_status = partial` | Parcialmente recibido | Sí |
+| `receipt_status = full` | Recibido | Sí |
+| `receipt_status = False` | Sin recepciones / sin stock | Sí |
+
+Dominio en `_partner_po_search_domain`:
+
+```python
+[
+    ("partner_id", "child_of", scope_id),
+    ("state", "in", ["purchase", "done"]),
+    ("receipt_status", "!=", "pending"),
+]
+```
+
+**Efecto:** auto-match, picker (`ocPicker/`) y rematch no listan OCs sin nada recibido. Si `__selected_oc_order_id` guardado apunta a una OC «No recibido», se ignora y se elige la mejor candidata disponible (mismo comportamiento que una OC borrada o de otro tenant).
+
+**Motivo de negocio:** facturar contra una OC que aún no tiene mercadería recibida suele ser incorrecto; el filtro evita vínculos espurios.
+
+Tests: `test_partner_po_search_domain_excludes_unreceived`, `test_fetch_partner_po_lines_filters_unreceived_orders` en `tests/test_purchase_matching.py`.
+
+---
+
 ## Campos en filas UI
 
 | Campo | Origen | Uso en import |
@@ -94,8 +123,10 @@ Si hubo sanitize → **segundo** refresh + re-agrupación.
 
 ### Después del vínculo
 
-1. `_apply_tax_line_amount_overwrites` — Odoo recalcula impuestos
-2. `plan_product_price_quantity_reapply` — **restaura** precio/cantidad UI
+1. `plan_product_price_quantity_reapply` — restaura precio/cantidad UI (Odoo puede haber puesto el precio PO)
+2. `_apply_tax_line_amount_overwrites` — **último paso**: pisa montos IVA / IIBB del pie de FacturIA
+
+**Regresión corregida (IIBB CABA):** si los montos tax se aplicaban antes del reapply de precio, Odoo recalculaba la percepción y el primer import quedaba mal; el segundo clic “arreglaba” porque el precio ya no cambiaba.
 
 ---
 
@@ -153,8 +184,8 @@ flowchart TD
   C --> SYNC[sync_move_taxes_from_group]
   SYNC --> PO[plan_purchase_line_updates]
   PO --> W[_po_link_write_vals]
-  W --> TAX[_apply_tax_line_amount_overwrites]
-  T --> RQ[plan_product_price_quantity_reapply]
+  W --> RQ[plan_product_price_quantity_reapply]
+  RQ --> TAX[_apply_tax_line_amount_overwrites]
 ```
 
 ---
@@ -164,9 +195,11 @@ flowchart TD
 | Síntoma | Causa probable | Acción |
 |---------|----------------|--------|
 | OC no vincula | Sin `__oc_line_id` | Refresh / rematch en UI |
+| OC no aparece en picker | `receipt_status=pending` («No recibido») | Registrar recepción en Odoo; solo OCs con entrega iniciada entran al matching |
 | Warning id no existe | PO borrada en Odoo | Re-matchear o quitar OC |
 | Warning OC duplicada | Dos filas mismo `__oc_line_id` | Dedupe quitó uno |
 | Precio = PO | Sync viejo sin reapply | Redeploy + re-import draft |
+| IIBB / CABA mal al 1.er import, bien al 2.º | Montos tax antes de reapply precio | Redeploy + re-import draft |
 | Sin purchase en Sudata | `_move_line_supports_purchase_link` false | Esperado; import sin OC |
 
 ---

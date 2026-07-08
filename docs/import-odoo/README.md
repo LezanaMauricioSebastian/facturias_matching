@@ -14,7 +14,7 @@ Documentación del paquete que convierte filas de la UI en facturas de proveedor
 2. Valida cabecera y líneas.
 3. Refresca y sanea vínculos OC contra Odoo.
 4. Crea borradores nuevos o actualiza duplicados (partner + número de documento).
-5. Sincroniza encabezado, líneas de producto, `tax_ids`, montos en líneas `display_type=tax`, OC y precio/cantidad final.
+5. Sincroniza encabezado, líneas de producto, `tax_ids`, vínculos OC, precio/cantidad final y **después** montos en líneas `display_type=tax` (IVA / IIBB del pie).
 
 ---
 
@@ -117,7 +117,7 @@ flowchart TB
 |---------|----------------|
 | `odoo/api.py` | XML-RPC: `get_odoo_import_config`, `odoo_execute_kw_with_config` |
 | `odoo/env.py` | Perfil activo, `supports_rubro_field` |
-| `odoo/purchase_matching.py` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` |
+| `odoo/purchase_matching.py` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` (excluye OCs `receipt_status=pending`) |
 | `core/comprobante_tax.py` | `reconcile_fac_iva_for_import`, modos line/header/mixed |
 | `padron/taxes.py` | Resolución `account.tax` id, IVA, IIBB, `build_csv_tax_ids_dot_id` |
 
@@ -130,6 +130,7 @@ flowchart TB
 | Entender el flujo completo | [pipeline.md](pipeline.md) |
 | Arreglar IVA / IIBB en Odoo | [impuestos.md](impuestos.md), [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | Arreglar precio tras vincular OC | [purchase-oc.md](purchase-oc.md), `planning.plan_product_price_quantity_reapply` |
+| OC no aparece / filtro recepción | [purchase-oc.md](purchase-oc.md#filtro-de-ocs-en-matching), `purchase_matching._partner_po_search_domain` |
 | Duplicados / ref / latam doc number | `create._find_existing_move`, [modulos.md](modulos.md#createpy) |
 | Fecha límite en apuntes AP/AR | `taxes._ensure_move_line_maturity`, [impuestos.md](impuestos.md#fecha-límite-date_maturity) |
 | Añadir un paso al sync | [sync.py](../../src/facturia_matching/odoo/import_/sync.py), [pipeline.md](pipeline.md#sync_move_taxes_from_group) |

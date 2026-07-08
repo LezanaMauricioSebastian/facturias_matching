@@ -1009,6 +1009,151 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(plan["new_invoice_origin"], "PNEW")
         self.assertIsNone(plan_invoice_origin_update("PNEW", group))
 
+    @patch("facturia_matching.odoo.import_.sync._apply_tax_line_amount_overwrites")
+    @patch("facturia_matching.odoo.import_.sync._batch_write_move_lines")
+    @patch("facturia_matching.odoo.import_.sync.plan_product_price_quantity_reapply")
+    @patch("facturia_matching.odoo.import_.sync.plan_purchase_line_updates", return_value=([], []))
+    @patch("facturia_matching.odoo.import_.sync.plan_line_tax_updates", return_value=([], []))
+    @patch("facturia_matching.odoo.import_.sync.plan_product_line_content_updates", return_value=([], []))
+    @patch("facturia_matching.odoo.import_.sync._get_move_product_lines")
+    @patch("facturia_matching.odoo.import_.sync._ensure_move_line_maturity")
+    @patch("facturia_matching.odoo.import_.sync._move_line_supports_purchase_link", return_value=True)
+    @patch("facturia_matching.odoo.import_.sync.odoo_execute_kw_with_config")
+    def test_sync_applies_tax_amounts_after_all_line_writes(
+        self,
+        mock_odoo,
+        _purchase_ok,
+        _maturity,
+        mock_product_lines,
+        _content_plan,
+        _tax_plan,
+        _po_plan,
+        mock_price_reapply,
+        mock_batch_write,
+        mock_apply_tax,
+    ):
+        from facturia_matching.odoo.import_.sync import sync_move_taxes_from_group
+
+        mock_odoo.return_value = [
+            {
+                "id": 1,
+                "name": "BILL/1",
+                "state": "draft",
+                "l10n_latam_document_number": "00001-00000001",
+                "invoice_origin": False,
+                "invoice_date": "2026-04-01",
+                "invoice_date_due": "2026-04-16",
+            }
+        ]
+        mock_product_lines.return_value = [{"id": 10, "name": "Item", "tax_ids": [63]}]
+        mock_price_reapply.return_value = (
+            [{"line_id": 10, "line_name": "Item", "write_vals": {"price_unit": 100.0}}],
+            [],
+        )
+        mock_batch_write.return_value = [{"line_id": 10}]
+        mock_apply_tax.return_value = ([], [], {1: 150.25})
+
+        group = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "150,25",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "100",
+            }
+        ]
+        sync_move_taxes_from_group({}, 1, group)
+
+        self.assertEqual(mock_apply_tax.call_count, 1)
+        mock_batch_write.assert_called_once()
+        # Montos tax deben aplicarse después del batch de precio.
+        self.assertEqual(mock_batch_write.call_args.kwargs.get("context"), "precio")
+
+    @patch("facturia_matching.odoo.import_.taxes._trigger_product_line_tax_recompute")
+    @patch("facturia_matching.odoo.import_.taxes.odoo_execute_kw_with_config")
+    @patch("facturia_matching.odoo.import_.taxes._get_move_tax_lines")
+    @patch("facturia_matching.odoo.import_.taxes.collect_expected_tax_amounts_from_group")
+    def test_ensure_missing_tax_lines_nudges_when_tax_ids_unchanged(
+        self,
+        mock_expected,
+        mock_tax_lines,
+        mock_odoo_write,
+        mock_trigger,
+    ):
+        from facturia_matching.odoo.import_.taxes import _ensure_missing_tax_lines_on_move
+
+        mock_expected.return_value = {1: 150.25, 63: 2100.0}
+        mock_tax_lines.return_value = [
+            {"id": 100, "tax_line_id": 63, "balance": 2100.0, "debit": 2100.0, "credit": 0.0},
+        ]
+        group = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "150,25",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "100",
+            }
+        ]
+        product_lines = [{"id": 10, "name": "Item", "tax_ids": [63, 1], "quantity": 1.0, "price_unit": 100.0}]
+        with patch(
+            "facturia_matching.odoo.import_.taxes._tax_ids_for_odoo_line",
+            return_value=[63, 1],
+        ):
+            warnings = _ensure_missing_tax_lines_on_move({}, 1, group, product_lines)
+
+        mock_odoo_write.assert_called_once()
+        _args, kwargs = mock_odoo_write.call_args
+        write_vals = _args[3][1]
+        self.assertEqual(write_vals["quantity"], 1.0)
+        self.assertEqual(write_vals["price_unit"], 100.0)
+        self.assertNotIn("tax_ids", write_vals)
+        self.assertTrue(any("recálculo" in w for w in warnings))
+        mock_trigger.assert_called_once_with({}, 1, 10)
+
+    @patch("facturia_matching.odoo.import_.taxes._trigger_product_line_tax_recompute")
+    @patch("facturia_matching.odoo.import_.taxes.odoo_execute_kw_with_config")
+    @patch("facturia_matching.odoo.import_.taxes._get_move_tax_lines")
+    @patch("facturia_matching.odoo.import_.taxes.collect_expected_tax_amounts_from_group")
+    def test_ensure_missing_tax_lines_links_new_tax_ids(
+        self,
+        mock_expected,
+        mock_tax_lines,
+        mock_odoo_write,
+        mock_trigger,
+    ):
+        from facturia_matching.odoo.import_.taxes import _ensure_missing_tax_lines_on_move
+
+        mock_expected.return_value = {1: 150.25, 63: 2100.0}
+        mock_tax_lines.return_value = [
+            {"id": 100, "tax_line_id": 63, "balance": 2100.0, "debit": 2100.0, "credit": 0.0},
+        ]
+        group = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_monto": "2100",
+                "otros_impuestos": "Percepción IIBB CABA Sufrida",
+                "otros_impuestos_monto": "150,25",
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/price_unit": "100",
+            }
+        ]
+        product_lines = [{"id": 10, "name": "Item", "tax_ids": [63], "quantity": 1.0, "price_unit": 100.0}]
+        with patch(
+            "facturia_matching.odoo.import_.taxes._tax_ids_for_odoo_line",
+            return_value=[63, 1],
+        ):
+            warnings = _ensure_missing_tax_lines_on_move({}, 1, group, product_lines)
+
+        mock_odoo_write.assert_called_once()
+        _args, kwargs = mock_odoo_write.call_args
+        write_vals = _args[3][1]
+        self.assertEqual(write_vals["tax_ids"], [(4, 1)])
+        self.assertTrue(any("faltante" in w for w in warnings))
+        mock_trigger.assert_called_once_with({}, 1, 10)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -102,7 +102,7 @@ Selector de orden de compra cuando hay purchase matching.
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | **`wireOcPicker`**. |
-| `render.js` | Modal/lista de OCs candidatas. |
+| `render.js` | Modal/lista de OCs candidatas (solo OCs con recepción iniciada en Odoo). |
 | `wire.js` | Eventos selección → API `select-oc`. |
 
 ### `singleLine/`

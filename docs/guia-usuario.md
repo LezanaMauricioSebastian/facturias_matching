@@ -71,8 +71,8 @@ Al confirmar **Importar a Odoo**:
 
 1. Se crean facturas en **borrador** (`in_invoice`) o se actualizan si ya existen (mismo proveedor + número de documento).
 2. Se sincronizan líneas de producto, `tax_ids`, vínculos OC y **montos de impuesto** en las líneas `display_type=tax`.
-3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre al final del sync, después de vincular OC.
-4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra.
+3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre **al final** del sync, después de vincular OC **y** de re-aplicar el precio de la tabla.
+4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra. Luego se aplican los montos de impuesto del pie.
 
 Si el import dice “Actualizadas en Odoo” con “X impuestos”, los montos del pie se aplicaron. Si los montos en Odoo siguen siendo los calculados, revisá la sección [Problemas frecuentes](#problemas-frecuentes).
 
@@ -129,9 +129,22 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite�
 
 Completar **fecha de vencimiento** en FacturIA. El import propaga `invoice_date_due` y completa `date_maturity` en apuntes AP/AR. Si sigue fallando, revisar el tipo de cuenta del impuesto IIBB en Odoo.
 
+### Percepción IIBB (CABA, ARBA, …) no coincide al primer import
+
+| Causa | Qué hacer |
+|-------|-----------|
+| Falta `odoo_profile=aliare` en la URL | Agregar el parámetro y recargar |
+| Deploy viejo (montos tax antes de re-aplicar precio) | Actualizar servidor y reimportar borrador `draft` |
+| No hay línea tax en Odoo (sin etiqueta del impuesto) | Reimportar con versión actual; no debería borrarse el nombre del impuesto |
+| Monto solo en pie, sin selección en columna Otros impuestos | Seleccionar el impuesto en la tabla o verificar `otros_impuestos_monto` en el pie |
+
 ### El precio en Odoo es el de la OC, no el de la factura
 
 Tras importar con OC vinculada, Odoo puede mostrar el precio negociado en la orden de compra. El import debe restaurar el **Precio** de la tabla (FacturIA). Si ves el precio viejo de la OC: confirmá que el borrador está en `draft`, que la columna Precio en la UI es la correcta, y reimportá con la versión actual del servidor.
+
+### La OC no aparece en el selector
+
+Solo se consideran órdenes de compra con **recepción iniciada** en Odoo (estado de entrega distinto de **No recibido**). Si la OC está confirmada pero aún no se registró ninguna recepción de mercadería, no aparecerá en el picker ni en el auto-match hasta que Odoo marque al menos una recepción parcial o total.
 
 ### Proceso devuelve error 400 al cargar
 

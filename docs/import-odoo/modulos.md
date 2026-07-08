@@ -152,7 +152,7 @@ Sincroniza una factura en borrador ya existente con las filas UI del comprobante
 | `sync_move_taxes_from_group` | Pipeline completo post-create (ver [pipeline.md](pipeline.md)) |
 | `update_move_taxes_from_group` | Alias retrocompatible |
 
-**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → OC → montos tax → re-aplicar price/qty.
+**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → OC → re-aplicar price/qty → montos tax.
 
 ---
 
@@ -190,8 +190,8 @@ import_rows_to_odoo
         ├── plan_move_header_updates / plan_invoice_origin_update
         ├── plan_product_line_content_updates + plan_line_tax_updates
         ├── plan_purchase_line_updates + _po_link_write_vals
-        ├── _apply_tax_line_amount_overwrites
-        └── plan_product_price_quantity_reapply
+        ├── plan_product_price_quantity_reapply
+        └── _apply_tax_line_amount_overwrites
 ```
 
 ---

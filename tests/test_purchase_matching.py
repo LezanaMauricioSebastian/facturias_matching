@@ -7,6 +7,7 @@ from facturia_matching.odoo.purchase_matching import (
     _extract_qty_um_from_description,
     _line_match_score,
     _ocr_fix_token,
+    _partner_po_search_domain,
     _resolve_invoice_qty_um,
     _resolve_selected_oc,
     _saved_oc_order_id,
@@ -15,6 +16,7 @@ from facturia_matching.odoo.purchase_matching import (
     compute_show_purchase_columns,
     convert_qty,
     enrich_rows_with_purchase_data,
+    fetch_partner_po_lines,
     has_any_oc_candidates,
     match_invoice_row,
     rematch_comprobante_purchase,
@@ -28,6 +30,31 @@ class TestPurchaseMatching(unittest.TestCase):
     def test_canonical_um(self):
         self.assertEqual(_canonical_um("unidad(es)"), "Units")
         self.assertEqual(_canonical_um("kgs"), "kg")
+
+    def test_partner_po_search_domain_excludes_unreceived(self):
+        domain = _partner_po_search_domain(42)
+        self.assertIn(("partner_id", "child_of", 42), domain)
+        self.assertIn(("receipt_status", "!=", "pending"), domain)
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.odoo_search_read")
+    @patch("facturia_matching.odoo.purchase_matching._resolve_po_partner_scope", return_value=42)
+    def test_fetch_partner_po_lines_filters_unreceived_orders(
+        self, _mock_scope, mock_search_read, _mock_odoo
+    ):
+        from facturia_matching.odoo.purchase_matching import clear_purchase_cache
+
+        clear_purchase_cache()
+        mock_search_read.side_effect = [
+            [{"id": 10, "name": "P001", "partner_ref": "", "date_order": "2026-01-01"}],
+            [],
+        ]
+
+        fetch_partner_po_lines(99)
+
+        po_call = mock_search_read.call_args_list[0]
+        self.assertEqual(po_call.args[0], "purchase.order")
+        self.assertIn(("receipt_status", "!=", "pending"), po_call.args[1])
 
     def test_extract_qty_um_from_description(self):
         qty, um = _extract_qty_um_from_description("6 kg pan líquido")
