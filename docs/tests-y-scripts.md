@@ -57,14 +57,15 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 
 ```bash
 npm run test:js
-# equivale a: node --test tests/js/comprobante_tax.test.mjs
+# equivale a: node --test tests/js/*.test.mjs
 ```
 
 | Archivo | Qué cubre |
 |---------|-----------|
 | `tests/js/comprobante_tax.test.mjs` | Paridad lógica tax en browser |
-| `tests/js/loadFixtures.mjs` | Carga `tax_scenarios.json` |
-| `tests/js/exportTotals.mjs` | Helper para asserts de totales |
+| `tests/js/rows_migration.test.mjs` | Migración de filas (cuenta, proveedor) |
+| `tests/js/loadFixtures.mjs` | Carga `tax_scenarios.json` (helper, no test) |
+| `tests/js/exportTotals.mjs` | Script CLI para paridad Python/JS (`node tests/js/exportTotals.mjs`) |
 
 Los módulos bajo test importan desde `src/facturia_matching/static/js/...` vía rutas relativas en los tests.
 
