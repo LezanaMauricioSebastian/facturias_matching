@@ -32,7 +32,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
-| `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie); `sanitize_inflated_line_amounts`; **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS.** |
+| `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie; en `header` con una alícuota usa `__fac_iva_monto` aunque el precio de línea no cierre con el %); `sanitize_inflated_line_amounts`; **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS** (`ivaBreakdown.js`, `rows/totals.js`). |
 | `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); `fac_header_amount_str`, percepciones, qty/price. |
 | `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). |
 | `constants.py` | `OUTPUT_HEADERS`, headers CSV, columnas purchase, `IVA_OPTIONS`, `append_purchase_columns`. |
@@ -60,7 +60,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks. |
 | `catalog.py` | **`get_catalog`** (cache): proveedores, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
-| `import_.py` | Pipeline de import: **`group_rows_into_invoices`**, **`import_rows_to_odoo`**, **`sync_move_taxes_from_group`**, **`collect_expected_tax_amounts_from_group`**, **`_ensure_missing_tax_lines_on_move`**, **`_apply_tax_line_amount_overwrites`** (montos tax al final, tras vínculos OC), consolidación IIBB en primera línea (`_comprobante_non_iva_tax_ids`). Archivo más grande del proyecto. |
+| `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
 | `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. |
 | `__init__.py` | Marcador. |
 
@@ -115,15 +115,19 @@ load_process_rows (persistence/process_conversions)
   ├── parse_process_json (si no hay guardado o regenerate)
   └── remap_saved_rows_to_catalog (si hay guardado)
 
-import_rows_to_odoo (odoo/import_)
-  ├── group_rows_into_invoices
+import_rows_to_odoo (odoo/import_/create.py)
+  ├── group_rows_into_invoices (odoo/import_/rows.py)
+  ├── _prepare_rows_for_import (odoo/import_/purchase.py)
   ├── reconcile_fac_iva_for_import (core/comprobante_tax)
-  └── sync_move_taxes_from_group
-        ├── contenido + tax_ids en líneas de producto
-        ├── vínculos OC (purchase_line_id)
-        ├── _ensure_missing_tax_lines_on_move   # IVA + IIBB faltantes
-        └── _apply_tax_line_amount_overwrites   # último paso
+  └── sync_move_taxes_from_group (odoo/import_/sync.py)
+        ├── plan_* (odoo/import_/planning.py)
+        ├── vínculos OC (odoo/import_/purchase.py)
+        ├── _ensure_missing_tax_lines_on_move (odoo/import_/taxes.py)
+        ├── _apply_tax_line_amount_overwrites (odoo/import_/taxes.py)
+        └── plan_product_price_quantity_reapply (odoo/import_/planning.py)
 ```
+
+Detalle paso a paso: [import-odoo/pipeline.md](import-odoo/pipeline.md).
 
 ---
 

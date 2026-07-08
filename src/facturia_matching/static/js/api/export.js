@@ -84,25 +84,17 @@ export async function importarOdoo(state, setStatusFn, validateFn, refs) {
 
     const parts = [];
     if (created.length) {
-      const names = created.map((c) => c.name || `#${c.id}`).join(", ");
-      parts.push(`Creadas: ${created.length} (${names})`);
+      parts.push(`Creadas: ${created.length}`);
     }
     if (updatedTaxes.length) {
-      const names = updatedTaxes
-        .map((u) => {
-          const bits = [];
-          const contentN = u.content_lines_updated ?? 0;
-          if (contentN) bits.push(`${contentN} línea${contentN === 1 ? "" : "s"}`);
-          const taxN = u.tax_lines_updated ?? u.lines_updated ?? 0;
-          if (taxN) bits.push(`${taxN} impuesto${taxN === 1 ? "" : "s"}`);
-          const poN = u.purchase_lines_updated ?? 0;
-          if (poN) bits.push(`${poN} OC`);
-          if (u.invoice_origin_updated) bits.push("origen OC");
-          const detail = bits.length ? bits.join(", ") : "sin cambios";
-          return `${u.name || u.document_number || `#${u.move_id}`} (${detail})`;
-        })
-        .join(", ");
-      parts.push(`Actualizadas en Odoo: ${updatedTaxes.length} (${names})`);
+      const labels = updatedTaxes
+        .map((u) => u.name || u.document_number)
+        .filter(Boolean);
+      if (labels.length) {
+        parts.push(`Actualizadas en Odoo: ${updatedTaxes.length} (${labels.join(", ")})`);
+      } else {
+        parts.push(`Actualizadas en Odoo: ${updatedTaxes.length}`);
+      }
     }
     if (skipped.length) {
       parts.push(`Omitidas (ya existían): ${skipped.length}`);

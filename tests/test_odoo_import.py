@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from facturia_matching.core.comprobante_tax import classify_comprobante_tax_mode
 from facturia_matching.odoo.import_ import (
+    _batch_write_move_lines,
     _build_line_command,
     _build_move_vals,
     _document_numbers_match,
@@ -13,6 +14,7 @@ from facturia_matching.odoo.import_ import (
     _move_matches_document_number,
     _move_product_line_fields,
     _MOVE_LINE_PURCHASE_LINK_CACHE,
+    _should_refresh_purchase_links,
     _tax_ids_for_odoo_line,
     collect_expected_tax_amounts_from_group,
     group_rows_into_invoices,
@@ -23,6 +25,7 @@ from facturia_matching.odoo.import_ import (
     _tax_line_amount_write_vals,
     plan_line_tax_updates,
     plan_product_line_content_updates,
+    plan_product_price_quantity_reapply,
     plan_purchase_line_updates,
     plan_tax_line_amount_overwrites,
     propagate_invoice_headers,
@@ -66,11 +69,39 @@ class TestOdooImport(unittest.TestCase):
                 "journal_id": "2",
                 "l10n_latam_document_number": "00001-00000001",
                 "invoice_date": "01/06/2026",
+                "invoice_line_ids/account_id": "10",
             },
             {"invoice_line_ids/name": "linea 2"},
+            {"invoice_line_ids/name": "linea 3"},
         ]
         out = propagate_invoice_headers(rows)
         self.assertEqual(out[1].get("partner_id"), "5")
+        self.assertEqual(out[2].get("invoice_line_ids/account_id"), "10")
+
+    def test_validate_propagates_account_to_all_lines(self):
+        rows = [
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00001-00000001",
+                "invoice_date": "01/06/2026",
+                "invoice_line_ids/name": "linea 1",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "100",
+                "__comprobante_idx": 0,
+            },
+            {
+                "invoice_line_ids/name": "linea 2",
+                "invoice_line_ids/price_unit": "50",
+                "__comprobante_idx": 0,
+            },
+            {
+                "invoice_line_ids/name": "linea 3",
+                "invoice_line_ids/price_unit": "25",
+                "__comprobante_idx": 0,
+            },
+        ]
+        self.assertIsNone(validate_rows_for_import(rows))
 
     def test_document_numbers_match(self):
         self.assertTrue(_document_numbers_match("00008-00051348", "0008-00051348"))
@@ -84,7 +115,7 @@ class TestOdooImport(unittest.TestCase):
         move = {"name": "FC 00001-00000089", "ref": ""}
         self.assertTrue(_move_matches_document_number(move, "00001-00000089"))
 
-    @patch("facturia_matching.odoo.import_.odoo_execute_kw_with_config")
+    @patch("facturia_matching.odoo.import_.create.odoo_execute_kw_with_config")
     def test_find_existing_move_uses_ref_domain_not_latam_field(self, mock_rpc):
         mock_rpc.return_value = [
             {"id": 7, "name": "BILL/1", "state": "draft", "ref": "00001-00000089", "l10n_latam_document_number": "00001-00000089"}
@@ -111,7 +142,7 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(vals["l10n_latam_document_number"], "00001-00000001")
         self.assertEqual(vals["ref"], "00001-00000001")
 
-    @patch("facturia_matching.odoo.import_.odoo_execute_kw_with_config")
+    @patch("facturia_matching.odoo.import_._utils.odoo_execute_kw_with_config")
     def test_move_product_line_fields_omits_purchase_when_unsupported(self, mock_rpc):
         _MOVE_LINE_PURCHASE_LINK_CACHE.clear()
         mock_rpc.return_value = {"id": {}, "name": {}, "tax_ids": {}}
@@ -119,7 +150,7 @@ class TestOdooImport(unittest.TestCase):
         self.assertFalse(_move_line_supports_purchase_link(cfg))
         self.assertNotIn("purchase_line_id", _move_product_line_fields(cfg))
 
-    @patch("facturia_matching.odoo.import_.odoo_execute_kw_with_config")
+    @patch("facturia_matching.odoo.import_._utils.odoo_execute_kw_with_config")
     def test_plan_purchase_line_updates_skips_without_purchase_field(self, mock_rpc):
         _MOVE_LINE_PURCHASE_LINK_CACHE.clear()
         mock_rpc.return_value = {"id": {}}
@@ -669,7 +700,7 @@ class TestOdooImport(unittest.TestCase):
             }
         ]
         with patch(
-            "facturia_matching.odoo.import_.odoo_execute_kw_with_config",
+            "facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config",
             return_value=[],
         ):
             warnings = sanitize_group_purchase_lines({}, group)
@@ -724,9 +755,9 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(group[0]["__oc_line_id"], "100")
         self.assertEqual(group[1]["__oc_line_id"], "")
 
-    @patch("facturia_matching.odoo.import_._move_line_supports_purchase_link", return_value=True)
-    @patch("facturia_matching.odoo.import_.sanitize_group_purchase_lines", return_value=[])
-    @patch("facturia_matching.odoo.import_._refresh_purchase_links", return_value=[])
+    @patch("facturia_matching.odoo.import_.purchase._move_line_supports_purchase_link", return_value=True)
+    @patch("facturia_matching.odoo.import_.purchase.sanitize_group_purchase_lines", return_value=[])
+    @patch("facturia_matching.odoo.import_.purchase._refresh_purchase_links", return_value=[])
     def test_prepare_rows_for_import_refreshes_oc_before_grouping(
         self, mock_refresh, _mock_sanitize, _mock_po
     ):
@@ -740,6 +771,7 @@ class TestOdooImport(unittest.TestCase):
                 "invoice_line_ids/name": "Item",
                 "invoice_line_ids/account_id": "10",
                 "invoice_line_ids/price_unit": "1",
+                "__oc_name": "P0001",
             }
         ]
 
@@ -805,6 +837,165 @@ class TestOdooImport(unittest.TestCase):
         ]
         updates, _ = plan_product_line_content_updates(product_lines, rows)
         self.assertEqual(updates, [])
+
+    def test_plan_product_price_quantity_reapply_po_price_differs(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Item",
+                "quantity": 1.0,
+                "price_unit": 100.0,
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "__oc_line_id": "456",
+            }
+        ]
+        updates, warnings = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["line_id"], 10)
+        self.assertEqual(updates[0]["write_vals"]["price_unit"], 150.0)
+        self.assertEqual(updates[0]["write_vals"]["quantity"], 2.0)
+
+    def test_plan_product_price_quantity_reapply_non_oc_price_differs(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Item",
+                "quantity": 1.0,
+                "price_unit": 100.0,
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+            }
+        ]
+        updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["write_vals"]["price_unit"], 150.0)
+
+    def test_plan_product_price_quantity_reapply_matches_by_purchase_line_id(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "A",
+                "quantity": 1.0,
+                "price_unit": 100.0,
+                "purchase_line_id": [200, "PO/1"],
+            },
+            {
+                "id": 11,
+                "name": "B",
+                "quantity": 1.0,
+                "price_unit": 50.0,
+                "purchase_line_id": [100, "PO/2"],
+            },
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "B",
+                "invoice_line_ids/quantity": "3",
+                "invoice_line_ids/price_unit": "999",
+                "__oc_line_id": "100",
+            },
+            {
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "888",
+                "__oc_line_id": "200",
+            },
+        ]
+        updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(len(updates), 2)
+        by_id = {u["line_id"]: u["write_vals"]["price_unit"] for u in updates}
+        self.assertEqual(by_id[11], 999.0)
+        self.assertEqual(by_id[10], 888.0)
+
+    def test_plan_product_price_quantity_reapply_skips_unchanged(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Item",
+                "quantity": 2.0,
+                "price_unit": 150.0,
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "__oc_line_id": "456",
+            }
+        ]
+        updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(updates, [])
+
+    @patch("facturia_matching.odoo.import_.move_lines.odoo_execute_kw_with_config")
+    def test_batch_write_move_lines_single_rpc(self, mock_rpc):
+        _batch_write_move_lines(
+            {},
+            99,
+            [
+                {"line_id": 10, "write_vals": {"price_unit": 150.0}},
+                {"line_id": 11, "write_vals": {"quantity": 2.0}},
+            ],
+        )
+        mock_rpc.assert_called_once()
+        self.assertEqual(mock_rpc.call_args[0][1], "account.move")
+        self.assertEqual(mock_rpc.call_args[0][2], "write")
+        write_vals = mock_rpc.call_args[0][3][1]
+        self.assertEqual(write_vals["line_ids"][0], (1, 10, {"price_unit": 150.0}))
+
+    @patch("facturia_matching.odoo.import_.move_lines.odoo_execute_kw_with_config")
+    def test_batch_write_move_lines_fallback_on_access_denied(self, mock_rpc):
+        updates = [
+            {"line_id": 10, "write_vals": {"price_unit": 150.0}},
+            {"line_id": 11, "write_vals": {"quantity": 2.0}},
+        ]
+
+        def side_effect(*args, **kwargs):
+            if args[1] == "account.move":
+                raise Exception("<Fault 3: 'Access Denied'>")
+            return None
+
+        mock_rpc.side_effect = side_effect
+        warnings: list = []
+        applied = _batch_write_move_lines({}, 99, updates, warnings, context="test")
+        self.assertEqual(applied, updates)
+        self.assertEqual(mock_rpc.call_count, 3)
+        self.assertTrue(any("batch falló" in w for w in warnings))
+        line_calls = [c for c in mock_rpc.call_args_list if c[0][1] == "account.move.line"]
+        self.assertEqual(len(line_calls), 2)
+
+    def test_should_refresh_purchase_links_skips_when_oc_ids_present(self):
+        rows = [
+            {
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/price_unit": "1",
+                "__oc_line_id": "100",
+                "__oc_name": "P0001",
+            }
+        ]
+        self.assertFalse(_should_refresh_purchase_links(rows))
+
+    def test_should_refresh_purchase_links_when_oc_name_without_line_id(self):
+        rows = [
+            {
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/price_unit": "1",
+                "__oc_name": "P0001",
+            }
+        ]
+        self.assertTrue(_should_refresh_purchase_links(rows))
 
     def test_plan_invoice_origin_update(self):
         group = [

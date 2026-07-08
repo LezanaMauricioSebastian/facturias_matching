@@ -109,6 +109,7 @@ El padrón Postgres puede traer tax ids de Dinner; `PADRON_TAX_SOURCE_PROFILE` (
 | [api.md](api.md) | Endpoints REST y payloads |
 | [tests-y-scripts.md](tests-y-scripts.md) | Tests, fixtures y scripts de diagnóstico |
 | [iva-y-import-odoo.md](iva-y-import-odoo.md) | IVA por comprobante e import a Odoo (detalle profundo) |
+| [import-odoo/](import-odoo/README.md) | **Paquete `odoo/import_/`**: módulos, pipeline, OC, impuestos, API, tests |
 
 ## Árbol del repo (resumido)
 
@@ -120,7 +121,7 @@ facturia-matching-ui/
 │   ├── api/                # routes HTTP
 │   ├── core/               # lógica de negocio pura
 │   ├── padron/             # matching proveedor + impuestos
-│   ├── odoo/               # XML-RPC, catálogo, import, OC
+│   ├── odoo/               # XML-RPC, catálogo, import_, OC
 │   ├── persistence/        # MySQL conversions + back_check
 │   ├── export/             # CSV
 │   ├── infra/              # config, env, paths, DB resolve
@@ -136,8 +137,8 @@ facturia-matching-ui/
 |---------|----------------|
 | Cambiar columnas de la tabla | `core/constants.py`, `static/js/table/columns.js` |
 | Arreglar matching de proveedor | `padron/postgres.py`, `odoo/catalog.py` |
-| Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, `odoo/import_.py`, [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
-| Import a Odoo | `odoo/import_.py` |
+| Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, [import-odoo/](import-odoo/README.md), [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
+| Import a Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
 | Matching con OC | `odoo/purchase_matching.py`, `static/js/ocPicker/` |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |
 | Nuevo endpoint | `api/routes.py` |

@@ -9,10 +9,18 @@ export function computeRowTotal(row, taxMode = "header") {
   const base = lineBase(row);
   let ivaMonto = 0;
   if (taxMode === "line") {
+    const explicit = toNumberLoose(row?.iva_monto);
+    const suggested = lineIvaSuggested(row);
     if (row?.__iva_monto_manual) {
-      ivaMonto = toNumberLoose(row?.iva_monto);
+      ivaMonto = explicit;
+    } else if (
+      explicit > 0 &&
+      suggested > 0 &&
+      Math.abs(explicit - suggested) > Math.max(0.02, suggested * 0.001)
+    ) {
+      ivaMonto = explicit;
     } else {
-      ivaMonto = lineIvaSuggested(row);
+      ivaMonto = suggested;
       row.iva_monto = formatNumberEsAR(Math.round(ivaMonto * 100) / 100, 2, 2);
     }
   }

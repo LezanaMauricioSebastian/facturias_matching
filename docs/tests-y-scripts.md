@@ -30,7 +30,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
-| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB en primera línea, montos tax tras reconcile |
+| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB en primera línea, montos tax tras reconcile, re-aplicar precio/cantidad tras vínculo OC. Ver [import-odoo/testing.md](import-odoo/testing.md). |
 | `test_purchase_matching.py` | Matching OC, UM, fuzzy líneas |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
 | `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo |
@@ -91,7 +91,7 @@ Uso típico de diagnóstico cuando el matching falla en un proveedor o rubro.
 
 | Cambiaste… | Agregar/actualizar |
 |------------|-------------------|
-| Fórmula IVA | `tax_scenarios.json` + test JS + `test_comprobante_tax.py` + `test_js_python_parity.py` |
+| Fórmula IVA | `tax_scenarios.json` + test JS (`comprobante_tax.test.mjs`, incl. `header footer IVA fixed when price changes`) + `test_comprobante_tax.py` + `test_js_python_parity.py` |
 | Nueva columna UI/CSV | `test` de `constants` o snapshot headers en export |
 | Import Odoo | `test_odoo_import.py` con filas mínimas agrupadas |
 | Matching OC | `test_purchase_matching.py` |

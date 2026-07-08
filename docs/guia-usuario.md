@@ -47,6 +47,14 @@ Cada factura tiene un bloque expandible con:
 
 Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea).
 
+### IVA fijo y cambio de Precio
+
+Si el **Monto IVA** de una línea ya está fijado (lo editaste vos o vino así de FacturIA y no es simplemente `precio × %`), al cambiar **Precio** o **Cantidad** el IVA del **pie no se recalcula**: se mantiene el monto fijo.
+
+Ejemplo: base 344.760 con IVA 21 % = 72.399,60. Si cambiás el precio de la línea, el pie sigue mostrando 72.399,60 — no pasa a `nuevo precio × 21 %`.
+
+En modo **line**, el monto autoritativo es la columna **IVA monto**; el pie es solo un resumen (solo lectura). En modo **header**, el monto autoritativo es el pie (`__fac_iva_monto`).
+
 ### Formato de números
 
 La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el servidor interpreta esos formatos en el pie y en otros impuestos.
@@ -64,6 +72,7 @@ Al confirmar **Importar a Odoo**:
 1. Se crean facturas en **borrador** (`in_invoice`) o se actualizan si ya existen (mismo proveedor + número de documento).
 2. Se sincronizan líneas de producto, `tax_ids`, vínculos OC y **montos de impuesto** en las líneas `display_type=tax`.
 3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre al final del sync, después de vincular OC.
+4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra.
 
 Si el import dice “Actualizadas en Odoo” con “X impuestos”, los montos del pie se aplicaron. Si los montos en Odoo siguen siendo los calculados, revisá la sección [Problemas frecuentes](#problemas-frecuentes).
 
@@ -100,6 +109,10 @@ Ver `.env.example` para la lista completa.
 | Factura no está en borrador | Solo se actualizan facturas `draft` |
 | Proceso con conversión vieja corrupta | **Restaurar original** y repetir ediciones |
 
+### El IVA del pie cambia al mover el Precio
+
+Si el **Monto IVA** de la línea está fijo pero el **IVA %** del pie se recalcula al editar **Precio**, recargá la página con la versión actual del servidor. El pie debe respetar el monto fijo (columna IVA monto o valor de FacturIA), no `precio × alícuota`. Detalle técnico: [iva-y-import-odoo.md](iva-y-import-odoo.md#iva-fijo-al-cambiar-precio-o-cantidad).
+
 ### Muchas columnas “Otros impuestos” vacías
 
 Versiones anteriores generaban una columna por cada impuesto del padrón. Tras actualizar: recargar proceso o restaurar original. Solo se muestran columnas con monto.
@@ -115,6 +128,10 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite�
 ```
 
 Completar **fecha de vencimiento** en FacturIA. El import propaga `invoice_date_due` y completa `date_maturity` en apuntes AP/AR. Si sigue fallando, revisar el tipo de cuenta del impuesto IIBB en Odoo.
+
+### El precio en Odoo es el de la OC, no el de la factura
+
+Tras importar con OC vinculada, Odoo puede mostrar el precio negociado en la orden de compra. El import debe restaurar el **Precio** de la tabla (FacturIA). Si ves el precio viejo de la OC: confirmá que el borrador está en `draft`, que la columna Precio en la UI es la correcta, y reimportá con la versión actual del servidor.
 
 ### Proceso devuelve error 400 al cargar
 

@@ -62,8 +62,8 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 |---------|-----|
 | `index.js` | Re-exports. |
 | `totals.js` | **`classifyComprobanteTaxMode`**, **`computeComprobanteTotals`** — parity con Python. |
-| `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`. |
-| `ivaBreakdown.js` | Desglose por alícuota en el pie; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
+| `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`; `lineIvaMonto` respeta `iva_monto` explícito. |
+| `ivaBreakdown.js` | Desglose por alícuota en el pie; en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
 | `groups.js` | Agrupa `state.rows` por `__comprobante_idx`. |
 | `migration.js` | Normaliza filas viejas guardadas (campos legacy). |
 
@@ -76,7 +76,7 @@ Ver también [iva-y-import-odoo.md](iva-y-import-odoo.md).
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | Helpers sobre `state.rows`. |
-| `totals.js` | Sumas por comprobante / globales. |
+| `totals.js` | **`computeRowTotal`**: en modo `line`, no recalcula `iva_monto` si el valor explícito difiere del sugerido (IVA fijo de FacturIA o edición manual). |
 | `otroImpuestos.js` | Slots dinámicos `otros_impuestos_N`; botón agregar impuesto. |
 | `migration.js` | Migración de shape de filas al cargar. |
 

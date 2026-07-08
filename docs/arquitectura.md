@@ -39,7 +39,7 @@ Lógica independiente de HTTP y de drivers concretos (salvo imports puntuales a 
 - **env.py**: credenciales por perfil (Dinner / Aliare / Sudata).
 - **api.py**: autenticación, `search_read`, helpers XML-RPC.
 - **catalog.py**: proveedores, diarios, cuentas, rubros, tipos de documento (cache TTL).
-- **import_.py**: agrupar filas en facturas, crear/actualizar `account.move`, sync de impuestos y OC.
+- **import_/**: agrupar filas en facturas, crear/actualizar `account.move`, sync de impuestos y OC. Ver [import-odoo/](import-odoo/README.md).
 - **purchase_matching.py**: sugerir y aplicar órdenes de compra.
 
 ### `persistence/` — Estado editado
@@ -164,7 +164,7 @@ En desarrollo con `--reload`, los procesos hijos de uvicorn resetean caches al r
 
 - Resolución de IVA y percepciones: catálogo `account.tax` del perfil activo (`padron/taxes.py`).
 - Padrón Postgres con ids numéricos legacy: remapeo con `PADRON_TAX_SOURCE_PROFILE` (tenant fuente, default Dinner).
-- Import: pie del comprobante manda en header/mixed; sobreescritura de montos en líneas `display_type=tax` al final de `sync_move_taxes_from_group`. Detalle en [iva-y-import-odoo.md](iva-y-import-odoo.md).
+- Import: pie del comprobante manda en header/mixed; sobreescritura de montos en líneas `display_type=tax` al final de `sync_move_taxes_from_group`. En la UI, un `iva_monto` fijo en línea no se recalcula al cambiar precio (ver [iva-y-import-odoo.md](iva-y-import-odoo.md#iva-fijo-al-cambiar-precio-o-cantidad)). Detalle en [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
 ## Despliegue
 

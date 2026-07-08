@@ -1,3 +1,4 @@
+import { groupBounds } from "../singleLine/index.js";
 import { normalizeIvaPctValue, otrosImpuestoKey } from "../utils/index.js";
 
 export function migrateRowKeys(row) {
@@ -34,14 +35,19 @@ export function applyProveedorToCuit(state, rIdx) {
 }
 
 export function propagateAccountDown(rows) {
-  for (let i = 1; i < rows.length; i++) {
-    const prev = rows[i - 1];
-    const cur = rows[i];
-    const prevNro = String(prev?.["l10n_latam_document_number"] ?? "").trim();
-    const curNro = String(cur?.["l10n_latam_document_number"] ?? "").trim();
-    if (!curNro && prevNro) {
-      const ak = "invoice_line_ids/account_id";
-      if (!String(cur?.[ak] ?? "").trim() && String(prev?.[ak] ?? "").trim()) cur[ak] = prev[ak];
+  if (!Array.isArray(rows) || !rows.length) return;
+  const accountKey = "invoice_line_ids/account_id";
+  let i = 0;
+  while (i < rows.length) {
+    const [start, end] = groupBounds(rows, i);
+    const account = String(rows[start]?.[accountKey] ?? "").trim();
+    if (account) {
+      for (let j = start + 1; j < end; j++) {
+        const cur = rows[j];
+        if (!cur || typeof cur !== "object") continue;
+        if (!String(cur[accountKey] ?? "").trim()) cur[accountKey] = account;
+      }
     }
+    i = end;
   }
 }

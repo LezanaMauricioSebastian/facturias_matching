@@ -180,6 +180,50 @@ describe("line mode manual iva stays line for import", () => {
   });
 });
 
+describe("header footer IVA fixed when price changes", () => {
+  it("keeps line iva_monto and footer breakdown when price changes", () => {
+    const rows = [
+      {
+        iva_pct: "21",
+        iva_monto: "72399,60",
+        __fac_subtotal: "344760",
+        __fac_iva_monto: "72399.60",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "777",
+      },
+    ];
+    const mode = classifyComprobanteTaxMode(rows);
+    const breakdown = computeIvaBreakdown(rows, { mode });
+    assert.equal(mode, "line");
+    assert.ok(Math.abs(breakdown[0].amount - 72399.6) <= 0.02);
+    assert.equal(computeComprobanteTotals(rows, mode).ivaOdoo, 72399.6);
+  });
+
+  it("header mode footer uses __fac_iva_monto when price no longer matches rate", () => {
+    const rows = [
+      {
+        iva_pct: "21",
+        iva_monto: "163,17",
+        __fac_subtotal: "344760",
+        __fac_iva_monto: "72399.60",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "777",
+      },
+    ];
+    const mode = classifyComprobanteTaxMode(rows);
+    const breakdown = computeIvaBreakdown(rows, { mode });
+    assert.equal(mode, "header");
+    assert.ok(Math.abs(breakdown[0].amount - 72399.6) <= 0.02);
+  });
+
+  it("single_line_rate_mismatch footer uses header IVA not suggested", () => {
+    const scenario = scenarioById("single_line_rate_mismatch");
+    const breakdown = computeIvaBreakdown(scenario.rows, { mode: "header" });
+    assert.ok(breakdown.length > 0);
+    assert.ok(Math.abs(breakdown[0].amount - 7736.4) <= 0.02);
+  });
+});
+
 describe("IVA Exento / No Gravado", () => {
   it("ivaPctRequiresLineTax distinguishes special zero labels", () => {
     assert.equal(ivaPctRequiresLineTax("IVA Exento"), true);

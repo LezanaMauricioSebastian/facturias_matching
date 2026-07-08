@@ -79,7 +79,7 @@ Importa filas a Odoo TEST.
 }
 ```
 
-**Respuesta**: resumen por factura (creada, duplicada, errores, tax sync). Ver `odoo/import_.py`.
+**Respuesta**: resumen por factura (creada, duplicada, errores, tax sync). Ver [import-odoo/](import-odoo/README.md).
 
 ---
 

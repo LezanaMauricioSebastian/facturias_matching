@@ -109,10 +109,22 @@ export function computeIvaBreakdown(groupRows, totals) {
     return [];
   }
 
+  const headerAmt = facIvaMonto(groupRows);
+  const singleRate = rateKeys.size === 1;
+
   return sortRateKeys(rateKeys).map((rateKey) => {
     const sug = suggested.get(rateKey) || 0;
     const storedAmt = toNumberLoose(stored[rateKey]);
-    const amount = mode === "line" ? sug : storedAmt > 0 ? storedAmt : sug;
+    let amount;
+    if (mode === "line") {
+      amount = sug;
+    } else if (storedAmt > 0) {
+      amount = storedAmt;
+    } else if (headerAmt != null && headerAmt > 0 && singleRate) {
+      amount = headerAmt;
+    } else {
+      amount = sug;
+    }
     return {
       rateKey,
       label: ivaRowLabel(rateKey),

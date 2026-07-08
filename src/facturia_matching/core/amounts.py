@@ -159,6 +159,7 @@ def rows_prepared_for_odoo_csv(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
         "invoice_date_due",
         "x_studio_category",
         "journal_id",
+        "invoice_line_ids/account_id",
     )
     for i in range(1, len(out)):
         cur, prev = out[i], out[i - 1]

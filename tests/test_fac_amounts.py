@@ -76,6 +76,28 @@ class TestFacAmounts(unittest.TestCase):
         out = rows_prepared_for_odoo_csv(rows)
         self.assertEqual(out[1]["partner_id"], "99")
 
+    def test_rows_prepared_propagate_account(self):
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "l10n_latam_document_number": "00011-00036204",
+                "invoice_line_ids/account_id": "147",
+            },
+            {
+                "__comprobante_idx": 0,
+                "l10n_latam_document_number": "",
+                "invoice_line_ids/account_id": "",
+            },
+            {
+                "__comprobante_idx": 0,
+                "l10n_latam_document_number": "",
+                "invoice_line_ids/account_id": "",
+            },
+        ]
+        out = rows_prepared_for_odoo_csv(rows)
+        self.assertEqual(out[1]["invoice_line_ids/account_id"], "147")
+        self.assertEqual(out[2]["invoice_line_ids/account_id"], "147")
+
     def test_build_csv_tax_ids_iva_and_percepcion(self):
         row = {
             "iva_pct": "21",

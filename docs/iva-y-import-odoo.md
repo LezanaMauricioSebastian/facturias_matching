@@ -2,6 +2,8 @@
 
 Guía de comportamiento de la UI, el cálculo de totales y el pipeline de importación a Odoo (`import_rows_to_odoo` / `sync_move_taxes_from_group`).
 
+**Implementación Odoo (módulos, pipeline, API, tests):** [import-odoo/](import-odoo/README.md).
+
 ## Perfil Odoo (`odoo_profile`)
 
 Los **ids numéricos** de `account.tax` dependen del tenant (Dinner, Aliare, Sudata). La misma alícuota puede ser id distinto en cada Odoo:
@@ -62,6 +64,24 @@ El pie guarda montos como strings en JSON, a menudo con formato argentino (`"53.
 - Al cambiar cantidad, precio o IVA en modo `line`, JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
 - Editar el campo **IVA** total (`rateKey === "_total"`) actualiza también el desglose cuando hay una sola alícuota (o asume 21 % si no hay desglose).
 
+### IVA fijo al cambiar precio o cantidad
+
+Si el **Monto IVA** de la línea ya está fijado (editado manualmente o viene de FacturIA y **no coincide** con `precio × cantidad × %`), cambiar **Precio** o **Cantidad** **no debe recalcular** el IVA del pie.
+
+| Situación | Comportamiento esperado |
+|-----------|-------------------------|
+| Modo `line`, `iva_monto` fijo (manual o distinto del sugerido) | El pie mantiene ese monto (readonly); no se pisa con `precio × %` |
+| Modo `header`, una sola alícuota, `__fac_iva_monto` sin JSON por tasa | El pie usa `__fac_iva_monto`, no el cálculo por línea |
+| Modo `line`, `iva_monto` coincide con el sugerido | Al cambiar precio/cantidad, el IVA de línea y pie se recalculan juntos |
+
+**Regresión corregida:** al editar **Precio**, JS sobrescribía `iva_monto` con el valor sugerido aunque FacturIA hubiera traído otro monto; el modo pasaba a `header` y el pie mostraba `precio × 21 %` en lugar del IVA fijo. Implementación:
+
+- **JS:** `rows/totals.js` → `computeRowTotal` conserva `iva_monto` explícito cuando difiere del sugerido.
+- **JS:** `comprobanteTax/ivaBreakdown.js` → `computeIvaBreakdown` en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota y no hay monto por tasa en `__fac_iva_montos` (paridad con `fac_iva_montos` en Python).
+- **JS:** `table/render.js` re-renderiza la tabla si el modo tax cruza el límite `line` ↔ `header`/`mixed` al editar (evita columna IVA obsoleta).
+
+Tests: `header footer IVA fixed when price changes` en `tests/js/comprobante_tax.test.mjs`.
+
 ## Import a Odoo (resumen del pipeline)
 
 ```
@@ -76,9 +96,10 @@ filas UI
             2. date_maturity en apuntes AP/AR que falten
             3. contenido de líneas de producto
             4. tax_ids en líneas de producto (ver reglas abajo)
-            5. vínculos OC (purchase_line_id)
+            5. vínculos OC (purchase_line_id + product_id)
             6. _ensure_missing_tax_lines_on_move   # crea líneas tax faltantes (IVA + IIBB)
-            7. montos en líneas display_type=tax   ← al final (Odoo recalcula al vincular OC)
+            7. montos en líneas display_type=tax   ← Odoo recalcula al vincular OC
+            8. re-aplicar price_unit / quantity en todas las líneas de producto   ← último paso
 ```
 
 ### `reconcile_fac_iva_for_import`
@@ -99,7 +120,7 @@ Sin esta distinción, un comprobante `mixed`/`header` con IVA editado en el pie 
 - **`header`:** ninguna línea lleva IVA numérico en `tax_ids` (el total IVA va en el pie). **Excepción:** `IVA Exento` e `IVA No Gravado` sí van en la línea de producto (monto 0 en Odoo).
 - **`line` / `mixed`:** IVA en la línea si esa fila tiene `iva_pct > 0` o `IVA Exento` / `IVA No Gravado`.
 - **`0` / `IVA No Corresponde`:** sin tax IVA en la línea (comportamiento anterior).
-- **IIBB / percepciones a nivel comprobante:** se consolidan en la **primera línea con contenido** (`_comprobante_non_iva_tax_ids`, `_merge_comprobante_non_iva_tax_ids` en `odoo/import_.py`), aunque `otros_impuestos` esté en una fila solo encabezado (`__solo_encabezado`).
+- **IIBB / percepciones a nivel comprobante:** se consolidan en la **primera línea con contenido** (`_comprobante_non_iva_tax_ids`, `_merge_comprobante_non_iva_tax_ids` en `odoo/import_/taxes.py`), aunque `otros_impuestos` esté en una fila solo encabezado (`__solo_encabezado`).
 
 La distinción vive en `iva_pct_requires_line_tax` (`padron/taxes.py`).
 
@@ -121,6 +142,19 @@ Si el modo se clasifica mal como `header` cuando el usuario editó `iva_monto` e
 Si falta una línea `display_type=tax` en Odoo para un impuesto esperado, `_ensure_missing_tax_lines_on_move` refuerza `tax_ids` en la primera línea de producto (incluye IVA faltante en header) y luego se pisan los montos.
 
 Odoo puede recalcular impuestos al actualizar `tax_ids` o al vincular `purchase_line_id`. Por eso la sobreescritura de montos ocurre **después** de los vínculos OC, como último paso de `sync_move_taxes_from_group`.
+
+### Precio de línea con Orden de Compra
+
+Cuando una fila tiene match de OC (`__oc_line_id`), el import:
+
+1. Escribe primero `price_unit` y `quantity` desde la UI / FacturIA (`invoice_line_ids/price_unit`, `invoice_line_ids/quantity`) en el paso de contenido de líneas.
+2. Vincula `purchase_line_id` + `product_id` en un write separado (`_po_link_write_vals`).
+3. Re-aplica montos de impuesto en líneas `display_type=tax` (Odoo recalcula al vincular OC).
+4. **Re-aplica** precio y cantidad con `plan_product_price_quantity_reapply` en **todas** las líneas de producto — emparejando por `purchase_line_id` cuando hay OC, o por orden — como **último paso**, porque Odoo puede resetear `price_unit` al vincular OC, al asignar `product_id` o al recalcular impuestos.
+
+La UI y el matching OC (`purchase_matching.py`) **no** pisan `invoice_line_ids/price_unit`: solo asignan `product_id`, metadata de OC y, si aplica, cantidad re-escalada por UM. La fuente de verdad del precio al importar sigue siendo la columna **Precio** de la tabla (origen FacturIA o edición manual).
+
+**Regresión corregida:** tras vincular OC, el borrador en Odoo quedaba con el precio de la línea de compra aunque FacturIA hubiera enviado otro `precio_unitario`. Tests: `test_plan_product_price_quantity_reapply_po_price_differs`, `test_plan_product_price_quantity_reapply_skips_without_po_link`, `test_plan_product_price_quantity_reapply_skips_unchanged` en `tests/test_odoo_import.py`.
 
 ### Padrón fiscal y remapeo de tax ids
 
@@ -157,6 +191,12 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite y
 - Modo esperado: **`line`**
 - Columna IVA editable; pie readonly
 - `iva_monto` editado debe importarse con ese monto, no con `__fac_iva_monto` viejo
+
+### IVA del pie se mueve al cambiar Precio
+
+- **Síntoma:** el **Monto IVA** de la línea sigue fijo (ej. 72.399,60) pero el **IVA 21 %** del pie pasa a `precio × 21 %` (ej. 777 → 163,17).
+- **Causa:** al cambiar precio, JS recalculaba `iva_monto` de la línea y el desglose del pie caía al sugerido por línea en lugar de respetar el monto fijo de FacturIA (`__fac_iva_monto` / `iva_monto` explícito).
+- **Solución:** deploy con `computeRowTotal` + `computeIvaBreakdown` actualizados; recargar la UI. Tests: `header footer IVA fixed when price changes` en `tests/js/comprobante_tax.test.mjs`.
 
 ### Encabezado desincronizado (línea editada, JSON viejo)
 
@@ -206,6 +246,12 @@ Montos tipo `350.0,00` (punto decimal + coma es-AR) se normalizan en:
 - **JS:** `sanitizeNumericString` (`static/js/utils/numbers.js`)
 - **Python:** `_sanitize_hybrid_amount_string` (`core/amounts.py`)
 
+### Precio distinto al de la OC en Odoo
+
+- **Síntoma:** la factura importada con OC vinculada muestra en Odoo el precio de la orden de compra, no el de FacturIA / la columna Precio.
+- **Causa:** al escribir `purchase_line_id`, Odoo reemplazaba `price_unit` por el de la línea PO; no había un paso posterior que restaurara el precio enviado.
+- **Solución:** deploy con `plan_product_price_quantity_reapply` en `sync_move_taxes_from_group`; reimportar el borrador (debe estar en `draft`).
+
 ### Re-import de factura ya rota
 
 Si un import anterior dejó el borrador sin IVA en las líneas de producto, un re-import con el código actualizado debe:
@@ -230,7 +276,7 @@ Archivos clave:
 - `tests/fixtures/tax_scenarios.json` — escenarios compartidos JS/Python
 - `tests/test_comprobante_tax.py` — clasificación, totales, reconcile del pie, JSON es-AR en `__fac_iva_montos`
 - `tests/test_process_conversions.py` — slots otros impuestos, strip legacy al cargar
-- `tests/test_odoo_import.py` — import, fechas, tax_ids, IIBB, montos esperados
+- `tests/test_odoo_import.py` — import, fechas, tax_ids, IIBB, montos esperados, re-aplicar precio/cantidad tras vínculo OC
 - `tests/test_iva_tax_resolve.py` — resolución IVA y remapeo padrón Aliare
 - `tests/test_tax_pipeline.py` — pipeline end-to-end sobre fixtures
 
@@ -240,8 +286,9 @@ Archivos clave:
 |------|----------|
 | Clasificación y totales Python | `core/comprobante_tax.py` |
 | Resolución y remapeo impuestos | `padron/taxes.py` |
-| Import Odoo | `odoo/import_.py` |
+| Import Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
 | UI pie comprobante | `static/js/comprobanteView/footer.js` |
 | UI desglose IVA | `static/js/comprobanteTax/ivaBreakdown.js` |
+| IVA fijo vs precio (línea) | `static/js/rows/totals.js` → `computeRowTotal` |
 | UI tabla / blur IVA | `static/js/table/render.js` |
 | Tax JS | `static/js/comprobanteTax/*.js` |

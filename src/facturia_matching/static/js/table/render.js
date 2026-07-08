@@ -189,7 +189,9 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       if (isTotalAffectingKey(k)) {
         syncLineIvaMetadata(state, r);
         updateRowTotals(state, refs, r);
-        handlers.onUpdateComprobanteFooters?.();
+        if (!maybeRerenderOnTaxModeChange(state, r, handlers)) {
+          handlers.onUpdateComprobanteFooters?.();
+        }
       }
       if (k === DOC_NUM_KEY) refreshComprobanteHints(containerEl, state);
       handlers.onAutoSave?.();
