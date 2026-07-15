@@ -87,12 +87,22 @@ def strings_to_legacy_options(names: List[str]) -> List[Dict[str, Any]]:
 
 def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
     """
-    Filtra OTROS_IMPUESTOS_OPTIONS a impuestos purchase que existen en Odoo.
-    Un label por tax id; prefiere *Sufrida* cuando Sufrida/Aplicada comparten id.
-    """
-    from facturia_matching.padron.taxes import get_tax_name_by_id, resolve_tax_label_to_id
+    Opciones de Otros impuestos desde el catálogo Odoo del perfil activo.
 
-    if not get_tax_name_by_id():
+    1. Labels de OTROS_IMPUESTOS_OPTIONS que resuelven a un account.tax purchase
+       (un label por tax id; prefiere *Sufrida* si Sufrida/Aplicada comparten id).
+    2. Dinámico: cualquier otro impuesto purchase no-IVA del tenant (nombre Odoo),
+       p.ej. Perc Gananc / Perc IVA / Internal taxes en Aliare.
+    """
+    from facturia_matching.padron.taxes import (
+        get_tax_name_by_id,
+        is_iva_tax_id,
+        resolve_tax_label_to_id,
+    )
+    from facturia_matching.infra.normalization import normalize as _norm
+
+    name_by_id = get_tax_name_by_id()
+    if not name_by_id:
         return None
 
     by_tax_id: Dict[int, str] = {}
@@ -103,11 +113,27 @@ def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
         if tid not in by_tax_id or "Sufrida" in label:
             by_tax_id[tid] = label
 
+    extras: List[str] = []
+    for tid, raw_name in sorted(
+        name_by_id.items(),
+        key=lambda item: _norm(item[1]).upper(),
+    ):
+        if tid in by_tax_id:
+            continue
+        if is_iva_tax_id(int(tid)):
+            continue
+        name = _norm(raw_name)
+        if not name:
+            continue
+        by_tax_id[tid] = name
+        extras.append(name)
+
     if not by_tax_id:
         return None
 
-    chosen = set(by_tax_id.values())
-    return [label for label in OTROS_IMPUESTOS_OPTIONS if label in chosen]
+    known = {label for label in by_tax_id.values() if label in OTROS_IMPUESTOS_OPTIONS}
+    ordered = [label for label in OTROS_IMPUESTOS_OPTIONS if label in known]
+    return ordered + extras
 
 
 def options_base_payload() -> Dict[str, Any]:

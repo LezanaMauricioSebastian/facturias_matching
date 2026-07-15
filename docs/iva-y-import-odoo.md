@@ -227,6 +227,7 @@ Ejemplo: tres líneas con 21 % y 10,5 %, pero en el pie el usuario fija IVA 21 %
 | **Padrón** | `apply_padron_taxes_to_row` solo llena el slot 1 (`otros_impuestos`); los ids restantes van en `_padron_other_tax_ids` para el import, **sin** crear `otros_impuestos_2..N` en la UI |
 | **Al cargar conversión** | `_strip_empty_extra_otro_impuesto_slots` elimina slots `_2..N` sin monto (legacy) |
 | **Columnas visibles** | `infer_otro_impuesto_indices`: slot 1 puede tener solo etiqueta; slots `_2+` solo si tienen monto > 0 |
+| **Dropdown** | `otros_impuestos_options_from_odoo`: labels canónicos que resuelven en el tenant + **extras dinámicos** (todo `account.tax` purchase no-IVA no cubierto). Alias Aliare: `Perc Gananc` / `Perc IVA` / `IVA Adic 20%`. |
 
 Si un usuario ve ~19 columnas vacías: conversión guardada con versión antigua → **Restaurar original** o recargar tras deploy.
 

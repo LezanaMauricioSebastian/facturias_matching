@@ -64,6 +64,7 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 - Solo deberías ver **una columna** “Otros impuestos” en la tabla (más slots extra solo si hay montos reales en `otros_impuestos_2`, `_3`, …).
 - Si ves muchas columnas vacías (legacy de versiones anteriores): **Restaurar original** y volver a guardar, o recargar el proceso tras un deploy nuevo.
 - El monto de **Otros impuestos** en el pie se consolida en la primera línea de producto al importar (junto con los `tax_ids` de IIBB del padrón).
+- El dropdown se arma **desde Odoo del perfil activo**: IIBB/percepciones conocidos + el resto de impuestos purchase no-IVA del tenant (p.ej. en Aliare/Central: Perc Gananc, Perc IVA). No es una lista fija incompleta.
 
 ## Import a Odoo — qué esperar
 

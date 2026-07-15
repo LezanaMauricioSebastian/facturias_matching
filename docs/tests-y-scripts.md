@@ -33,7 +33,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB en primera línea, montos tax tras reconcile, re-aplicar precio/cantidad tras vínculo OC. Ver [import-odoo/testing.md](import-odoo/testing.md). |
 | `test_purchase_matching.py` | Matching OC, UM, fuzzy líneas; filtro `receipt_status != pending` |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
-| `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo |
+| `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo (filtro + extras dinámicos purchase no-IVA; alias Perc Gananc/IVA) |
 | `test_db_resolve.py` / `test_infra_db_resolve.py` | Resolución nombre DB Postgres/MySQL |
 | `test_routes_odoo_cloud.py` | Rutas con perfil sudata / odoo_cloud |
 | `test_rubro_profile.py` | Columnas rubro según perfil |

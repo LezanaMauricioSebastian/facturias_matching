@@ -289,11 +289,34 @@ def get_tax_id_by_name() -> Dict[str, int]:
     return out
 
 
+# Etiquetas UI → nombres abreviados en Odoo (ej. Aliare: Perc Gananc, Perc IVA).
+_UI_TAX_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "PERCEPCION GANANCIAS SUFRIDA": ("PERC GANANC", "PERCEPCION GANANCIAS"),
+    "PERCEPCION GANANCIAS APLICADA": ("PERC GANANC", "PERCEPCION GANANCIAS"),
+    "PERCEPCION IVA SUFRIDA": ("PERC IVA", "PERCEPCION IVA"),
+    "PERCEPCION IVA APLICADA": ("PERC IVA", "PERCEPCION IVA"),
+    "IVA ADICIONAL 20%": ("IVA ADIC 20%", "IVA ADICIONAL 20%"),
+}
+
+
+def _alias_tax_id_for_label(key: str, by_name: Dict[str, int]) -> Optional[int]:
+    ascii_key = _ascii_upper(key)
+    for alias in _UI_TAX_NAME_ALIASES.get(ascii_key, ()):
+        alias_key = _label_key(alias)
+        if alias_key in by_name:
+            return by_name[alias_key]
+        ascii_alias = _ascii_upper(alias_key)
+        for tax_key, tid in by_name.items():
+            if _ascii_upper(tax_key) == ascii_alias:
+                return tid
+    return None
+
+
 def resolve_tax_label_to_id(label: str, *, min_score: float = 96.0) -> Optional[int]:
     """
     Resuelve etiqueta UI (ej. Percepción IIBB CABA Sufrida) a account.tax id.
     Percepciones IIBB: match por jurisdicción contra nombres Odoo (ej. P. IIBB CABA).
-    Otros impuestos: fuzzy estricto si no hay match exacto.
+    Otras percepciones: alias a nombres cortos de Odoo (Perc Gananc / Perc IVA) y fuzzy.
     """
     key = _label_key(label)
     if not key:
@@ -302,8 +325,17 @@ def resolve_tax_label_to_id(label: str, *, min_score: float = 96.0) -> Optional[
     if key in by_name:
         return by_name[key]
 
-    if "IIBB" in key or "PERCEPCI" in key:
+    aliased = _alias_tax_id_for_label(key, by_name)
+    if aliased is not None:
+        return aliased
+
+    if "IIBB" in key:
         return _resolve_iibb_label_to_id(label, by_name)
+
+    if "PERCEPCI" in key:
+        iibb_tid = _resolve_iibb_label_to_id(label, by_name)
+        if iibb_tid is not None:
+            return iibb_tid
 
     choices = list(by_name.keys())
     if not choices:

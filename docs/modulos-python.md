@@ -34,7 +34,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
 | `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie; en `header` con una alícuota usa `__fac_iva_monto` aunque el precio de línea no cierre con el %); `sanitize_inflated_line_amounts`; **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS** (`ivaBreakdown.js`, `rows/totals.js`). |
 | `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); `fac_header_amount_str`, percepciones, qty/price. |
-| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). |
+| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: labels canónicos que resuelven + extras dinámicos (purchase no-IVA del tenant). |
 | `constants.py` | `OUTPUT_HEADERS`, headers CSV, columnas purchase, `IVA_OPTIONS`, `append_purchase_columns`. |
 | `__init__.py` | Re-exports si aplica. |
 
@@ -46,7 +46,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `postgres.py` | Cache de vista padrón; `detect_padron_fields`; **`match_proveedor`** (fuzzy CUIT/nombre); `get_table_columns`. Respeta `PADRON_SOURCE` y orden Odoo-first en Aliare/Sudata. |
 | `odoo.py` | **`build_padron_rows_from_odoo`**: últimas facturas proveedor → filas estilo padrón (rubro, cuenta, diario). |
-| `taxes.py` | Padrón fiscal; **`match_padron_taxes`**, **`apply_padron_taxes_to_row`** (solo slot 1 en UI; `_padron_other_tax_ids` para import); resolución label → tax id; IVA por alícuota desde catálogo Odoo del perfil activo; remapeo ids padrón vía `PADRON_TAX_SOURCE_PROFILE`; IIBB/percepciones por nombre. |
+| `taxes.py` | Padrón fiscal; **`match_padron_taxes`**, **`apply_padron_taxes_to_row`** (solo slot 1 en UI; `_padron_other_tax_ids` para import); resolución label → tax id (IIBB por jurisdicción + alias Aliare `Perc Gananc` / `Perc IVA`); IVA por alícuota desde catálogo Odoo del perfil activo; remapeo ids padrón vía `PADRON_TAX_SOURCE_PROFILE`. |
 | `__init__.py` | Marcador. |
 
 ---
