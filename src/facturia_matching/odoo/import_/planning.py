@@ -108,7 +108,7 @@ def plan_product_line_content_updates(
     tolerance: float = 0.001,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
-    Planifica product_id, quantity, price_unit, name y account_id en líneas de producto.
+    Planifica product_id, quantity, price_unit, product_uom_id, name y account_id en líneas de producto.
     Empareja por orden (sequence/id en Odoo ↔ filas UI del comprobante).
     """
     updates: List[Dict[str, Any]] = []
@@ -165,6 +165,14 @@ def plan_product_line_content_updates(
         if not defer_product and exp_product is not None and exp_product != cur_product:
             write_vals["product_id"] = exp_product
 
+        # UM matcheada: solo si el producto va en este write o ya está en la línea
+        # (con OC, producto y UM se escriben juntos en _po_link_write_vals).
+        if not defer_product:
+            exp_uom = _row_matched_uom_id(row)
+            cur_uom = _m2o_id(line.get("product_uom_id"))
+            if exp_uom is not None and exp_uom != cur_uom:
+                write_vals["product_uom_id"] = exp_uom
+
         if not write_vals:
             continue
         updates.append(
@@ -175,6 +183,13 @@ def plan_product_line_content_updates(
             }
         )
     return updates, warnings
+
+
+def _row_matched_uom_id(row: Dict[str, Any]) -> Optional[int]:
+    """UM matcheada solo si la fila conserva su producto (evita UM huérfana de otra categoría)."""
+    if not _int_id(row.get("invoice_line_ids/product_id")):
+        return None
+    return _int_id(row.get("__um_empresa_id"))
 
 
 def _pair_product_line_for_row(
@@ -200,8 +215,8 @@ def plan_product_price_quantity_reapply(
     tolerance: float = 0.001,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
-    Re-aplica price_unit y quantity desde filas UI al final del sync.
-    Odoo puede resetear precios al vincular OC, asignar product_id o recalcular impuestos.
+    Re-aplica price_unit, quantity y product_uom_id desde filas UI al final del sync.
+    Odoo puede resetear precios/UM al vincular OC, asignar product_id o recalcular impuestos.
     """
     updates: List[Dict[str, Any]] = []
     warnings: List[str] = []
@@ -212,7 +227,7 @@ def plan_product_price_quantity_reapply(
     if len(product_lines) != len(rows):
         warnings.append(
             f"Líneas Odoo ({len(product_lines)}) vs filas UI ({len(rows)}): "
-            f"se re-aplica precio/cantidad emparejando por OC o por orden"
+            f"se re-aplica precio/cantidad/UM emparejando por OC o por orden"
         )
 
     used_line_ids: set = set()
@@ -244,6 +259,11 @@ def plan_product_price_quantity_reapply(
         if _floats_differ(cur_price, exp_price, tolerance):
             write_vals["price_unit"] = exp_price
 
+        exp_uom = _row_matched_uom_id(row)
+        cur_uom = _m2o_id(line.get("product_uom_id"))
+        if exp_uom is not None and exp_uom != cur_uom:
+            write_vals["product_uom_id"] = exp_uom
+
         if not write_vals:
             continue
         updates.append(
@@ -263,7 +283,7 @@ def _po_link_write_vals(
     *,
     group: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Vincula OC, producto, precio y cantidad UI en un solo write."""
+    """Vincula OC, producto, precio, cantidad y UM UI en un solo write."""
     _cmd, _zero, expected = _build_line_command(
         row,
         group,
@@ -278,4 +298,7 @@ def _po_link_write_vals(
     product_id = _int_id(row.get("invoice_line_ids/product_id"))
     if product_id:
         write_vals["product_id"] = product_id
+        product_uom_id = _int_id(row.get("__um_empresa_id"))
+        if product_uom_id:
+            write_vals["product_uom_id"] = product_uom_id
     return write_vals

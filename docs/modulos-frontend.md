@@ -51,7 +51,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 |---------|-----|
 | `index.js` | API pública del bloque comprobante (footer expandible). |
 | `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos. |
-| `footer.js` | Inputs del pie; readonly según modo tax; **`setFooterIvaAmount`** actualiza `__fac_iva_montos` vía `serializeFacIvaMontos`. |
+| `footer.js` | Inputs del pie (IVA siempre editable); **`setFooterIvaAmount`** actualiza `__fac_iva_montos` vía `serializeFacIvaMontos` y marca `__fac_iva_monto_manual`. |
 | `uiState.js` | Expandido/colapsado, clases CSS por modo. |
 
 ---
@@ -97,23 +97,27 @@ Dropdown searchable para proveedor, producto, cuenta, etc.
 
 ### `ocPicker/`
 
-Selector de orden de compra cuando hay purchase matching.
+Selector de orden de compra cuando hay purchase matching. **UI: controles en el header de cada tarjeta de factura + modal (`<dialog>`) con tarjetas de candidatas.**
 
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | **`wireOcPicker`**. |
-| `render.js` | Modal/lista de OCs candidatas (solo OCs con recepción iniciada en Odoo). |
-| `wire.js` | Eventos selección → API `select-oc`. |
+| `render.js` | **`renderOcHeaderControls`**: controles por comprobante en su header. Botón `secondary` **«Buscar OCs similares»** → «OC: {nombre} ▾» o «OC: Sin OC ▾»; `↻` re-busca. Checkbox **«Sobreescribir precio de la OC»** (tilde + etiqueta en fila), deshabilitado sin OC. La barra global `#ocPickerBar` queda oculta (legacy). |
+| `wire.js` | Delegación de eventos en `#tableWrap`: buscar/abrir; si se intenta abrir sin candidatos, ejecuta `searchOc` primero; change del checkbox → `__overwrite_oc_price` + autosave; modal → `selectOc`. |
+
+API: `POST /api/proceso/{n}/search-oc` (candidatos bajo demanda), `POST .../select-oc` (`order_id=0` = Sin OC / deseleccionar) y `POST .../rematch-purchase` al cambiar proveedor. El rematch actualiza `oc_provider_has_ocs_by_comprobante` y hace aparecer/desaparecer el botón dinámicamente. Elegir Sin OC no elimina el acceso al selector.
 
 ### `singleLine/`
 
-UI para comprobantes de una sola línea (colapsar detalle).
+UI para modo **Solo encabezado** (`__solo_encabezado`).
 
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | Entry. |
-| `collapse.js` | Toggle vista compacta. |
-| `groups.js` | Detecta comprobantes single-line. |
+| `collapse.js` | Colapsa multi-línea a una fila; setea `__solo_encabezado`. |
+| `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**. |
+
+Con el tilde activo: columna **Subtotal** (`__subtotal`, calculada); **Monto IVA** y **Monto Otros Impuestos** visibles en la fila; pie oculto en `comprobanteView/footer.js`.
 
 ---
 
@@ -133,7 +137,7 @@ UI para comprobantes de una sola línea (colapsar detalle).
 |---------|-----|
 | `index.js` | Re-exports. |
 | `url.js` | **`getUrlParams`**, `isEmbedMode`, query `proceso`, `empresa`, `odoo_profile`. |
-| `numbers.js` | Parse/format montos AR (`2.500,50`); **`sanitizeNumericString`** para híbridos (`350.0,00`); usado en pie IVA y otros impuestos. |
+| `numbers.js` | Parse/format montos AR (`2.500,50`); **`sanitizeNumericString`** para híbridos (`350.0,00`); **`toNumberLoose`** no colapsa decimales US con parte entera >3 dígitos (`1457.256`); usado en pie IVA y otros impuestos. |
 | `dates.js` | Parse/format fechas. |
 | `html.js` | Escape HTML, helpers DOM. |
 | `options.js` | Buscar en listas de opciones por id/label. |

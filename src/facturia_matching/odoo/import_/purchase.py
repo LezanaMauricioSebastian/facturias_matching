@@ -8,12 +8,16 @@ from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
 from facturia_matching.odoo.api import odoo_execute_kw_with_config
 
 from facturia_matching.odoo.import_._utils import (
+    _content_rows_from_group,
+    _floats_differ,
     _int_id,
     _line_has_content,
     _move_line_supports_purchase_link,
     _normalize,
+    _parse_amount_loose,
 )
 from facturia_matching.odoo.import_.rows import (
+    _build_line_command,
     group_rows_into_invoices,
     propagate_invoice_headers,
 )
@@ -136,7 +140,10 @@ def _prepare_rows_for_import(
     config: Dict[str, Any],
     rows: List[Dict[str, Any]],
 ) -> Tuple[List[List[Dict[str, Any]]], List[str]]:
-    """Refresca vínculos OC, agrupa comprobantes y valida purchase_line_id en Odoo."""
+    """
+    Prepara filas para import a Odoo: refresca vínculos OC, agrupa comprobantes,
+    reconcilia IVA y sanitiza purchase_line_id inexistentes.
+    """
     warnings: List[str] = []
     purchase_ok = _move_line_supports_purchase_link(config)
     if purchase_ok and _should_refresh_purchase_links(rows):
@@ -218,4 +225,105 @@ def plan_purchase_line_updates(
                 "new_purchase_line_id": expected,
             }
         )
+    return updates, warnings
+
+
+def _truthy_flag(raw: Any) -> bool:
+    if raw is True:
+        return True
+    if isinstance(raw, (int, float)) and int(raw) == 1:
+        return True
+    s = str(raw or "").strip().lower()
+    return s in ("1", "true", "yes", "si", "sí", "on")
+
+
+def group_wants_overwrite_oc_price(group: List[Dict[str, Any]]) -> bool:
+    """True si el comprobante pidió sobreescribir price_unit en la OC."""
+    for row in group or []:
+        if _truthy_flag(row.get("__overwrite_oc_price")):
+            return True
+    return False
+
+
+def apply_purchase_order_price_overwrites(
+    config: Dict[str, Any],
+    group: List[Dict[str, Any]],
+    *,
+    tolerance: float = 0.001,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Si hay __overwrite_oc_price, escribe el precio de la factura en purchase.order.line.
+    No toca account.move — solo la OC original en Odoo.
+    """
+    updates: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    if not group_wants_overwrite_oc_price(group):
+        return updates, warnings
+    if not _move_line_supports_purchase_link(config):
+        return updates, warnings
+
+    rows = _content_rows_from_group(group)
+    wanted: Dict[int, float] = {}
+    for row in rows:
+        po_line_id = _purchase_line_id_from_row(row)
+        if not po_line_id:
+            continue
+        _cmd, _zero, expected = _build_line_command(
+            row,
+            group,
+            include_purchase_link=False,
+            include_product_id=False,
+        )
+        wanted[int(po_line_id)] = float(expected["price_unit"])
+
+    if not wanted:
+        warnings.append(
+            "Sobreescribir precio OC: no hay líneas con vínculo OC; no se modificó la orden"
+        )
+        return updates, warnings
+
+    ids = sorted(wanted.keys())
+    try:
+        current_rows = odoo_execute_kw_with_config(
+            config,
+            "purchase.order.line",
+            "search_read",
+            [[("id", "in", ids)]],
+            {"fields": ["id", "price_unit", "name"]},
+        ) or []
+    except Exception as exc:  # noqa: BLE001 — RPC Odoo
+        warnings.append(f"Sobreescribir precio OC: no se pudo leer líneas PO ({exc})")
+        return updates, warnings
+
+    current_by_id = {int(r["id"]): r for r in current_rows if r.get("id") is not None}
+    for po_line_id, new_price in wanted.items():
+        cur = current_by_id.get(po_line_id)
+        if not cur:
+            warnings.append(
+                f"Sobreescribir precio OC: línea PO {po_line_id} no existe; se omite"
+            )
+            continue
+        old_price = _parse_amount_loose(cur.get("price_unit")) or 0.0
+        if not _floats_differ(old_price, new_price, tolerance):
+            continue
+        try:
+            odoo_execute_kw_with_config(
+                config,
+                "purchase.order.line",
+                "write",
+                [[po_line_id], {"price_unit": new_price}],
+            )
+            updates.append(
+                {
+                    "po_line_id": po_line_id,
+                    "line_name": cur.get("name"),
+                    "old_price_unit": old_price,
+                    "new_price_unit": new_price,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — RPC Odoo
+            warnings.append(
+                f"Sobreescribir precio OC línea {po_line_id} "
+                f"({cur.get('name') or '?'}): {exc}"
+            )
     return updates, warnings

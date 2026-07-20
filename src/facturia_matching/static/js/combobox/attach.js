@@ -60,11 +60,27 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
       }
     });
 
+    const clearProductMatchMeta = () => {
+      if (state.rows[r].__product_suggested) {
+        state.rows[r].__product_suggested = "";
+        root.classList.remove("combobox-suggested");
+      }
+      // UM matcheada pertenece al producto anterior; sin limpiar, el import
+      // podría escribir un product_uom_id de otra categoría y fallar en Odoo.
+      if (state.rows[r].__um_empresa_id) {
+        state.rows[r].__um_empresa_id = "";
+        state.rows[r].__um_empresa = "";
+        state.rows[r].__um_factor = "";
+        state.rows[r].__um_note = "";
+      }
+    };
+
     input.addEventListener("blur", () => {
       window.setTimeout(() => {
         if (getOpenCombobox()?.root === root) closeOpenCombobox();
         if (!input.value.trim() && getValue()) {
           state.rows[r][k] = "";
+          if (k === "invoice_line_ids/product_id") clearProductMatchMeta();
           onSelectionChange?.(r, k);
         } else {
           syncDisplayFromValue();
@@ -80,7 +96,10 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
       const btn = e.target.closest(".combobox-item");
       if (!btn) return;
       const v = btn.getAttribute("data-value") ?? "";
+      const changedProduct =
+        k === "invoice_line_ids/product_id" && v !== String(state.rows[r][k] ?? "");
       state.rows[r][k] = v;
+      if (changedProduct) clearProductMatchMeta();
       input.value = findOptionLabel(getOpts(), v) || v;
       listEl.hidden = true;
       root.classList.remove("combobox-open");

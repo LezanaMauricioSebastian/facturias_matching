@@ -1,6 +1,8 @@
 import { toNumberLoose } from "../utils/index.js";
 import {
+  allContentLinesExplicitZeroIva,
   facIvaMonto,
+  facIvaMontoManual,
   lineHasContent,
   lineIvaMonto,
   lineIvaSuggested,
@@ -11,8 +13,9 @@ function firstRow(groupRows) {
   return groupRows?.[0] || {};
 }
 
-function footerIvaEditable(mode) {
-  return mode !== "line";
+/** Pie IVA siempre editable; en modo line el override marca `__fac_iva_monto_manual`. */
+function footerIvaEditableForBreakdown(_mode, _groupRows) {
+  return true;
 }
 
 function sortRateKeys(keys) {
@@ -89,6 +92,10 @@ function ivaRowLabel(rateKey) {
  */
 export function computeIvaBreakdown(groupRows, totals) {
   const mode = totals?.mode || "header";
+  // Exento / No Gravado / No Corresponde: no mostrar 21 % residual del pie FacturIA.
+  if (allContentLinesExplicitZeroIva(groupRows)) {
+    return [];
+  }
   const stored = parseFacIvaMontos(groupRows);
   const suggested = suggestedByRate(groupRows, mode);
   const rateKeys = new Set([...suggested.keys(), ...Object.keys(stored)]);
@@ -102,7 +109,7 @@ export function computeIvaBreakdown(groupRows, totals) {
           label: "IVA",
           amount: headerAmt,
           suggested: headerAmt,
-          editable: footerIvaEditable(mode),
+          editable: footerIvaEditableForBreakdown(mode, groupRows),
         },
       ];
     }
@@ -116,7 +123,8 @@ export function computeIvaBreakdown(groupRows, totals) {
     const sug = suggested.get(rateKey) || 0;
     const storedAmt = toNumberLoose(stored[rateKey]);
     let amount;
-    if (mode === "line") {
+    const footerManual = facIvaMontoManual(groupRows);
+    if (mode === "line" && !footerManual) {
       amount = sug;
     } else if (storedAmt > 0) {
       amount = storedAmt;
@@ -130,13 +138,13 @@ export function computeIvaBreakdown(groupRows, totals) {
       label: ivaRowLabel(rateKey),
       amount,
       suggested: sug,
-      editable: footerIvaEditable(mode),
+      editable: footerIvaEditableForBreakdown(mode, groupRows),
     };
   });
 }
 
 export function syncFacIvaMontosFromLines(groupRows, mode) {
-  if (mode !== "line") return;
+  if (mode !== "line" || facIvaMontoManual(groupRows)) return;
   const suggested = suggestedByRate(groupRows, mode);
   const montos = {};
   for (const [rateKey, amt] of suggested) {

@@ -31,30 +31,61 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertEqual(_canonical_um("unidad(es)"), "Units")
         self.assertEqual(_canonical_um("kgs"), "kg")
 
-    def test_partner_po_search_domain_excludes_unreceived(self):
+    def test_partner_po_search_domain_includes_all_receipt_statuses(self):
         domain = _partner_po_search_domain(42)
         self.assertIn(("partner_id", "child_of", 42), domain)
-        self.assertIn(("receipt_status", "!=", "pending"), domain)
+        self.assertNotIn(("receipt_status", "!=", "pending"), domain)
+
+    def test_receipt_status_label(self):
+        from facturia_matching.odoo.purchase_matching import _receipt_status_label
+
+        self.assertEqual(_receipt_status_label("pending"), "No recepcionada")
+        self.assertEqual(_receipt_status_label("full"), "Recepcionada")
 
     @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
     @patch("facturia_matching.odoo.purchase_matching.odoo_search_read")
     @patch("facturia_matching.odoo.purchase_matching._resolve_po_partner_scope", return_value=42)
-    def test_fetch_partner_po_lines_filters_unreceived_orders(
+    def test_fetch_partner_po_lines_includes_receipt_and_deliver_fields(
         self, _mock_scope, mock_search_read, _mock_odoo
     ):
         from facturia_matching.odoo.purchase_matching import clear_purchase_cache
 
         clear_purchase_cache()
         mock_search_read.side_effect = [
-            [{"id": 10, "name": "P001", "partner_ref": "", "date_order": "2026-01-01"}],
-            [],
+            [
+                {
+                    "id": 10,
+                    "name": "P001",
+                    "partner_ref": "",
+                    "date_order": "2026-01-01",
+                    "receipt_status": "pending",
+                    "picking_type_id": [1, "WH/IN"],
+                    "dest_address_id": [5, "Depósito Central"],
+                }
+            ],
+            [
+                {
+                    "id": 100,
+                    "order_id": [10, "P001"],
+                    "name": "Line",
+                    "product_id": [1, "Prod"],
+                    "product_qty": 1,
+                    "qty_received": 0,
+                    "qty_invoiced": 0,
+                    "price_unit": 10,
+                    "product_uom": [1, "Units"],
+                }
+            ],
         ]
 
-        fetch_partner_po_lines(99)
+        lines = fetch_partner_po_lines(99)
 
         po_call = mock_search_read.call_args_list[0]
         self.assertEqual(po_call.args[0], "purchase.order")
-        self.assertIn(("receipt_status", "!=", "pending"), po_call.args[1])
+        self.assertNotIn(("receipt_status", "!=", "pending"), po_call.args[1])
+        self.assertIn("receipt_status", po_call.args[2])
+        self.assertEqual(lines[0]["receipt_status_label"], "No recepcionada")
+        self.assertEqual(lines[0]["deliver_to"], "Depósito Central")
 
     def test_extract_qty_um_from_description(self):
         qty, um = _extract_qty_um_from_description("6 kg pan líquido")
@@ -165,10 +196,92 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertIn("CON-CHOCLO", out["__oc_match_note"])
         self.assertEqual(row.get("invoice_line_ids/product_id"), "575")
 
+    def test_match_invoice_row_suggests_product_from_pool_without_oc(self):
+        """Sin OC vinculada, pero el proveedor tiene OCs: sugiere producto por fuzzy."""
+        row = {
+            "invoice_line_ids/name": "CHOCL0 MC CAIN X 2 KG.",
+            "__item_codigo": "100967",
+            "invoice_line_ids/quantity": "3",
+            "__um_proveedor": "KG",
+        }
+        pool = [
+            {
+                "line_name": "CON-CHOCLO",
+                "product_qty": 3,
+                "product_id": 575,
+                "order_name": "P06345",
+                "order_id": 1,
+                "line_id": 1,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 12,
+                "product_uom_name": "kg",
+            }
+        ]
+        out = match_invoice_row(row, [], {"by_name": {}, "by_id": {}}, suggest_pool=pool)
+        self.assertEqual(row.get("invoice_line_ids/product_id"), "575")
+        self.assertTrue(out.get("__product_suggested"))
+        self.assertFalse(out.get("__oc_line_id"))
+        self.assertIn("sugerido", out["__oc_match_note"].lower())
+
+    def test_match_invoice_row_no_suggestion_below_threshold(self):
+        """Sin OC y sin match suficiente: no se sugiere producto."""
+        row = {
+            "invoice_line_ids/name": "TORNILLO HEXAGONAL 8MM",
+            "__item_codigo": "",
+            "invoice_line_ids/quantity": "2",
+            "__um_proveedor": "UN",
+        }
+        pool = [
+            {
+                "line_name": "CON-CHOCLO",
+                "product_qty": 99,
+                "product_id": 575,
+                "order_name": "P1",
+                "order_id": 1,
+                "line_id": 1,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 12,
+                "product_uom_name": "kg",
+            }
+        ]
+        out = match_invoice_row(row, [], {"by_name": {}, "by_id": {}}, suggest_pool=pool)
+        self.assertEqual(row.get("invoice_line_ids/product_id", ""), "")
+        self.assertFalse(out.get("__product_suggested"))
+        self.assertIn("Sin", out["__oc_match_note"])
+
     def test_convert_qty_same_category(self):
         from_uom = {"id": 13, "factor": 1000.0, "category_id": [2, "Weight"]}
         to_uom = {"id": 12, "factor": 1.0, "category_id": [2, "Weight"]}
         self.assertAlmostEqual(convert_qty(1000.0, from_uom, to_uom), 1.0)
+
+    def test_apply_uom_scaling_sets_empresa_id(self):
+        from facturia_matching.odoo.purchase_matching import _apply_uom_scaling
+
+        catalog = {
+            "by_id": {
+                12: {"id": 12, "name": "kg", "factor": 1.0, "category_id": [2, "Weight"]},
+                13: {"id": 13, "name": "g", "factor": 1000.0, "category_id": [2, "Weight"]},
+            },
+            "by_name": {
+                "KG": {"id": 12, "name": "kg", "factor": 1.0, "category_id": [2, "Weight"]},
+                "G": {"id": 13, "name": "g", "factor": 1000.0, "category_id": [2, "Weight"]},
+            },
+        }
+        out = _apply_uom_scaling(
+            {},
+            invoice_qty=1000.0,
+            invoice_um_raw="g",
+            po_uom_id=12,
+            po_uom_name="kg",
+            uom_catalog=catalog,
+        )
+        self.assertEqual(out["um_empresa_id"], "12")
+        self.assertEqual(out["um_note"], "Re-escalado")
+        self.assertEqual(out["qty_escalada"], "1")
 
     def test_match_invoice_row_without_po(self):
         row = {
@@ -482,6 +595,224 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertTrue(summary["enabled"])
         self.assertFalse(summary["show_purchase_columns"])
         self.assertFalse(has_any_oc_candidates(summary["oc_candidates_by_comprobante"]))
+        self.assertFalse(
+            summary["oc_provider_has_ocs_by_comprobante"].get("0", False)
+        )
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_enrich_flags_provider_has_ocs_per_comprobante(self, mock_uom, mock_fetch, _mock_odoo):
+        """Flag por comprobante: True si el proveedor tiene OCs; False si no."""
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+
+        def _fetch(partner_id, **_kwargs):
+            if partner_id == 42:
+                return [
+                    {
+                        "line_id": 1,
+                        "order_id": 10,
+                        "order_name": "P001",
+                        "partner_ref": "",
+                        "line_name": "ITEM",
+                        "product_qty": 1,
+                        "qty_received": 0,
+                        "qty_invoiced": 0,
+                        "product_id": 1,
+                        "product_uom_id": None,
+                        "product_uom_name": "Units",
+                    }
+                ]
+            return []
+
+        mock_fetch.side_effect = _fetch
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "invoice_line_ids/name": "ITEM",
+                "invoice_line_ids/quantity": "1",
+            },
+            {
+                "__comprobante_idx": 1,
+                "partner_id": "77",
+                "invoice_line_ids/name": "OTRO",
+                "invoice_line_ids/quantity": "1",
+            },
+        ]
+        summary = enrich_rows_with_purchase_data(rows, fetch_candidates=False)
+        flags = summary["oc_provider_has_ocs_by_comprobante"]
+        self.assertTrue(flags.get("0"))
+        self.assertFalse(flags.get("1"))
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_enrich_without_candidates_does_not_auto_pick_oc(self, mock_uom, mock_fetch, _mock_odoo):
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        mock_fetch.return_value = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P001",
+                "partner_ref": "",
+                "line_name": "ITEM",
+                "product_qty": 1,
+                "qty_received": 1,
+                "qty_invoiced": 0,
+                "product_id": 1,
+                "product_uom_id": None,
+                "product_uom_name": "Units",
+            }
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "invoice_line_ids/name": "ITEM",
+                "invoice_line_ids/quantity": "1",
+            }
+        ]
+        summary = enrich_rows_with_purchase_data(rows, fetch_candidates=False)
+        self.assertEqual(summary["oc_candidates_by_comprobante"].get("0"), [])
+        self.assertNotIn("0", summary.get("selected_oc_by_comprobante", {}))
+        self.assertFalse(rows[0].get("__oc_line_id"))
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_search_oc_candidates_for_comprobante(self, mock_uom, mock_fetch, _mock_odoo):
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        mock_fetch.return_value = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P001",
+                "partner_ref": "",
+                "date_order": "2026-01-01",
+                "receipt_status": "pending",
+                "receipt_status_label": "No recepcionada",
+                "deliver_to": "Depósito",
+                "line_name": "ITEM",
+                "product_qty": 1,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_id": 1,
+                "product_uom_id": None,
+                "product_uom_name": "Units",
+            }
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "invoice_line_ids/name": "ITEM",
+                "invoice_line_ids/quantity": "1",
+            }
+        ]
+        from facturia_matching.odoo.purchase_matching import search_oc_candidates_for_comprobante
+
+        summary = search_oc_candidates_for_comprobante(rows, 0)
+        self.assertTrue(summary["oc_searched_by_comprobante"]["0"])
+        self.assertEqual(len(summary["oc_candidates_by_comprobante"]["0"]), 1)
+        self.assertEqual(summary["oc_candidates_by_comprobante"]["0"][0]["receipt_status_label"], "No recepcionada")
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_score_oc_candidates_lists_ocs_without_content_rows(self, mock_uom, mock_fetch, _mock_odoo):
+        """Solo encabezado / sin líneas de producto: igual listar OCs del proveedor."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P06552",
+                "partner_ref": "",
+                "date_order": "2026-01-01",
+                "receipt_status": "partial",
+                "receipt_status_label": "Parcialmente recepcionada",
+                "deliver_to": "",
+                "line_name": "ITEM",
+                "product_qty": 1,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "price_unit": 10,
+                "product_uom_name": "Units",
+            }
+        ]
+        rows = [{"__comprobante_idx": 0, "partner_id": "42", "__solo_encabezado": True}]
+        cands = score_oc_candidates(rows, po_lines)
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["order_name"], "P06552")
+        self.assertEqual(cands[0]["basket_score"], 0.0)
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines", return_value=[])
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_enrich_keeps_saved_oc_when_po_fetch_empty(self, mock_uom, mock_fetch, _mock_odoo):
+        """Si no hay líneas PO (fetch vacío), no borrar la OC guardada."""
+        from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data, clear_purchase_cache
+
+        clear_purchase_cache()
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "6552",
+                "__selected_oc_name": "P06552",
+                "invoice_line_ids/name": "ITEM",
+                "invoice_line_ids/quantity": "1",
+            }
+        ]
+        summary = enrich_rows_with_purchase_data(rows, fetch_candidates=False)
+        self.assertEqual(summary["selected_oc_by_comprobante"].get("0"), 6552)
+        self.assertEqual(rows[0]["__selected_oc_name"], "P06552")
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines", return_value=[])
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_apply_oc_selection_sin_oc_clears_match(self, mock_uom, mock_fetch, _mock_odoo):
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        mock_fetch.return_value = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P001",
+                "partner_ref": "",
+                "date_order": "2026-01-01",
+                "receipt_status": "pending",
+                "receipt_status_label": "No recepcionada",
+                "deliver_to": "",
+                "line_name": "ITEM",
+                "product_qty": 1,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "price_unit": 1,
+                "product_id": 5,
+                "product_uom_name": "Units",
+            }
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "10",
+                "__oc_line_id": "1",
+                "invoice_line_ids/name": "ITEM",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/product_id": "5",
+            }
+        ]
+        summary = apply_oc_selection(rows, 0, 0)
+        self.assertNotIn("0", summary.get("selected_oc_by_comprobante", {}))
+        self.assertEqual(rows[0]["__selected_oc_order_id"], "")
+        self.assertEqual(rows[0]["__oc_line_id"], "")
+        # El proveedor sigue teniendo OCs: el botón/modal deben seguir disponibles.
+        self.assertTrue(summary["oc_searched_by_comprobante"].get("0"))
+        self.assertTrue(summary["oc_provider_has_ocs_by_comprobante"].get("0"))
+        self.assertEqual(len(summary["oc_candidates_by_comprobante"].get("0") or []), 1)
 
 
 if __name__ == "__main__":

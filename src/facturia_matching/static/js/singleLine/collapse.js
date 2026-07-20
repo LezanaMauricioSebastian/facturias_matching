@@ -6,6 +6,46 @@ import { formatNumberEsAR, normalizeNumericValue, toNumberLoose } from "../utils
 import { ensureOtroImpuestoColumns } from "../rows/index.js";
 import { groupBounds } from "./groups.js";
 
+function applyFacPercepcionesToRow(row, state = null) {
+  const percs = row.__fac_percepciones;
+  if (!Array.isArray(percs)) return;
+  for (const p of percs) {
+    const mk = p?.ui_monto_key;
+    const monto = p?.monto;
+    if (!mk || monto == null || String(monto).trim() === "") continue;
+    let n = 1;
+    const m = /^otros_impuestos_(\d+)_monto$/.exec(mk);
+    if (m) n = parseInt(m[1], 10);
+    else if (mk !== "otros_impuestos_monto") continue;
+    if (state) ensureOtroImpuestoColumns(state, n);
+    const prevMonto = row[mk];
+    if (!String(prevMonto ?? "").trim()) {
+      row[mk] = normalizeNumericValue(String(monto), mk);
+    }
+  }
+}
+
+/** Copia montos del encabezado FacturIA a la fila (idempotente). */
+export function syncSoloEncabezadoMontos(row, state = null) {
+  if (state) ensureOtroImpuestoColumns(state, 1);
+  const ivaFromFac = String(row.__fac_iva_monto ?? "").trim();
+  if (ivaFromFac) {
+    const normalized = normalizeNumericValue(ivaFromFac, "iva_monto");
+    row.__fac_iva_monto = normalized;
+    if (!String(row.iva_monto ?? "").trim()) {
+      row.iva_monto = normalized;
+      row.__iva_monto_manual = true;
+    }
+  }
+  applyFacPercepcionesToRow(row, state);
+}
+
+/** Copia montos del encabezado FacturIA a la fila y activa Solo encabezado. */
+export function prepareSoloEncabezadoRow(row, state = null) {
+  syncSoloEncabezadoMontos(row, state);
+  row.__solo_encabezado = true;
+}
+
 /**
  * Colapsa el comprobante que empieza en `rIdx` (debe ser la primera fila del grupo).
  * @param {object|null} state — opcional; si se pasa, crea columnas de otros impuestos extra
@@ -38,6 +78,7 @@ export function collapseGroupAtRow(rows, rIdx, state = null) {
   delete first["__oc_order_id"];
   delete first["__selected_oc_order_id"];
   delete first["__selected_oc_name"];
+  delete first["__overwrite_oc_price"];
   delete first["__oc_line_name"];
   delete first["__oc_match_score"];
   delete first["__qty_pedido"];
@@ -54,26 +95,8 @@ export function collapseGroupAtRow(rows, rIdx, state = null) {
   if (ivaFromFac) {
     first.__fac_iva_monto = normalizeNumericValue(ivaFromFac, "iva_monto");
   }
-  first.iva_monto = "";
-  delete first.__iva_monto_manual;
 
-  const percs = first.__fac_percepciones;
-  if (Array.isArray(percs)) {
-    for (const p of percs) {
-      const mk = p?.ui_monto_key;
-      const monto = p?.monto;
-      if (!mk || monto == null || String(monto).trim() === "") continue;
-      let n = 1;
-      const m = /^otros_impuestos_(\d+)_monto$/.exec(mk);
-      if (m) n = parseInt(m[1], 10);
-      else if (mk !== "otros_impuestos_monto") continue;
-      if (state) ensureOtroImpuestoColumns(state, n);
-      const prevMonto = first[mk];
-      if (!String(prevMonto ?? "").trim()) {
-        first[mk] = normalizeNumericValue(String(monto), mk);
-      }
-    }
-  }
+  prepareSoloEncabezadoRow(first, state);
 
   const removed = e - s - 1;
   if (removed > 0) rows.splice(s + 1, removed);

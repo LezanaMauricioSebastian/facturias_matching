@@ -10,6 +10,7 @@ from facturia_matching.core.amounts import (
     fac_header_amount_str,
     fac_iva_montos_dict,
     fac_iva_monto_str,
+    format_fac_amount_for_ui,
     normalize_iva_pct_value,
     resolve_fac_item_qty_price,
 )
@@ -211,8 +212,8 @@ def parse_process_json(
                 "invoice_line_ids/product_id": "",
                 "journal_id": "" if mismo_comprobante else journal_id,
                 "invoice_line_ids/account_id": "" if mismo_comprobante else account_id,
-                "invoice_line_ids/quantity": "" if qty is None else str(qty),
-                "invoice_line_ids/price_unit": "" if price is None else str(price),
+                "invoice_line_ids/quantity": "" if qty is None else format_fac_amount_for_ui(qty),
+                "invoice_line_ids/price_unit": "" if price is None else format_fac_amount_for_ui(price),
                 "iva_pct": iva_str,
                 "iva_monto": "",
                 "otros_impuestos": otros_imp_n,
@@ -221,7 +222,11 @@ def parse_process_json(
                 "CUIT": prov_cuit,
                 "Nombre de producto": desc,
                 "__item_codigo": item_codigo,
-                "__fac_item_cantidad": "" if (it or {}).get("cantidad") is None else str((it or {}).get("cantidad")),
+                "__fac_item_cantidad": (
+                    ""
+                    if (it or {}).get("cantidad") is None
+                    else format_fac_amount_for_ui((it or {}).get("cantidad"))
+                ),
                 "__um_proveedor": item_um,
                 "_match_score_proveedor": score,
                 "__comprobante_idx": comprobante_idx,
@@ -244,7 +249,7 @@ def parse_process_json(
 
     purchase_summary: Dict[str, Any] = {"enabled": False}
     if odoo_ok and out_rows:
-        purchase_summary = enrich_rows_with_purchase_data(out_rows)
+        purchase_summary = enrich_rows_with_purchase_data(out_rows, fetch_candidates=False)
 
     sanitize_inflated_line_amounts(out_rows)
 

@@ -147,6 +147,40 @@ class TestComprobanteTax(unittest.TestCase):
         self.assertEqual(rows[1]["invoice_line_ids/quantity"], "1")
         self.assertAlmostEqual(line_base(rows[1]), 12628.72)
 
+    def test_sanitize_keeps_fac_us_decimals_as_liters(self):
+        """Proceso 196: 15.175 L × 1457.256 no debe colapsar a 1 × 1,46."""
+        from facturia_matching.core.amounts import format_fac_amount_for_ui, parse_amount_loose
+
+        rows = [
+            {
+                "invoice_line_ids/quantity": format_fac_amount_for_ui(15.175),
+                "invoice_line_ids/price_unit": format_fac_amount_for_ui(1457.256),
+                "__fac_subtotal": "22113.86",
+                "__comprobante_idx": 0,
+            },
+            {
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": format_fac_amount_for_ui(-0.19),
+                "__comprobante_idx": 0,
+            },
+        ]
+        self.assertEqual(sanitize_inflated_line_amounts(rows), 0)
+        self.assertAlmostEqual(parse_amount_loose(rows[0]["invoice_line_ids/quantity"]), 15.175)
+        self.assertAlmostEqual(parse_amount_loose(rows[0]["invoice_line_ids/price_unit"]), 1457.256)
+
+        # Defensa: precio US crudo con >3 dígitos enteros tampoco se infla.
+        rows_raw = [
+            {
+                "invoice_line_ids/quantity": "15,175",
+                "invoice_line_ids/price_unit": "1457.256",
+                "__fac_subtotal": "22113.86",
+                "__comprobante_idx": 0,
+            }
+        ]
+        self.assertEqual(sanitize_inflated_line_amounts(rows_raw), 0)
+        self.assertEqual(rows_raw[0]["invoice_line_ids/price_unit"], "1457.256")
+        self.assertAlmostEqual(line_base(rows_raw[0]), 15.175 * 1457.256, places=2)
+
     def test_fac_iva_montos_from_json(self):
         rows = [
             {
@@ -425,6 +459,36 @@ class TestComprobanteTax(unittest.TestCase):
         self.assertEqual(mode, "header")
         self.assertAlmostEqual(totals["base_odoo"], 64242.0, places=2)
         self.assertAlmostEqual(totals["total_odoo"], 98597.55, places=2)
+
+    def test_line_mode_footer_iva_manual_override(self):
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "__fac_subtotal": "100",
+                "__fac_iva_monto": "21",
+                "__fac_iva_montos": '{"21": "21"}',
+                "__fac_iva_monto_manual": True,
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "100",
+                "iva_pct": "21",
+                "iva_monto": "21",
+            }
+        ]
+        mode = classify_comprobante_tax_mode(rows)
+        self.assertEqual(mode, "line")
+        breakdown = compute_iva_breakdown(rows, mode=mode)
+        self.assertTrue(breakdown[0]["editable"])
+        self.assertAlmostEqual(breakdown[0]["amount"], 21.0)
+
+        rows[0]["__fac_iva_monto"] = "25"
+        rows[0]["__fac_iva_montos"] = '{"21": "25"}'
+        breakdown = compute_iva_breakdown(rows, mode=mode)
+        self.assertAlmostEqual(breakdown[0]["amount"], 25.0)
+        totals = compute_comprobante_totals(rows)
+        self.assertAlmostEqual(totals["iva_odoo"], 25.0)
+        before = rows[0]["__fac_iva_montos"]
+        reconcile_fac_iva_for_import(rows)
+        self.assertEqual(rows[0]["__fac_iva_montos"], before)
 
 
 if __name__ == "__main__":

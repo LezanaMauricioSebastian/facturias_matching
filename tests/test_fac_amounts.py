@@ -32,6 +32,35 @@ class TestFacAmounts(unittest.TestCase):
         self.assertAlmostEqual(parse_amount_loose("350,00"), 350.0)
         self.assertAlmostEqual(parse_amount_loose("350.00"), 350.0)
 
+    def test_parse_amount_loose_us_decimal_vs_thousands(self):
+        from facturia_matching.core.amounts import parse_amount_loose
+
+        # Decimal US con parte entera >3 dígitos (FacturIA): no colapsar como miles.
+        self.assertAlmostEqual(parse_amount_loose("1457.256"), 1457.256)
+        # Miles es-AR siguen colapsando.
+        self.assertAlmostEqual(parse_amount_loose("45.000"), 45000.0)
+        self.assertAlmostEqual(parse_amount_loose("1.657.755"), 1657755.0)
+        self.assertAlmostEqual(parse_amount_loose("1.234"), 1234.0)
+        # Con coma decimal (UI / ingest FacturIA) no hay ambigüedad.
+        self.assertAlmostEqual(parse_amount_loose("15,175"), 15.175)
+        self.assertAlmostEqual(parse_amount_loose("1457,256"), 1457.256)
+
+    def test_format_fac_amount_for_ui_uses_comma_decimal(self):
+        from facturia_matching.core.amounts import format_fac_amount_for_ui
+
+        self.assertEqual(format_fac_amount_for_ui(15.175), "15,175")
+        self.assertEqual(format_fac_amount_for_ui(1457.256), "1457,256")
+        self.assertEqual(format_fac_amount_for_ui(-0.19), "-0,19")
+        self.assertEqual(format_fac_amount_for_ui("15,175"), "15,175")
+
+    def test_resolve_fac_item_formats_for_ui(self):
+        qty, price = resolve_fac_item_qty_price(
+            {"cantidad": 15.175, "precio_unitario": 1457.256, "subtotal_sin_iva": 22113.86}
+        )
+        self.assertEqual(qty, "15,175")
+        self.assertEqual(price, "1457,256")
+        self.assertAlmostEqual(parse_amount(price.replace(",", ".")), 1457.256)
+
     def test_fac_iva_monto_str_sums_rates(self):
         self.assertEqual(fac_iva_monto_str(FAC_216), "57255.38")
 

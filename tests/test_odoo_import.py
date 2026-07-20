@@ -30,6 +30,8 @@ from facturia_matching.odoo.import_ import (
     plan_tax_line_amount_overwrites,
     propagate_invoice_headers,
     sanitize_group_purchase_lines,
+    apply_purchase_order_price_overwrites,
+    group_wants_overwrite_oc_price,
     _dedupe_group_oc_line_ids,
     _prepare_rows_for_import,
     validate_rows_for_import,
@@ -580,6 +582,102 @@ class TestOdooImport(unittest.TestCase):
         )
         self.assertNotIn("purchase_line_id", vals)
 
+    def test_build_line_command_includes_matched_product_uom(self):
+        _cmd, _zero, vals = _build_line_command(
+            {
+                "invoice_line_ids/name": "Item UM",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "100",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/product_id": "575",
+                "__um_empresa_id": "12",
+            }
+        )
+        self.assertEqual(vals["product_uom_id"], 12)
+        self.assertEqual(vals["product_id"], 575)
+
+    def test_plan_product_line_content_updates_product_uom(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Item",
+                "quantity": 2.0,
+                "price_unit": 100.0,
+                "product_id": [575, "X"],
+                "product_uom_id": [1, "Units"],
+                "account_id": [10, "A"],
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "100",
+                "invoice_line_ids/product_id": "575",
+                "invoice_line_ids/account_id": "10",
+                "__um_empresa_id": "12",
+            }
+        ]
+        updates, warnings = plan_product_line_content_updates(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["write_vals"]["product_uom_id"], 12)
+
+    def test_plan_product_price_quantity_reapply_restores_uom(self):
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Item",
+                "quantity": 2.0,
+                "price_unit": 150.0,
+                "product_id": [575, "X"],
+                "product_uom_id": [1, "Units"],
+                "purchase_line_id": [456, "PO/1"],
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "invoice_line_ids/product_id": "575",
+                "__oc_line_id": "456",
+                "__um_empresa_id": "12",
+            }
+        ]
+        updates, warnings = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["write_vals"], {"product_uom_id": 12})
+
+    def test_uom_not_written_without_product(self):
+        """UM huérfana (producto borrado por el usuario) no debe escribirse en Odoo."""
+        _cmd, _zero, vals = _build_line_command(
+            {
+                "invoice_line_ids/name": "Item sin producto",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "100",
+                "__um_empresa_id": "12",
+            }
+        )
+        self.assertNotIn("product_uom_id", vals)
+
+        product_lines = [
+            {"id": 10, "name": "Item", "quantity": 2.0, "price_unit": 100.0, "product_uom_id": [1, "Units"]}
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "100",
+                "__um_empresa_id": "12",
+            }
+        ]
+        updates, _ = plan_product_line_content_updates(product_lines, rows)
+        self.assertEqual(updates, [])
+        updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(updates, [])
+
     def test_build_move_vals_sets_invoice_origin_from_selected_oc(self):
         group = [
             {
@@ -938,6 +1036,111 @@ class TestOdooImport(unittest.TestCase):
         ]
         updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
         self.assertEqual(updates, [])
+
+    def test_group_wants_overwrite_oc_price(self):
+        self.assertFalse(group_wants_overwrite_oc_price([{"invoice_line_ids/name": "A"}]))
+        self.assertTrue(
+            group_wants_overwrite_oc_price(
+                [{"invoice_line_ids/name": "A", "__overwrite_oc_price": "1"}]
+            )
+        )
+        self.assertTrue(
+            group_wants_overwrite_oc_price(
+                [{"invoice_line_ids/name": "A", "__overwrite_oc_price": True}]
+            )
+        )
+
+    @patch("facturia_matching.odoo.import_.purchase._move_line_supports_purchase_link", return_value=True)
+    @patch("facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config")
+    def test_apply_purchase_order_price_overwrites_writes_po_line(self, mock_rpc, _mock_ok):
+        def rpc(_config, model, method, args, kwargs=None):
+            if model == "purchase.order.line" and method == "search_read":
+                return [{"id": 456, "price_unit": 100.0, "name": "PO line"}]
+            if model == "purchase.order.line" and method == "write":
+                return True
+            raise AssertionError(f"unexpected {model}.{method}")
+
+        mock_rpc.side_effect = rpc
+        group = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "__oc_line_id": "456",
+                "__overwrite_oc_price": "1",
+            }
+        ]
+        updates, warnings = apply_purchase_order_price_overwrites({}, group)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["po_line_id"], 456)
+        self.assertEqual(updates[0]["old_price_unit"], 100.0)
+        self.assertEqual(updates[0]["new_price_unit"], 150.0)
+        write_calls = [
+            c for c in mock_rpc.call_args_list if c.args[2] == "write"
+        ]
+        self.assertEqual(len(write_calls), 1)
+        self.assertEqual(write_calls[0].args[3], [[456], {"price_unit": 150.0}])
+
+    @patch("facturia_matching.odoo.import_.purchase._move_line_supports_purchase_link", return_value=True)
+    @patch("facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config")
+    def test_apply_purchase_order_price_overwrites_skips_without_flag(self, mock_rpc, _mock_ok):
+        group = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "__oc_line_id": "456",
+            }
+        ]
+        updates, warnings = apply_purchase_order_price_overwrites({}, group)
+        self.assertEqual(updates, [])
+        self.assertEqual(warnings, [])
+        mock_rpc.assert_not_called()
+
+    @patch("facturia_matching.odoo.import_.purchase._move_line_supports_purchase_link", return_value=True)
+    @patch("facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config")
+    def test_apply_purchase_order_price_overwrites_skips_unchanged(self, mock_rpc, _mock_ok):
+        mock_rpc.return_value = [{"id": 456, "price_unit": 150.0, "name": "PO line"}]
+        group = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "__oc_line_id": "456",
+                "__overwrite_oc_price": "1",
+            }
+        ]
+        updates, warnings = apply_purchase_order_price_overwrites({}, group)
+        self.assertEqual(updates, [])
+        self.assertEqual(warnings, [])
+        self.assertEqual(mock_rpc.call_count, 1)
+        self.assertEqual(mock_rpc.call_args.args[2], "search_read")
+
+    def test_ui_invoice_price_overwrites_po_price_on_invoice_line(self):
+        """Regresión: precio UI/FacturIA debe quedar en la línea de factura, no el de la OC."""
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Producto Y",
+                "quantity": 5.0,
+                "price_unit": 80.0,
+                "purchase_line_id": [456, "PO/99"],
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Producto Y",
+                "invoice_line_ids/quantity": "5",
+                "invoice_line_ids/price_unit": "123.45",
+                "__oc_line_id": "456",
+            }
+        ]
+        updates, warnings = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["write_vals"]["price_unit"], 123.45)
+        self.assertNotEqual(updates[0]["write_vals"]["price_unit"], 80.0)
 
     @patch("facturia_matching.odoo.import_.move_lines.odoo_execute_kw_with_config")
     def test_batch_write_move_lines_single_rpc(self, mock_rpc):

@@ -11,12 +11,49 @@ from facturia_matching.core.amounts import amount_to_str, parse_amount_loose
 
 _TAX_TOLERANCE = 0.02
 _IVA_NO_CORRESPONDE = re.compile(r"no corresponde", re.I)
+# Etiquetas especiales (no el "0" de modo header FacturIA) que anulan el pie 21 %.
+_EXPLICIT_ZERO_IVA_LABELS = frozenset(
+    {"IVA Exento", "IVA No Gravado", "IVA No Corresponde"}
+)
 
 
 def _normalize(raw: Any) -> str:
     if raw is None:
         return ""
     return " ".join(str(raw).strip().split())
+
+
+def is_explicit_zero_iva_pct(raw: Any) -> bool:
+    """True si Impuesto IVA es Exento / No Gravado / No Corresponde (no el '0' de header)."""
+    label = _normalize(raw)
+    if not label:
+        return False
+    if label in _EXPLICIT_ZERO_IVA_LABELS:
+        return True
+    return bool(_IVA_NO_CORRESPONDE.search(label))
+
+
+def all_content_lines_explicit_zero_iva(group_rows: List[Dict[str, Any]]) -> bool:
+    """Todas las líneas con contenido tienen IVA cero explícito (no encabezado FacturIA vacío)."""
+    content = [r for r in group_rows if isinstance(r, dict) and _line_has_content(r)]
+    if not content:
+        return False
+    return all(is_explicit_zero_iva_pct(r.get("iva_pct")) for r in content)
+
+
+def clear_fac_iva_footer(group_rows: List[Dict[str, Any]]) -> None:
+    """Borra montos IVA del pie (y iva_monto de líneas cero) para no mandar 21 % residual a Odoo."""
+    first = _first_row(group_rows)
+    if first:
+        first.pop("__fac_iva_montos", None)
+        first["__fac_iva_monto"] = ""
+        first.pop("__fac_iva_monto_manual", None)
+    for row in group_rows:
+        if not isinstance(row, dict):
+            continue
+        if is_explicit_zero_iva_pct(row.get("iva_pct")):
+            row["iva_monto"] = ""
+            row.pop("__iva_monto_manual", None)
 
 
 def iva_pct_to_rate(raw: Any) -> float:
@@ -117,6 +154,9 @@ def _explicit_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, floa
 
 def fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
     """Montos IVA por alícuota desde __fac_iva_montos o sugeridos por línea."""
+    # Usuario eligió Exento/No Gravado/No Corresponde: no reutilizar pie FacturIA con 21 %.
+    if all_content_lines_explicit_zero_iva(group_rows):
+        return {}
     explicit = _explicit_fac_iva_montos(group_rows)
     header = fac_iva_monto(group_rows)
     mode = classify_comprobante_tax_mode(group_rows)
@@ -205,20 +245,33 @@ def _line_iva_differs_from_header(group_rows: List[Dict[str, Any]]) -> bool:
     return abs(line_sum - header_iva) > tol
 
 
+def fac_iva_monto_manual(group_rows: List[Dict[str, Any]]) -> bool:
+    return bool(_first_row(group_rows).get("__fac_iva_monto_manual"))
+
+
 def reconcile_fac_iva_for_import(group_rows: List[Dict[str, Any]]) -> None:
     """
     Import Odoo: alinea __fac_iva_monto(s) con iva_monto de filas cuando difieren
     del encabezado (p. ej. usuario editó la columna pero el JSON quedó viejo).
 
     En header/mixed el pie FacturIA es la fuente de verdad para sobreescribir Odoo.
+    En modo line con __fac_iva_monto_manual el pie también manda.
+
+    Si todas las líneas tienen IVA Exento / No Gravado / No Corresponde / 0,
+    limpia el pie para no mandar montos 21 % residuales de FacturIA.
     """
-    mode = classify_comprobante_tax_mode(group_rows)
+    if all_content_lines_explicit_zero_iva(group_rows):
+        clear_fac_iva_footer(group_rows)
+        return
+    if fac_iva_monto_manual(group_rows):
+        return
     line_manual = any(
         isinstance(r, dict) and r.get("__iva_monto_manual") for r in group_rows
     )
     if line_manual:
         _write_fac_iva_montos_from_line_amounts(group_rows)
         return
+    mode = classify_comprobante_tax_mode(group_rows)
     if mode in ("header", "mixed"):
         if _explicit_fac_iva_montos(group_rows) or fac_iva_monto(group_rows):
             return
@@ -231,6 +284,8 @@ def reconcile_fac_iva_for_import(group_rows: List[Dict[str, Any]]) -> None:
 def sync_fac_iva_montos_from_lines(group_rows: List[Dict[str, Any]]) -> None:
     """Alinea __fac_iva_montos con montos por línea (UI / autosave)."""
     if classify_comprobante_tax_mode(group_rows) != "line":
+        return
+    if fac_iva_monto_manual(group_rows):
         return
     _write_fac_iva_montos_from_line_amounts(group_rows)
 
@@ -347,7 +402,8 @@ def compute_iva_breakdown(
                     "label": "IVA",
                     "amount": header_amt,
                     "suggested": header_amt,
-                    "editable": tax_mode != "line",
+                    # Pie siempre editable; en line el override marca __fac_iva_monto_manual.
+                    "editable": True,
                 }
             ]
         return []
@@ -358,7 +414,7 @@ def compute_iva_breakdown(
     for rate_key in sorted(rate_keys, key=lambda k: float(k), reverse=True):
         sug = suggested.get(rate_key, 0.0)
         stored_amt = stored.get(rate_key, 0.0)
-        if tax_mode == "line":
+        if tax_mode == "line" and not fac_iva_monto_manual(group_rows):
             amount = sug
         elif stored_amt > 0:
             amount = stored_amt
@@ -373,7 +429,8 @@ def compute_iva_breakdown(
                 "label": label,
                 "amount": amount,
                 "suggested": sug,
-                "editable": tax_mode != "line",
+                # Pie siempre editable; en line el override marca __fac_iva_monto_manual.
+                "editable": True,
             }
         )
     return rows
@@ -437,7 +494,7 @@ def compute_comprobante_totals(group_rows: List[Dict[str, Any]], mode: Optional[
     otros = sum_otros_impuestos(group_rows)
 
     breakdown = compute_iva_breakdown(group_rows, mode=mode)
-    if mode == "line":
+    if mode == "line" and not fac_iva_monto_manual(group_rows):
         iva_odoo = round(sum_line_iva_montos(group_rows), 2)
     elif breakdown:
         iva_odoo = round(sum(row["amount"] for row in breakdown), 2)

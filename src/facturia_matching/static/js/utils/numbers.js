@@ -18,8 +18,14 @@ export function toNumberLoose(v) {
   const normalized = hasComma
     ? s.replace(/\./g, "").replace(",", ".")
     : (() => {
-        const m = /^([+-]?\d+)\.(\d+)$/.exec(s);
-        if (dotCount === 1 && m && m[2].length !== 3) return s.replace(/,/g, "");
+        // Miles es-AR: 1.234 / 45.000 / 1.657.755.
+        // Decimal US con parte entera >3 dígitos: 1457.256 (no es agrupación válida).
+        const m = /^([+-]?)(\d+)\.(\d+)$/.exec(s);
+        if (dotCount === 1 && m) {
+          if (m[3].length !== 3 || m[2].length > 3) {
+            return `${m[1]}${m[2]}.${m[3]}`;
+          }
+        }
         return s.replace(/\./g, "").replace(/,/g, "");
       })();
   const n = Number(normalized);

@@ -1,7 +1,7 @@
 import { renderSummary, scheduleAutoSave, rematchPurchase } from "../api/index.js";
 import { addOtroImpuesto, removeOtroImpuesto } from "../rows/index.js";
 import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
-import { collapseGroupAtRow } from "../singleLine/index.js";
+import { collapseGroupAtRow, comprobanteHasMultipleLines, prepareSoloEncabezadoRow } from "../singleLine/index.js";
 import { renderOcPickerAfterTable } from "../ocPicker/index.js";
 
 function syncActionButtons(refs, state) {
@@ -45,16 +45,34 @@ export function createHandlers({ state, refs, setStatusBound }) {
       renderNow();
       scheduleAutoSave(state, refs, setStatusBound);
     },
-    onCollapseComprobante: (rIdx) => {
-      const msg =
-        "¿Colapsar este comprobante a una sola línea? Se eliminan las líneas adicionales. " +
-        "Para deshacer, usá Restaurar original.";
-      if (!window.confirm(msg)) return;
-      const res = collapseGroupAtRow(state.rows, rIdx, state);
-      if (!res.changed) return;
+    onToggleSoloEncabezado: (rIdx, checked) => {
+      const row = state.rows[rIdx];
+      if (!row) return;
+      if (checked) {
+        if (comprobanteHasMultipleLines(state.rows, rIdx)) {
+          const msg =
+            "¿Colapsar este comprobante a una sola línea? Se eliminan las líneas adicionales. " +
+            "Para deshacer, usá Restaurar original.";
+          if (!window.confirm(msg)) {
+            renderNow();
+            return;
+          }
+          const res = collapseGroupAtRow(state.rows, rIdx, state);
+          if (!res.changed) {
+            prepareSoloEncabezadoRow(row, state);
+          }
+        } else {
+          prepareSoloEncabezadoRow(row, state);
+        }
+      } else {
+        row.__solo_encabezado = false;
+      }
       renderSummary(refs, state);
       renderNow();
       scheduleAutoSave(state, refs, setStatusBound);
+    },
+    onCollapseComprobante: (rIdx) => {
+      handlers.onToggleSoloEncabezado(rIdx, true);
     },
     onRematchPurchase: (rIdx) => {
       rematchPurchase(state, refs, setStatusBound, handlers, rIdx);

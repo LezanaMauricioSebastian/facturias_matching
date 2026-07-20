@@ -9,6 +9,7 @@ from unittest.mock import patch
 from facturia_matching.core.comprobante_tax import (
     classify_comprobante_tax_mode,
     compute_comprobante_totals,
+    compute_iva_breakdown,
     fac_iva_montos,
     sum_otros_impuestos,
 )
@@ -67,12 +68,14 @@ class TestTaxScenarioFixtures(unittest.TestCase):
         self.assertEqual(sum(amounts.values()), totals["iva_odoo"])
         self.assertAlmostEqual(totals["iva_odoo"], 999.0, places=2)
 
-    def test_proceso4_footer_not_editable_in_breakdown(self):
-        """Regresión: modo line → pie readonly (verificado vía flags del fixture)."""
+    def test_proceso4_footer_editable_in_breakdown(self):
+        """Modo line: pie editable para override del total IVA."""
         scenario = scenario_by_id("proceso4_line_single_rate")
-        self.assertFalse(scenario["footer_editable"])
+        self.assertTrue(scenario["footer_editable"])
         self.assertTrue(scenario["show_iva_column"])
         self.assertEqual(classify_comprobante_tax_mode(scenario["rows"]), "line")
+        breakdown = compute_iva_breakdown(scenario["rows"])
+        self.assertTrue(all(row["editable"] for row in breakdown))
 
     def test_line_manual_iva_uses_row_override(self):
         scenario = scenario_by_id("line_manual_iva_override")

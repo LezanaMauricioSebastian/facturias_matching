@@ -24,7 +24,7 @@ Cada comprobante (grupo de filas con el mismo `__comprobante_idx` o número de d
 
 | Modo | Cuándo | IVA editable en la tabla | IVA editable en el pie |
 |------|--------|--------------------------|-------------------------|
-| **`line`** | Todas las líneas tienen `iva_pct` y los montos por fila cierran con el encabezado FacturIA, o hay `iva_monto` editado en la fila | Sí (columna **IVA monto**) | No (solo lectura, resumen) |
+| **`line`** | Todas las líneas tienen `iva_pct` y los montos por fila cierran con el encabezado FacturIA, o hay `iva_monto` editado en la fila | Sí (columna **IVA monto**) | Sí (override del total; marca `__fac_iva_monto_manual` y el pie manda al import) |
 | **`header`** | El IVA viene del encabezado (`__fac_iva_monto` / `__fac_iva_montos`) y no hay tasas por línea, o una sola línea cuyo % no cierra y el IVA no fue editado manualmente | No (columna oculta o sin uso) | Sí (pie del comprobante) |
 | **`mixed`** | Hay líneas con y sin `iva_pct`, o varias alícuotas con totales que no cierran de forma uniforme | Depende de la fila | Sí (pie por alícuota y/o total) |
 
@@ -42,6 +42,7 @@ Deben mantenerse alineados (tests en `tests/fixtures/tax_scenarios.json`, `tests
 | `iva_pct` | FacturIA / padrón | Tasa de la línea (21, 10,5, …) |
 | `iva_monto` | FacturIA o edición UI | Monto IVA de la línea; en modo `line` es autoritativo |
 | `__iva_monto_manual` | Solo JS (blur de columna) | Marca edición manual; puede no llegar al servidor en autosave |
+| `__fac_iva_monto_manual` | Pie del comprobante (modo `line`) | Marca override del total IVA desde abajo; el pie manda al import |
 | `__fac_iva_monto` | FacturIA / pie UI | Total IVA del comprobante en encabezado |
 | `__fac_iva_montos` | FacturIA / pie UI / sync | JSON `{"21": "57255,38", …}` por alícuota (puede usar formato es-AR) |
 | `__fac_subtotal` | FacturIA | Subtotal del comprobante |
@@ -59,9 +60,10 @@ El pie guarda montos como strings en JSON, a menudo con formato argentino (`"53.
 
 ## Edición en la UI
 
-- **Modo `line`:** editar **IVA monto** arriba → el pie se actualiza en vivo (readonly).
+- **Modo `line`:** se puede editar **IVA monto** en la tabla **o** el total/alícuotas en el **pie**. Si se edita el pie, se marca `__fac_iva_monto_manual` y ese valor manda al import (no se recalcula desde las líneas).
+- **Override desde el pie distinta a la suma por línea:** la clasificación puede pasar de `line` → `header` (o `mixed` si hay varias alícuotas que no cierran). Es **esperado**: el IVA pasa a vivir en el pie, la columna **IVA monto** se oculta y el import usa el pie. Si el monto editado sigue cerrando con las líneas (tolerancia), el modo puede quedarse en `line` con `__fac_iva_monto_manual`.
 - **Modo `header` / `mixed`:** editar IVA en el **pie** del comprobante (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
-- Al cambiar cantidad, precio o IVA en modo `line`, JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
+- Al cambiar cantidad, precio o IVA en modo `line` (sin override de pie), JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
 - Editar el campo **IVA** total (`rateKey === "_total"`) actualiza también el desglose cuando hay una sola alícuota (o asume 21 % si no hay desglose).
 
 ### IVA fijo al cambiar precio o cantidad
@@ -97,7 +99,7 @@ filas UI
             3. contenido de líneas de producto
             4. tax_ids en líneas de producto (ver reglas abajo)
             5. vínculos OC (purchase_line_id + product_id)
-            6. re-aplicar price_unit / quantity en todas las líneas de producto
+            6. re-aplicar price_unit / quantity / product_uom_id en todas las líneas de producto
             7. _ensure_missing_tax_lines_on_move   # crea líneas tax faltantes (IVA + IIBB)
             8. montos en líneas display_type=tax   ← último paso (pisa recálculo Odoo)
 ```
@@ -111,6 +113,7 @@ Antes de importar, alinea metadata de IVA **sin pisar el pie** cuando el usuario
 | Modo `header` / `mixed` con `__fac_iva_montos` o `__fac_iva_monto` en el pie | **No recalcula** desde líneas; el pie manda al import |
 | `iva_monto` editado en fila (`__iva_monto_manual`) | Regenera `__fac_iva_montos` desde las líneas |
 | Modo `line` sin edición manual en pie | Sincroniza el JSON desde `iva_monto` de cada fila |
+| Modo `line` con `__fac_iva_monto_manual` | **No recalcula** desde líneas; el pie manda al import |
 | Encabezado desincronizado (línea editada, JSON viejo) en modo `line` | Corrige `__fac_iva_montos` desde las líneas |
 
 Sin esta distinción, un comprobante `mixed`/`header` con IVA editado en el pie podía perder los montos antes del import: el servidor reemplazaba el JSON por el cálculo por línea y **no había nada que sobreescribir en Odoo**.
@@ -126,7 +129,8 @@ La distinción vive en `iva_pct_requires_line_tax` (`padron/taxes.py`).
 
 ### Pie de comprobante (UI)
 
-- **IVA:** con un solo producto y `IVA Exento` o `IVA No Gravado`, no se muestran filas de IVA en el pie.
+- **IVA:** con un solo producto y `IVA Exento`, `IVA No Gravado` o `IVA No Corresponde`, no se muestran filas de IVA en el pie (y el total no incluye 21 % residual de FacturIA). El `0` de modo header FacturIA sigue mostrando el pie.
+- **Cambio de Impuesto IVA a cero explícito:** limpia `__fac_iva_montos` / `__fac_iva_monto` del comprobante para que el import no mande IVA 21 % junto con Exento/No Gravado/No Corresponde.
 - **Otros impuestos:** la fila del pie está oculta hasta que se selecciona un impuesto en alguna línea (o hay monto > 0). Al seleccionar, aparece con valor inicial `0`.
 
 Si el modo se clasifica mal como `header` cuando el usuario editó `iva_monto` en la tabla, Odoo **quita el IVA** de la línea y el import no tiene dónde escribir el monto → el IVA “desaparece”.
@@ -189,14 +193,22 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite y
 ### Proceso 4 (una línea, 21 %)
 
 - Modo esperado: **`line`**
-- Columna IVA editable; pie readonly
-- `iva_monto` editado debe importarse con ese monto, no con `__fac_iva_monto` viejo
+- Columna IVA editable; pie también editable (override del total)
+- Sin override de pie: `iva_monto` de la línea manda al import
+- Con override de pie (`__fac_iva_monto_manual`): el pie manda al import
 
 ### IVA del pie se mueve al cambiar Precio
 
 - **Síntoma:** el **Monto IVA** de la línea sigue fijo (ej. 72.399,60) pero el **IVA 21 %** del pie pasa a `precio × 21 %` (ej. 777 → 163,17).
 - **Causa:** al cambiar precio, JS recalculaba `iva_monto` de la línea y el desglose del pie caía al sugerido por línea en lugar de respetar el monto fijo de FacturIA (`__fac_iva_monto` / `iva_monto` explícito).
 - **Solución:** deploy con `computeRowTotal` + `computeIvaBreakdown` actualizados; recargar la UI. Tests: `header footer IVA fixed when price changes` en `tests/js/comprobante_tax.test.mjs`.
+
+### IVA Exento / No Gravado / No Corresponde deja IVA 21 % residual
+
+- **Síntoma (testing Mauri 16/7/2026):** se elige **IVA Exento**, **IVA No Gravado** o **IVA No Corresponde** en Impuesto IVA, pero el pie sigue con total que incluye 21 % y Odoo muestra **IVA 21 %** + el impuesto elegido en `$0,00`.
+- **Causa:** `__fac_iva_montos` / `__fac_iva_monto` de FacturIA no se limpiaban al cambiar el selector; el import usaba esos montos y `_ensure_missing_tax_lines_on_move` re-agregaba IVA 21 % en la línea.
+- **Solución:** al elegir IVA cero explícito en todas las líneas del comprobante, se limpia el pie (`clear_fac_iva_footer` / `clearFacIvaFooter`); `fac_iva_montos` / `computeIvaBreakdown` ignoran el JSON residual; `reconcile_fac_iva_for_import` limpia antes del sync. El modo **header** con `iva_pct` vacío sigue usando el pie.
+- Tests: `test_meriti_exento_clears_stale_21_footer_amounts`, `clears stale 21% footer when selecting IVA Exento` en `tests/js/comprobante_tax.test.mjs`.
 
 ### Encabezado desincronizado (línea editada, JSON viejo)
 
@@ -227,7 +239,7 @@ Ejemplo: tres líneas con 21 % y 10,5 %, pero en el pie el usuario fija IVA 21 %
 | **Padrón** | `apply_padron_taxes_to_row` solo llena el slot 1 (`otros_impuestos`); los ids restantes van en `_padron_other_tax_ids` para el import, **sin** crear `otros_impuestos_2..N` en la UI |
 | **Al cargar conversión** | `_strip_empty_extra_otro_impuesto_slots` elimina slots `_2..N` sin monto (legacy) |
 | **Columnas visibles** | `infer_otro_impuesto_indices`: slot 1 puede tener solo etiqueta; slots `_2+` solo si tienen monto > 0 |
-| **Dropdown** | `otros_impuestos_options_from_odoo`: labels canónicos que resuelven en el tenant + **extras dinámicos** (todo `account.tax` purchase no-IVA no cubierto). Alias Aliare: `Perc Gananc` / `Perc IVA` / `IVA Adic 20%`. |
+| **Dropdown** | `otros_impuestos_options_from_odoo`: labels canónicos que resuelven en el tenant + **extras dinámicos** (todo `account.tax` purchase no cubierto, **incluidos IVA**). Alias Aliare: `Perc Gananc` / `Perc IVA` / `IVA Adic 20%`. Nombres EN sin i18n en Odoo (`Internal taxes` / `Other taxes`) se muestran en español (`Impuestos internos` / `Otros impuestos`). |
 
 Si un usuario ve ~19 columnas vacías: conversión guardada con versión antigua → **Restaurar original** o recargar tras deploy.
 
@@ -248,6 +260,12 @@ Montos tipo `350.0,00` (punto decimal + coma es-AR) se normalizan en:
 
 - **JS:** `sanitizeNumericString` (`static/js/utils/numbers.js`)
 - **Python:** `_sanitize_hybrid_amount_string` (`core/amounts.py`)
+
+### Cantidad/precio FacturIA con 3 decimales (ej. litros)
+
+- **Síntoma:** línea con `cantidad=15.175` y `precio_unitario=1457.256` aparece como **1** × **1,46**.
+- **Causa:** `parse_amount_loose` / `toNumberLoose` interpretaban el punto con 3 dígitos como miles (`15.175`→15175, `1457.256`→1457256) y `sanitize_inflated_line_amounts` “corrija” el desborde vs `__fac_subtotal`.
+- **Solución:** al ingerir, `format_fac_amount_for_ui` escribe coma decimal (`15,175` / `1457,256`); el parseo ya no colapsa decimales US cuya parte entera tiene más de 3 dígitos. Recargar el proceso (o **Restaurar original** si había conversión guardada).
 
 ### Precio distinto al de la OC en Odoo
 

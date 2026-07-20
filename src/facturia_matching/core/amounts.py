@@ -109,6 +109,28 @@ def _sanitize_hybrid_amount_string(s: str) -> str:
     return s
 
 
+def _maybe_collapse_dot_thousands(s: str) -> str:
+    """
+    Colapsa miles es-AR (`1.234`, `45.000`, `1.657.755`).
+    No toca decimales US con parte entera >3 dígitos (`1457.256` → se deja igual).
+    """
+    parts = s.split(".")
+    if len(parts) < 2:
+        return s
+    sign = ""
+    first = parts[0]
+    if first.startswith(("+", "-")):
+        sign, first = first[0], first[1:]
+    if not first.isdigit():
+        return s
+    if not all(p.isdigit() and len(p) == 3 for p in parts[1:]):
+        return s
+    # Agrupación de miles inválida (máx. 3 dígitos antes del primer punto).
+    if len(parts) == 2 and len(first) > 3:
+        return s
+    return sign + first + "".join(parts[1:])
+
+
 def parse_amount_loose(raw: Any) -> Optional[float]:
     s = normalize(raw)
     if not s or s.lower() == "nan":
@@ -117,13 +139,39 @@ def parse_amount_loose(raw: Any) -> Optional[float]:
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
     elif "." in s:
-        parts = s.split(".")
-        if len(parts) >= 2 and all(p.isdigit() and len(p) == 3 for p in parts[1:]):
-            s = "".join(parts)
+        s = _maybe_collapse_dot_thousands(s)
     try:
         return float(s)
     except ValueError:
         return None
+
+
+def format_fac_amount_for_ui(raw: Any) -> str:
+    """
+    Número FacturIA → string inequívoco para la UI / parse_amount_loose.
+    Usa coma decimal (sin separador de miles) para que `15.175` no se lea como 15175.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, bool):
+        return str(raw)
+    if isinstance(raw, (int, float)):
+        n = float(raw)
+    else:
+        s = normalize(raw)
+        if not s or s.lower() == "nan":
+            return ""
+        if "," in s:
+            return s
+        n = parse_amount(s)
+        if n is None:
+            return s
+    if abs(n) < 1e-12:
+        return "0"
+    formatted = f"{n:.6f}".rstrip("0").rstrip(".")
+    if not formatted or formatted == "-":
+        return "0"
+    return formatted.replace(".", ",")
 
 
 def format_amount_for_odoo_csv(raw: Any, *, money: bool = False) -> str:
@@ -203,23 +251,27 @@ def resolve_fac_item_qty_price(item: Dict[str, Any]) -> tuple[str, str]:
         line_net = parse_amount(item.get("subtotal"))
 
     if price is not None and price != 0:
-        q_out = "" if qty_raw is None and qty is None else str(qty_raw if qty_raw is not None else qty)
-        if price_raw is not None:
-            p_out = str(price_raw)
-        else:
-            p_out = amount_to_str(price) or str(price)
+        q_out = (
+            ""
+            if qty_raw is None and qty is None
+            else format_fac_amount_for_ui(qty_raw if qty_raw is not None else qty)
+        )
+        p_out = format_fac_amount_for_ui(price_raw if price_raw is not None else price)
         return q_out, p_out
 
     if line_net is not None and line_net != 0:
         if qty is not None and qty != 0:
             unit = line_net / qty
-            q_out = str(qty_raw) if qty_raw is not None else str(qty)
-            return q_out, amount_to_str(unit) or f"{unit:.6f}".rstrip("0").rstrip(".")
-        return "1", amount_to_str(line_net) or str(line_net)
+            q_out = format_fac_amount_for_ui(qty_raw if qty_raw is not None else qty)
+            p_out = amount_to_str(unit) or f"{unit:.6f}".rstrip("0").rstrip(".")
+            return q_out, format_fac_amount_for_ui(p_out)
+        return "1", format_fac_amount_for_ui(amount_to_str(line_net) or line_net)
 
     if qty_raw is not None:
-        return str(qty_raw), "" if price_raw is None else str(price_raw)
-    return "", "" if price_raw is None else str(price_raw)
+        return format_fac_amount_for_ui(qty_raw), (
+            "" if price_raw is None else format_fac_amount_for_ui(price_raw)
+        )
+    return "", "" if price_raw is None else format_fac_amount_for_ui(price_raw)
 
 
 def fac_header_amount_str(fac: Dict[str, Any], candidates: List[str]) -> str:

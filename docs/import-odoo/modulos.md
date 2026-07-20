@@ -62,7 +62,7 @@ Agrupación, validación y construcción de líneas para create.
 
 ## `purchase.py`
 
-Orden de compra: refresh, validación en Odoo, dedupe y plan de vínculos.
+Orden de compra: refresh, validación en Odoo, dedupe, plan de vínculos y sobreescritura opcional del precio de la OC original.
 
 | Función | Rol |
 |---------|-----|
@@ -75,6 +75,8 @@ Orden de compra: refresh, validación en Odoo, dedupe y plan de vínculos.
 | `_dedupe_group_oc_line_ids` | Odoo no permite dos líneas con mismo `purchase_line_id` |
 | `_prepare_rows_for_import` | Orquesta refresh OC → group → reconcile IVA → sanitize → dedupe |
 | `plan_purchase_line_updates` | Diff `purchase_line_id` por orden UI ↔ Odoo |
+| `group_wants_overwrite_oc_price` | Detecta `__overwrite_oc_price` a nivel comprobante |
+| `apply_purchase_order_price_overwrites` | Escribe el precio UI en `purchase.order.line.price_unit`; tolerancia 0.001, errores como warnings |
 
 **Depende de:** `_utils`, `rows`, `core.comprobante_tax.reconcile_fac_iva_for_import`, lazy `purchase_matching`.
 
@@ -124,7 +126,8 @@ Funciones `plan_*`: calculan qué escribir sin ejecutar RPC (salvo que el caller
 | `plan_line_tax_updates` | Diff `tax_ids` por orden de líneas |
 | `plan_product_line_content_updates` | Diff producto, qty, price, name, account |
 | `_pair_product_line_for_row` | Empareja por `purchase_line_id` o índice |
-| `plan_product_price_quantity_reapply` | Re-aplica solo price/qty al **final** del sync |
+| `plan_product_price_quantity_reapply` | Re-aplica price/qty/`product_uom_id` al **final** del sync |
+| `_po_link_write_vals` | Write vals para vincular OC + precio/qty/UM UI |
 | `_po_link_write_vals` | Write vals para vínculo OC + price + qty + product |
 
 **Emparejamiento:** por defecto por **orden** (`sequence,id` en Odoo ↔ filas con contenido en UI). Con OC, `plan_product_price_quantity_reapply` empareja por `purchase_line_id`.
@@ -152,7 +155,7 @@ Sincroniza una factura en borrador ya existente con las filas UI del comprobante
 | `sync_move_taxes_from_group` | Pipeline completo post-create (ver [pipeline.md](pipeline.md)) |
 | `update_move_taxes_from_group` | Alias retrocompatible |
 
-**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → OC → re-aplicar price/qty → montos tax.
+**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → vínculo OC → re-aplicar price/qty en factura → sobreescribir precio de OC si opt-in → montos tax.
 
 ---
 

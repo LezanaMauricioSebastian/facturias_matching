@@ -5,17 +5,28 @@ import {
   listComprobanteGroups,
   resolveTaxModeForRow,
   showIvaMontoColumn,
+  lineBase,
 } from "../comprobanteTax/index.js";
-import { formatMoney, formatNumericForDisplay } from "../utils/index.js";
+import { formatMoney, formatNumericForDisplay, toNumberLoose } from "../utils/index.js";
+import { isSoloEncabezado } from "../singleLine/index.js";
+
+function rowSubtotal(row) {
+  const fac = toNumberLoose(row?.__fac_subtotal);
+  if (fac > 0) return fac;
+  return lineBase(row);
+}
 
 function applyRowTotalToDom(state, rIdx) {
   const r = state.rows[rIdx];
   const rowTotal = state.rowTotals[rIdx];
-  const { totalCells, ivaInputs } = state.domRefs || {};
+  const { totalCells, ivaInputs, subtotalCells } = state.domRefs || {};
   const cell = totalCells?.[rIdx];
   if (cell) cell.textContent = formatMoney(rowTotal);
+  const subCell = subtotalCells?.[rIdx];
+  if (subCell) subCell.textContent = formatMoney(rowSubtotal(r));
   const mode = resolveTaxModeForRow(state, rIdx);
-  if (!r?.__iva_monto_manual && showIvaMontoColumn(mode)) {
+  const solo = isSoloEncabezado(r);
+  if (!r?.__iva_monto_manual && showIvaMontoColumn(mode, solo)) {
     const ivaInp = ivaInputs?.[rIdx];
     if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
   }
@@ -24,15 +35,20 @@ function applyRowTotalToDom(state, rIdx) {
 export function mergeDomRefs(state, containerEl) {
   const totalCells = state.domRefs?.totalCells ? [...state.domRefs.totalCells] : [];
   const ivaInputs = state.domRefs?.ivaInputs ? [...state.domRefs.ivaInputs] : [];
+  const subtotalCells = state.domRefs?.subtotalCells ? [...state.domRefs.subtotalCells] : [];
   containerEl.querySelectorAll("[data-total-r]").forEach((cell) => {
     const r = parseInt(cell.getAttribute("data-total-r"), 10);
     if (Number.isFinite(r)) totalCells[r] = cell;
+  });
+  containerEl.querySelectorAll("[data-subtotal-r]").forEach((cell) => {
+    const r = parseInt(cell.getAttribute("data-subtotal-r"), 10);
+    if (Number.isFinite(r)) subtotalCells[r] = cell;
   });
   containerEl.querySelectorAll('input[data-k="iva_monto"]').forEach((inp) => {
     const r = parseInt(inp.getAttribute("data-r"), 10);
     if (Number.isFinite(r)) ivaInputs[r] = inp;
   });
-  state.domRefs = { totalCells, ivaInputs };
+  state.domRefs = { totalCells, ivaInputs, subtotalCells };
 }
 
 export function updateRowTotals(state, refs, rIdx) {
@@ -69,7 +85,7 @@ export function updateTotals(state, refs) {
     state.rowTotals[i] = rowTotal;
     const cell = totalCells?.[i] ?? tableWrap?.querySelector(`[data-total-r="${i}"]`);
     if (cell) cell.textContent = formatMoney(rowTotal);
-    if (!r.__iva_monto_manual && showIvaMontoColumn(mode)) {
+    if (!r.__iva_monto_manual && showIvaMontoColumn(mode, isSoloEncabezado(r))) {
       const ivaInp = ivaInputs?.[i] ?? tableWrap?.querySelector(`input[data-r="${i}"][data-k="iva_monto"]`);
       if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
     }

@@ -79,6 +79,7 @@ Cada fila es un `dict` con claves estilo export Odoo más metadata `__*`. El imp
 | `l10n_latam_document_number` | Fallback de agrupación |
 | `partner_id`, `journal_id`, `invoice_date` | Cabecera (primera fila o propagada) |
 | `invoice_line_ids/name`, `…/price_unit`, `…/quantity`, `…/account_id` | Línea de producto |
+| `__um_empresa_id` | UM matcheada → `product_uom_id` en Odoo |
 | `__oc_line_id`, `__oc_name`, `__selected_oc_name` | Purchase matching |
 | `iva_pct`, `iva_monto`, `__fac_iva_monto`, `__fac_iva_montos` | IVA (ver [impuestos.md](impuestos.md)) |
 | `otros_impuestos`, `otros_impuestos_monto`, slots `_N` | Percepciones / IIBB |

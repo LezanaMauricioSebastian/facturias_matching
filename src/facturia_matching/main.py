@@ -26,3 +26,14 @@ if JS_DIR.is_dir():
     app.mount("/js", StaticFiles(directory=str(JS_DIR)), name="js")
 
 app.include_router(router)
+
+
+@app.middleware("http")
+async def no_cache_static_modules(request, call_next):
+    """Evita 304 stale de ES modules durante desarrollo/iteración de UI."""
+    response = await call_next(request)
+    path = request.url.path or ""
+    if path.startswith("/js/") or path.startswith("/css/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+

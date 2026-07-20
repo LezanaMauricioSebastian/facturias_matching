@@ -1,7 +1,7 @@
 const URL_PARAM_ALIASES = {
   empresa: ["empresa", "nro_empresa", "nroEmpresa", "company", "cliente"],
   proceso: ["proceso", "nro_proceso", "nroProceso", "process", "process_number"],
-  odoo_profile: ["odoo_profile", "perfil", "tenant"],
+  odoo_profile: ["odoo_profile_test", "perfil", "tenant"],
 };
 
 function hasNonEmptyParam(params, names) {
@@ -38,7 +38,7 @@ export function isEmbedMode() {
   return false;
 }
 
-/** Lee params de FacturIA y Odoo (?odoo_profile=aliare, ?odoo_cloud=1). */
+/** Lee params de FacturIA y Odoo (?odoo_profile_test=aliare, ?odoo_cloud=1). */
 export function getUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const out = { empresa: "", proceso: "", odoo_profile: "", odoo_cloud: "" };
@@ -63,7 +63,7 @@ export function buildApiQuery(params = {}) {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value != null && String(value).trim() !== "") {
-      const apiKey = key === "odoo_profile" ? "perfil" : key;
+      const apiKey = key === "odoo_profile" ? "odoo_profile_test" : key;
       qs.set(apiKey, String(value).trim());
     }
   }
@@ -86,7 +86,7 @@ export function hasExplicitOdooProfileInUrl() {
   return Boolean(isOdooCloudFlag(url.odoo_cloud) || url.odoo_profile);
 }
 
-/** true si el perfil Odoo fue fijado por URL (?odoo_profile / ?odoo_cloud). */
+/** true si el perfil Odoo fue fijado por URL (?odoo_profile_test / ?odoo_cloud). */
 export function hasExplicitOdooProfileOverride(state) {
   if (state?.odooProfileLocked) return true;
   return hasExplicitOdooProfileInUrl();
@@ -94,7 +94,7 @@ export function hasExplicitOdooProfileOverride(state) {
 
 /**
  * Sincroniza perfil Odoo en state.
- * ?odoo_profile=aliare (u odoo_cloud) gana sobre el mapeo ?empresa=N.
+ * ?odoo_profile_test=aliare (u odoo_cloud) gana sobre el mapeo ?empresa=N.
  */
 export function syncOdooProfileState(state, urlParams = {}) {
   const url = { ...getUrlParams(), ...(urlParams || {}) };
@@ -155,15 +155,15 @@ export function activeOdooProfile(state) {
 export function apiOdooQueryParams(state) {
   const profile = activeOdooProfile(state);
   if (hasExplicitOdooProfileOverride(state)) {
-    return { odoo_profile: profile };
+    return { odoo_profile_test: profile };
   }
   const url = getUrlParams();
   const empresa = String(state?.empresa || url.empresa || "").trim();
   if (empresa && resolveOdooProfileFromEmpresa(empresa, state?.empresaOdooProfiles)) {
-    return { odoo_profile: profile };
+    return { odoo_profile_test: profile };
   }
   if (profile === "default") return {};
-  return { odoo_profile: profile };
+  return { odoo_profile_test: profile };
 }
 
 export function apiContextBody(state) {
@@ -171,7 +171,7 @@ export function apiContextBody(state) {
   if (state.empresa) body.empresa = state.empresa;
   const profile = activeOdooProfile(state);
   if (hasExplicitOdooProfileOverride(state) || profile !== "default") {
-    body.odoo_profile = profile;
+    body.odoo_profile_test = profile;
   }
   return body;
 }

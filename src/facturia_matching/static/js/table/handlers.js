@@ -1,6 +1,8 @@
 import { applyProveedorToCuit, propagateAccountDown } from "../rows/index.js";
 import {
+  allContentLinesExplicitZeroIva,
   classifyComprobanteTaxMode,
+  clearFacIvaFooter,
 } from "../comprobanteTax/index.js";
 import {
   isFacturaCTypeId,
@@ -10,6 +12,14 @@ import { groupBounds } from "../singleLine/index.js";
 import { updateRowTotals } from "./totals.js";
 import { DOC_NUM_KEY } from "./constants.js";
 import { comprobanteDigitUiHint } from "../validation/index.js";
+
+function clearStaleFacIvaIfExplicitZero(state, rowIdx) {
+  const [s, e] = groupBounds(state.rows, rowIdx);
+  const groupRows = state.rows.slice(s, e);
+  if (allContentLinesExplicitZeroIva(groupRows)) {
+    clearFacIvaFooter(groupRows);
+  }
+}
 
 export function isTotalAffectingKey(k) {
   return (
@@ -62,7 +72,14 @@ export function handleSelectionChange(state, r, k, ctx) {
   }
   if (k === "partner_id") {
     applyProveedorToCuit(state, r);
-    if (state.purchaseMatching?.enabled && handlers.onRematchPurchase) {
+    // Unifica partner en todas las filas del comprobante (como el backend).
+    const [s, e] = groupBounds(state.rows, r);
+    const partner = String(state.rows[r]?.partner_id ?? "").trim();
+    for (let i = s; i < e; i++) {
+      if (state.rows[i]) state.rows[i].partner_id = partner;
+    }
+    // Siempre rematchear: aparece/desaparece «Buscar OCs» según el nuevo proveedor.
+    if (handlers.onRematchPurchase) {
       state.skipAutoSave = true;
       handlers.onRematchPurchase(r);
       return;
@@ -83,6 +100,7 @@ export function handleSelectionChange(state, r, k, ctx) {
     if (isFacturaC) {
       state.rows[r][ivaKey] = "IVA No Corresponde";
       state.rows[r].__iva_monto_manual = false;
+      clearStaleFacIvaIfExplicitZero(state, r);
       const ivaSel = tableWrap?.querySelector(`select[data-r="${r}"][data-k="${ivaKey}"]`);
       if (ivaSel) ivaSel.value = "IVA No Corresponde";
       handlers.onRerender?.();
@@ -91,6 +109,7 @@ export function handleSelectionChange(state, r, k, ctx) {
   }
   if (k === "iva_pct") {
     state.rows[r].__iva_monto_manual = false;
+    clearStaleFacIvaIfExplicitZero(state, r);
     if (!maybeRerenderOnTaxModeChange(state, r, handlers)) {
       handlers.onUpdateComprobanteFooters?.();
     }

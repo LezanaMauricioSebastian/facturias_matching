@@ -33,8 +33,8 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
 | `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie; en `header` con una alícuota usa `__fac_iva_monto` aunque el precio de línea no cierre con el %); `sanitize_inflated_line_amounts`; **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS** (`ivaBreakdown.js`, `rows/totals.js`). |
-| `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); `fac_header_amount_str`, percepciones, qty/price. |
-| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: labels canónicos que resuelven + extras dinámicos (purchase no-IVA del tenant). |
+| `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); **`format_fac_amount_for_ui`** (coma decimal sin miles, evita que `15.175` se lea como 15175); `fac_header_amount_str`, percepciones, qty/price. |
+| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: labels canónicos que resuelven + extras dinámicos (purchase del tenant, **incl. IVA**). |
 | `constants.py` | `OUTPUT_HEADERS`, headers CSV, columnas purchase, `IVA_OPTIONS`, `append_purchase_columns`. |
 | `__init__.py` | Re-exports si aplica. |
 
@@ -61,7 +61,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match líneas factura ↔ PO. `fetch_partner_po_lines` excluye OCs con `receipt_status=pending` (Odoo «No recibido»). |
+| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**: fuzzy match factura ↔ PO. Candidatos bajo demanda (también sin líneas de producto), OCs no recepcionadas, conservar selección ante fetch vacío, Sin OC mantiene candidatos y rematch dinámico al cambiar proveedor. |
 | `__init__.py` | Marcador. |
 
 ---

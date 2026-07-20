@@ -21,7 +21,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 
 | Archivo | Qué cubre |
 |---------|-----------|
-| `test_fac_amounts.py` | `core/amounts.py` — parseo montos FacturIA, híbridos `350.0,00` |
+| `test_fac_amounts.py` | `core/amounts.py` — parseo montos FacturIA, híbridos `350.0,00`, decimales US vs miles, `format_fac_amount_for_ui` |
 | `test_comprobante_tax.py` | `core/comprobante_tax.py` — modos, totales, JSON es-AR en `__fac_iva_montos` |
 | `test_tax_pipeline.py` | Pipeline fiscal end-to-end en Python |
 | `test_iva_tax_resolve.py` | Resolución IVA → tax id; remapeo padrón Dinner → Aliare |
@@ -30,10 +30,10 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
-| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB en primera línea, montos tax tras reconcile, re-aplicar precio/cantidad tras vínculo OC. Ver [import-odoo/testing.md](import-odoo/testing.md). |
-| `test_purchase_matching.py` | Matching OC, UM, fuzzy líneas; filtro `receipt_status != pending` |
+| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB, reapply de precio/cantidad y sobreescritura opcional del precio en la OC. Ver [import-odoo/testing.md](import-odoo/testing.md). |
+| `test_purchase_matching.py` | Matching OC, UM, fuzzy; búsqueda bajo demanda; facturas sin líneas; conservar OC ante fetch vacío; Sin OC mantiene selector; rematch por proveedor |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
-| `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo (filtro + extras dinámicos purchase no-IVA; alias Perc Gananc/IVA) |
+| `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo (filtro + extras dinámicos purchase incl. IVA; alias Perc Gananc/IVA) |
 | `test_db_resolve.py` / `test_infra_db_resolve.py` | Resolución nombre DB Postgres/MySQL |
 | `test_routes_odoo_cloud.py` | Rutas con perfil sudata / odoo_cloud |
 | `test_rubro_profile.py` | Columnas rubro según perfil |
@@ -93,6 +93,7 @@ Uso típico de diagnóstico cuando el matching falla en un proveedor o rubro.
 | Cambiaste… | Agregar/actualizar |
 |------------|-------------------|
 | Fórmula IVA | `tax_scenarios.json` + test JS (`comprobante_tax.test.mjs`, incl. `header footer IVA fixed when price changes`) + `test_comprobante_tax.py` + `test_js_python_parity.py` |
+| Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, columna Subtotal, collapse) |
 | Nueva columna UI/CSV | `test` de `constants` o snapshot headers en export |
 | Import Odoo | `test_odoo_import.py` con filas mínimas agrupadas |
 | Matching OC | `test_purchase_matching.py` |

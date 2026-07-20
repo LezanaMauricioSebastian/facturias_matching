@@ -7,6 +7,7 @@ import {
 import { formatMoney, findOptionLabel, escapeHtml } from "../utils/index.js";
 import { captureTableUiState, restoreTableUiState } from "./uiState.js";
 import { renderFooterHtml, attachComprobanteFooterHandlers, updateComprobanteFooters } from "./footer.js";
+import { renderOcHeaderControls } from "../ocPicker/render.js";
 
 function comprobanteTitle(state, groupRows, compIdx) {
   const first = groupRows[0] || {};
@@ -24,7 +25,7 @@ export function renderComprobantes(state, refs, handlers) {
   if (!state.columns.length) {
     wrap.innerHTML = "";
     state.rowTotals = [];
-    state.domRefs = { totalCells: [], ivaInputs: [] };
+    state.domRefs = { totalCells: [], ivaInputs: [], subtotalCells: [] };
     if (refs.totalGeneralEl) refs.totalGeneralEl.textContent = formatMoney(0);
     return;
   }
@@ -39,10 +40,14 @@ export function renderComprobantes(state, refs, handlers) {
     const mode = classifyComprobanteTaxMode(groupRows);
     state.comprobanteTaxModes[String(g.compIdx)] = mode;
     const totals = computeComprobanteTotals(groupRows, mode);
+    const ocControls = renderOcHeaderControls(state, g.compIdx);
     cards.push(
       `<section class="comprobanteCard" data-comp="${g.compIdx}">
         <header class="comprobanteCardHeader">
-          <h3 class="comprobanteCardTitle">${escapeHtml(comprobanteTitle(state, groupRows, g.compIdx))}</h3>
+          <div class="comprobanteCardHeaderMain">
+            <h3 class="comprobanteCardTitle">${escapeHtml(comprobanteTitle(state, groupRows, g.compIdx))}</h3>
+            ${ocControls}
+          </div>
         </header>
         <div class="comprobanteTableMount" data-comp-table="${escapeHtml(g.compIdx)}"></div>
         ${renderFooterHtml(totals, g.compIdx, groupRows)}

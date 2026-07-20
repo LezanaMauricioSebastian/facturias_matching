@@ -42,7 +42,7 @@ def _move_product_line_fields(config: Dict[str, Any]) -> List[str]:
     fields = ["id", "name", "sequence", "tax_ids"]
     if _move_line_supports_purchase_link(config):
         fields.append("purchase_line_id")
-    fields.extend(["product_id", "quantity", "price_unit", "account_id"])
+    fields.extend(["product_id", "quantity", "price_unit", "product_uom_id", "account_id"])
     return fields
 
 
@@ -75,19 +75,9 @@ def _floats_differ(left: float, right: float, tolerance: float = 0.001) -> bool:
 
 
 def _parse_amount_loose(raw: Any) -> Optional[float]:
-    s = _normalize(raw)
-    if not s or s.lower() == "nan":
-        return None
-    if "," in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "." in s:
-        parts = s.split(".")
-        if len(parts) >= 2 and all(p.isdigit() and len(p) == 3 for p in parts[1:]):
-            s = "".join(parts)
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    from facturia_matching.core.amounts import parse_amount_loose
+
+    return parse_amount_loose(raw)
 
 
 def _date_ddmm_to_iso(raw: Any) -> Optional[str]:

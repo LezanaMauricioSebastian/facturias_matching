@@ -24,7 +24,10 @@ from facturia_matching.odoo.import_.planning import (
     plan_product_line_content_updates,
     plan_product_price_quantity_reapply,
 )
-from facturia_matching.odoo.import_.purchase import plan_purchase_line_updates
+from facturia_matching.odoo.import_.purchase import (
+    apply_purchase_order_price_overwrites,
+    plan_purchase_line_updates,
+)
 from facturia_matching.odoo.import_.rows import _invoice_due_date_from_group
 from facturia_matching.odoo.import_.taxes import (
     _apply_tax_line_amount_overwrites,
@@ -44,7 +47,7 @@ def sync_move_taxes_from_group(
     2. product_id, cantidad, precio, etiqueta y cuenta en líneas de producto.
     3. tax_ids en líneas de producto.
     4. Vínculos OC (purchase_line_id + product_id).
-    5. Re-aplicar price_unit / quantity (Odoo puede pisar precio OC al vincular).
+    5. Re-aplicar price_unit / quantity / product_uom_id (Odoo puede pisar precio/UM al vincular OC).
     6. Montos en líneas display_type=tax — último paso (IVA / IIBB del pie de FacturIA).
     """
     move_rows = odoo_execute_kw_with_config(
@@ -191,6 +194,8 @@ def sync_move_taxes_from_group(
 
     price_qty_reapply_updates: List[Dict[str, Any]] = []
     if _move_line_supports_purchase_link(config):
+        # Siempre necesitamos leer product_lines para plan_product_price_quantity_reapply
+        # aunque ya se haya leído antes (el costo es menor que el riesgo de NameError)
         product_lines = _get_move_product_lines(config, move_id)
         planned_reapply, warnings_reapply = plan_product_price_quantity_reapply(
             product_lines, group
@@ -200,6 +205,13 @@ def sync_move_taxes_from_group(
             price_qty_reapply_updates = _batch_write_move_lines(
                 config, move_id, planned_reapply, warnings, context="precio"
             )
+
+    po_price_overwrite_updates: List[Dict[str, Any]] = []
+    if _move_line_supports_purchase_link(config):
+        po_price_overwrite_updates, warnings_po_price = apply_purchase_order_price_overwrites(
+            config, group
+        )
+        warnings.extend(warnings_po_price)
 
     # Último paso: pisar montos IVA / IIBB tras cualquier recálculo de Odoo (OC, precio, tax_ids).
     tax_line_updates, warnings_amt, expected_amounts = _apply_tax_line_amount_overwrites(
@@ -219,6 +231,7 @@ def sync_move_taxes_from_group(
         "content_lines_updated": len(content_line_updates),
         "purchase_lines_updated": len(purchase_line_updates),
         "price_qty_reapply_updates": price_qty_reapply_updates,
+        "po_price_overwrite_updates": po_price_overwrite_updates,
         "tax_lines_updated": len(tax_line_updates),
         "lines_updated": len(tax_line_updates),
         "product_updates": product_updates,

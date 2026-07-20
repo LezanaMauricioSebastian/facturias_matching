@@ -296,7 +296,25 @@ _UI_TAX_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     "PERCEPCION IVA SUFRIDA": ("PERC IVA", "PERCEPCION IVA"),
     "PERCEPCION IVA APLICADA": ("PERC IVA", "PERCEPCION IVA"),
     "IVA ADICIONAL 20%": ("IVA ADIC 20%", "IVA ADICIONAL 20%"),
+    # Nombres EN sin traducción en Odoo Aliare → etiqueta ES en UI.
+    "IMPUESTOS INTERNOS": ("INTERNAL TAXES",),
+    "OTROS IMPUESTOS": ("OTHER TAXES",),
 }
+
+# Nombre Odoo (EN / corto) → etiqueta de dropdown en español.
+_ODOO_TAX_DISPLAY_ES: Dict[str, str] = {
+    "INTERNAL TAXES": "Impuestos internos",
+    "OTHER TAXES": "Otros impuestos",
+}
+
+
+def display_otros_impuesto_label(odoo_name: str) -> str:
+    """Etiqueta UI para un account.tax purchase (traduce nombres EN sin i18n en Odoo)."""
+    name = _normalize(odoo_name)
+    if not name:
+        return ""
+    mapped = _ODOO_TAX_DISPLAY_ES.get(_ascii_upper(name))
+    return mapped or name
 
 
 def _alias_tax_id_for_label(key: str, by_name: Dict[str, int]) -> Optional[int]:

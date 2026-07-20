@@ -462,7 +462,7 @@ def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[D
     products = odoo_search_read(
         "product.product",
         [("active", "=", True)],
-        ["id", "name", "default_code"],
+        ["id", "name", "default_code", "uom_id", "uom_po_id"],
         limit=20000,
         order="name",
         config=config,
@@ -509,6 +509,12 @@ def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[D
             row: Dict[str, Any] = {"id": int(iid), "name": name}
             if code:
                 row["code"] = code
+            uom = r.get("uom_id") or []
+            uom_po = r.get("uom_po_id") or []
+            if isinstance(uom, (list, tuple)) and uom:
+                row["uom_id"] = int(uom[0])
+            if isinstance(uom_po, (list, tuple)) and uom_po:
+                row["uom_po_id"] = int(uom_po[0])
             out.append(row)
         return sorted(out, key=lambda x: (x.get("code") or x["name"]).upper())
 

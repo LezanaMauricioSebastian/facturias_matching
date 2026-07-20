@@ -33,7 +33,7 @@ from facturia_matching.odoo.api import (
 from facturia_matching.odoo.import_ import import_rows_to_odoo
 from facturia_matching.core.options import build_metadata_payload, get_options
 from facturia_matching.padron.postgres import detect_padron_fields, get_table_columns
-from facturia_matching.infra.paths import CSS_DIR, HTML_DIR
+from facturia_matching.infra.paths import CSS_DIR, HTML_DIR, JS_DIR
 from facturia_matching.core.process import build_output_rows
 from facturia_matching.persistence.back_check import MySQLUnavailableError, ProcessTableError
 from facturia_matching.persistence.process_conversions import (
@@ -44,7 +44,11 @@ from facturia_matching.persistence.process_conversions import (
     resolve_process_row,
     save_conversion,
 )
-from facturia_matching.odoo.purchase_matching import apply_oc_selection, rematch_comprobante_purchase
+from facturia_matching.odoo.purchase_matching import (
+    apply_oc_selection,
+    rematch_comprobante_purchase,
+    search_oc_candidates_for_comprobante,
+)
 
 router = APIRouter()
 
@@ -67,7 +71,7 @@ def _resolve_request_odoo_profile(
     if payload:
         if is_odoo_cloud_flag(payload.get("odoo_cloud")):
             return "sudata"
-        body_profile = payload.get("odoo_profile") or payload.get("perfil")
+        body_profile = payload.get("odoo_profile_test") or payload.get("perfil")
         if body_profile is not None and str(body_profile).strip() != "":
             return str(body_profile).strip()
         if empresa is None:
@@ -156,9 +160,18 @@ def root():
     if not index_path.exists():
         return HTMLResponse("<h3>Falta html/index.html</h3>", status_code=500)
     html = index_path.read_text(encoding="utf-8")
-    css_path = CSS_DIR / "styles.css"
-    if css_path.is_file():
-        v = int(css_path.stat().st_mtime)
+    # Bust cache de CSS/JS entrypoint con mtime más reciente de assets tocados por UI.
+    mtimes = []
+    for path in (
+        CSS_DIR / "styles.css",
+        JS_DIR / "main.js",
+        JS_DIR / "ocPicker" / "render.js",
+        JS_DIR / "comprobanteView" / "render.js",
+    ):
+        if path.is_file():
+            mtimes.append(int(path.stat().st_mtime))
+    if mtimes:
+        v = max(mtimes)
         html = html.replace('href="/css/styles.css"', f'href="/css/styles.css?v={v}"')
         html = html.replace('src="/js/main.js"', f'src="/js/main.js?v={v}"')
     return HTMLResponse(html)
@@ -173,7 +186,7 @@ def get_metadata():
 def get_bootstrap(
     empresa: Optional[str] = None,
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     odoo_profile = _resolve_request_odoo_profile(
@@ -199,7 +212,7 @@ def api_options(
     padron: bool = Query(False, description="Si true, carga opciones grandes desde DB (puede tardar)."),
     empresa: Optional[str] = None,
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     odoo_profile = _resolve_request_odoo_profile(
@@ -211,7 +224,7 @@ def api_options(
 @router.get("/api/odoo/health")
 def odoo_health(
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
@@ -243,7 +256,7 @@ def odoo_health(
 @router.get("/api/odoo/health/import")
 def odoo_health_import(
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
@@ -296,7 +309,7 @@ def odoo_health_import(
 def odoo_import(
     payload: Dict[str, Any],
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     rows = payload.get("rows")
@@ -335,7 +348,7 @@ def get_padron_schema():
 def get_padron_odoo(
     limit: int = Query(50, ge=1, le=500),
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud)
@@ -360,7 +373,7 @@ def get_proceso(
     process_number: str,
     empresa: Optional[str] = None,
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
     regenerate: bool = Query(False, description="Si true, ignora conversión guardada y regenera desde json_data."),
 ):
@@ -394,8 +407,11 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
     odoo_profile = _payload_odoo_profile(payload)
     if comprobante_idx is None:
         raise HTTPException(status_code=400, detail="comprobante_idx es requerido")
-    if order_id is None or not str(order_id).strip().isdigit():
-        raise HTTPException(status_code=400, detail="order_id debe ser un entero")
+    if order_id is None:
+        raise HTTPException(status_code=400, detail="order_id es requerido")
+    order_raw = str(order_id).strip()
+    if order_raw not in ("0", "none") and not order_raw.isdigit():
+        raise HTTPException(status_code=400, detail="order_id debe ser un entero o 0 (Sin OC)")
 
     def _select():
         from facturia_matching.core.process import parse_process_json
@@ -421,7 +437,7 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
         except (TypeError, ValueError) as e:
             raise ProcessConversionError("comprobante_idx inválido") from e
 
-        purchase_summary = apply_oc_selection(filas, comp_idx, int(order_id))
+        purchase_summary = apply_oc_selection(filas, comp_idx, int(order_raw))
         result = save_conversion(
             process_row["id"],
             process_row["company_id"],
@@ -449,6 +465,60 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
         )
 
     return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _select))
+
+
+@router.post("/api/proceso/{process_number}/search-oc")
+def post_proceso_search_oc(process_number: str, payload: Dict[str, Any]):
+    rows = payload.get("rows")
+    comprobante_idx = payload.get("comprobante_idx")
+    empresa = payload.get("empresa")
+    odoo_profile = _payload_odoo_profile(payload)
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="payload.rows debe ser una lista")
+    if comprobante_idx is None:
+        raise HTTPException(status_code=400, detail="comprobante_idx es requerido")
+
+    def _search():
+        process_row = resolve_process_row(process_number, empresa=empresa)
+        try:
+            comp_idx = int(comprobante_idx)
+        except (TypeError, ValueError) as e:
+            raise ProcessConversionError("comprobante_idx inválido") from e
+
+        try:
+            purchase_summary = search_oc_candidates_for_comprobante(rows, comp_idx)
+        except ValueError as e:
+            raise ProcessConversionError(str(e)) from e
+        result = save_conversion(
+            process_row["id"],
+            process_row["company_id"],
+            process_row.get("user_id"),
+            rows,
+        )
+        conversion_meta = {
+            "id": result.get("id"),
+            "saved_at": result.get("saved_at"),
+            "extra_tax_indices": infer_otro_impuesto_indices(rows),
+        }
+
+        etiqueta_opts: list = []
+        for row in rows:
+            desc = row.get("invoice_line_ids/name") or row.get("Nombre de producto") or ""
+            if desc and str(desc).strip():
+                etiqueta_opts.append(str(desc).strip())
+        etiqueta_opts = sorted({p for p in etiqueta_opts if p})
+
+        return _build_proceso_response(
+            process_number,
+            empresa,
+            rows,
+            etiqueta_opts,
+            purchase_summary,
+            "saved",
+            conversion_meta,
+        )
+
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _search))
 
 
 @router.post("/api/proceso/{process_number}/rematch-purchase")
@@ -507,7 +577,7 @@ def put_proceso_conversion(
     process_number: str,
     payload: Dict[str, Any],
     perfil: Optional[str] = Query(None),
-    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile"),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
 ):
     rows = payload.get("rows")

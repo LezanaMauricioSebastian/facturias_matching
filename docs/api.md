@@ -8,14 +8,14 @@ Muchos endpoints aceptan:
 
 | Parámetro | Ubicación | Descripción |
 |-----------|-----------|-------------|
-| `odoo_profile` | query / body | `default`, `aliare`, `sudata` |
-| `perfil` | query | Alias de `odoo_profile` |
+| `odoo_profile_test` | query / body | `default`, `aliare`, `sudata` |
+| `perfil` | query | Alias de `odoo_profile_test` |
 | `odoo_cloud` | query / body | `1` / `true` → fuerza perfil `sudata` |
 | `empresa` | query / body | Filtro `company_id` en MySQL |
 
 El perfil activo queda en contexto via `odoo_profile_context` y afecta catálogo, padrón, resolución de tax ids e import.
 
-**Aliare / Sudata:** sin `odoo_profile` correcto, los ids de IVA en la UI no coinciden con Odoo (ej. 21 % → id Dinner 63 vs Aliare 65). Usar siempre `?odoo_profile=aliare` en la URL de la app y en el body/query del import.
+**Aliare / Sudata:** sin `odoo_profile_test` correcto, los ids de IVA en la UI no coinciden con Odoo (ej. 21 % → id Dinner 63 vs Aliare 65). Usar siempre `?odoo_profile_test=aliare` en la URL de la app y en el body/query del import. El parámetro legacy `odoo_profile` se ignora.
 
 ---
 
@@ -35,7 +35,7 @@ Metadata estática de la app (columnas, flags de perfil). Ver `build_metadata_pa
 
 Carga inicial de la UI: metadata + opciones ligeras (sin padrón completo).
 
-**Query**: `empresa`, `perfil`, `odoo_profile`, `odoo_cloud`
+**Query**: `empresa`, `perfil`, `odoo_profile_test`, `odoo_cloud`
 
 **Respuesta**:
 ```json
@@ -139,9 +139,22 @@ Guarda ediciones (autosave de la UI).
 
 Borra conversión guardada y regenera desde `json_data` original.
 
+### `POST /api/proceso/{process_number}/search-oc`
+
+Busca y rankea OCs similares para un comprobante (bajo demanda desde el botón en UI). Guarda la conversión y devuelve `purchase_matching.oc_candidates_by_comprobante` poblado para ese comprobante, con `receipt_status_label` y `deliver_to`. Si la factura no tiene líneas de producto (p. ej. solo encabezado), igualmente lista las OCs del proveedor con score 0. Si el perfil no tiene Odoo configurado, responde 400 con un mensaje explícito en vez de devolver una lista vacía.
+
+**Body**:
+```json
+{
+  "comprobante_idx": 0,
+  "rows": [ ],
+  "empresa": "optional"
+}
+```
+
 ### `POST /api/proceso/{process_number}/select-oc`
 
-Aplica una orden de compra elegida a un comprobante. Las candidatas en `purchase_matching.oc_candidates_by_comprobante` **excluyen** OCs con estado de entrega «No recibido» en Odoo (`receipt_status=pending`). Ver [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md#filtro-de-ocs-en-matching).
+Aplica una orden de compra elegida a un comprobante. `order_id: 0` = **Sin OC**: limpia vínculos y el flag de sobreescritura, pero conserva/reconsulta candidatos para que el selector quede disponible como «OC: Sin OC ▾». Ver [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md#filtro-de-ocs-en-matching).
 
 **Body**:
 ```json
@@ -154,7 +167,7 @@ Aplica una orden de compra elegida a un comprobante. Las candidatas en `purchase
 
 ### `POST /api/proceso/{process_number}/rematch-purchase`
 
-Re-ejecuta matching OC sobre filas actuales de un comprobante.
+Re-ejecuta matching OC sobre las filas actuales de un comprobante. Se llama al cambiar `partner_id`: limpia la selección anterior, invalida cache de purchase, consulta las OCs del nuevo proveedor y actualiza `oc_provider_has_ocs_by_comprobante`, por lo que el botón aparece/desaparece dinámicamente.
 
 **Body**:
 ```json
@@ -199,8 +212,8 @@ Detalle en JSON: `{ "detail": "mensaje" }` (FastAPI).
 ## Secuencia típica de la UI
 
 ```
-GET  /api/bootstrap?odoo_profile=aliare
-GET  /api/proceso/12345?odoo_profile=aliare
+GET  /api/bootstrap?odoo_profile_test=aliare
+GET  /api/proceso/12345?odoo_profile_test=aliare
 PUT  /api/proceso/12345/conversion        (repetido, debounced)
 POST /api/odoo/import                     (o POST /api/csv)
 ```

@@ -132,6 +132,93 @@ class TestIvaTaxResolve(unittest.TestCase):
         self.assertEqual(amounts, {65: 57255.38})
         self.assertEqual(csv_tax, "65")
 
+    def test_meriti_exento_clears_stale_21_footer_amounts(self):
+        """PDF Mauri 16/7: elegir IVA Exento no debe mandar IVA 21% residual del pie."""
+        from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
+
+        row = {
+            "iva_pct": "IVA Exento",
+            "__fac_iva_monto": "57255.38",
+            "__fac_iva_montos": '{"21": "57255.38"}',
+            "otros_impuestos": "Percepción IIBB Jujuy Sufrida",
+            "otros_impuestos_monto": "3544.38",
+            "invoice_line_ids/name": "Consumos",
+            "invoice_line_ids/price_unit": "272644.68",
+            "invoice_line_ids/quantity": "1",
+        }
+        with patch("facturia_matching.padron.taxes.get_purchase_iva_taxes", return_value=ALIARE_IVA_TAXES), patch(
+            "facturia_matching.padron.taxes.resolve_tax_label_to_id", return_value=101
+        ), patch(
+            "facturia_matching.padron.taxes.is_iva_tax_id",
+            side_effect=lambda tid: int(tid) in {55, 57, 59, 61, 63, 65, 67},
+        ):
+            groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices([row])]
+            group = groups[0]
+            reconcile_fac_iva_for_import(group)
+            tax_ids = _tax_ids_for_odoo_line(group[0], group)
+            amounts = collect_expected_tax_amounts_from_group(group)
+        self.assertEqual(tax_ids, [59, 101])
+        self.assertNotIn(65, amounts)
+        self.assertEqual(amounts, {101: 3544.38})
+        self.assertFalse(group[0].get("__fac_iva_montos"))
+        self.assertEqual(group[0].get("__fac_iva_monto"), "")
+
+    def test_meriti_no_gravado_clears_stale_21_footer_amounts(self):
+        from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
+
+        row = {
+            "iva_pct": "IVA No Gravado",
+            "__fac_iva_montos": '{"21": "57255.38"}',
+            "__fac_iva_monto": "57255.38",
+            "invoice_line_ids/name": "Consumos",
+            "invoice_line_ids/price_unit": "272644.68",
+            "invoice_line_ids/quantity": "1",
+        }
+        with patch("facturia_matching.padron.taxes.get_purchase_iva_taxes", return_value=ALIARE_IVA_TAXES):
+            groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices([row])]
+            group = groups[0]
+            reconcile_fac_iva_for_import(group)
+            tax_ids = _tax_ids_for_odoo_line(group[0], group)
+            amounts = collect_expected_tax_amounts_from_group(group)
+        self.assertEqual(tax_ids, [57])
+        self.assertEqual(amounts, {})
+
+    def test_meriti_no_corresponde_clears_stale_21_footer_amounts(self):
+        from facturia_matching.core.comprobante_tax import reconcile_fac_iva_for_import
+
+        row = {
+            "iva_pct": "IVA No Corresponde",
+            "__fac_iva_montos": '{"21": "57255.38"}',
+            "__fac_iva_monto": "57255.38",
+            "invoice_line_ids/name": "Consumos",
+            "invoice_line_ids/price_unit": "272644.68",
+            "invoice_line_ids/quantity": "1",
+        }
+        with patch("facturia_matching.padron.taxes.get_purchase_iva_taxes", return_value=ALIARE_IVA_TAXES):
+            groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices([row])]
+            group = groups[0]
+            reconcile_fac_iva_for_import(group)
+            tax_ids = _tax_ids_for_odoo_line(group[0], group)
+            amounts = collect_expected_tax_amounts_from_group(group)
+        self.assertEqual(tax_ids, [])
+        self.assertEqual(amounts, {})
+
+    def test_header_mode_empty_iva_pct_keeps_footer_amounts(self):
+        """Modo header legítimo (iva_pct vacío) sigue usando el pie FacturIA."""
+        row = {
+            "iva_pct": "",
+            "__fac_iva_montos": '{"21": "57255.38"}',
+            "__fac_iva_monto": "57255.38",
+            "invoice_line_ids/name": "Consumos",
+            "invoice_line_ids/price_unit": "272644.68",
+            "invoice_line_ids/quantity": "1",
+        }
+        with patch("facturia_matching.padron.taxes.get_purchase_iva_taxes", return_value=ALIARE_IVA_TAXES):
+            groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices([row])]
+            group = groups[0]
+            amounts = collect_expected_tax_amounts_from_group(group)
+        self.assertEqual(amounts, {65: 57255.38})
+
 
 if __name__ == "__main__":
     unittest.main()

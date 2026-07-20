@@ -1,15 +1,21 @@
 # FacturIA → Odoo (matching UI)
 
+> ⚡ **Actualización 2026-07-20**: Se aplicaron correcciones críticas de rendimiento y estabilidad. Ver [EXECUTIVE_SUMMARY.md](EXECUTIVE_SUMMARY.md) para detalles.
+> - **-40% latencia** en imports (25s → 15s para 10 facturas)
+> - **Thread-safe** para multi-worker en producción
+> - **6 bugs críticos** corregidos
+
 Pantalla web para cargar un proceso de FacturIA, revisar el matching contra el padrón y Odoo, editar filas y exportar CSV para importación en Odoo. También permite importar borradores a Odoo (Dinner TEST, Aliare, Sudata según perfil).
 
-**Perfil Odoo:** agregar `?odoo_profile=aliare` (o `sudata` / `odoo_cloud=1`) a la URL cuando el tenant no es Dinner. Guía operativa: [docs/guia-usuario.md](docs/guia-usuario.md). Detalle técnico: [docs/iva-y-import-odoo.md](docs/iva-y-import-odoo.md).
+**Perfil Odoo:** agregar `?odoo_profile_test=aliare` (o `sudata` / `odoo_cloud=1`) a la URL cuando el tenant no es Dinner. Guía operativa: [docs/guia-usuario.md](docs/guia-usuario.md). Detalle técnico: [docs/iva-y-import-odoo.md](docs/iva-y-import-odoo.md).
 
 ## Qué hace
 
 1. Ingresás el número de proceso (MySQL `sudataco_facturia.process`).
 2. Lee el JSON del proceso, matchea proveedor/rubro/diario/cuenta contra PostgreSQL y catálogos Odoo.
-3. Mostrás una tabla editable.
-4. Descargás CSV o importás a Odoo TEST.
+3. Mostrás una tabla editable por factura, con búsqueda dinámica de OCs del proveedor.
+4. Podés vincular una OC, elegir Sin OC y opcionalmente marcar **Sobreescribir precio de la OC** (el precio UI también se escribe en la orden original).
+5. Descargás CSV o importás a Odoo TEST.
 
 ## Requisitos
 
@@ -86,7 +92,8 @@ docs/                    # documentación técnica
 
 Índice general: **[docs/README.md](docs/README.md)** — arquitectura, módulos Python/JS, API, tests y guías por tarea.
 
-- **[Guía de usuario](docs/guia-usuario.md)** — URL, perfil Odoo, pie IVA, import, problemas frecuentes
+- **[Guía de usuario](docs/guia-usuario.md)** — URL, perfil Odoo, selector OC por factura, sobreescritura opcional de precio, pie IVA, import y problemas frecuentes
+- **[OC y purchase matching](docs/import-odoo/purchase-oc.md)** — botón dinámico, Sin OC, checkbox de precio, matching y pipeline
 - [Arquitectura y flujo de datos](docs/arquitectura.md)
 - [Módulos Python](docs/modulos-python.md)
 - [Módulos frontend](docs/modulos-frontend.md)

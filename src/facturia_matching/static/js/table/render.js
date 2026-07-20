@@ -1,5 +1,5 @@
 import { computeRowTotal, ADD_OTRO_IMPUESTO_KEY } from "../rows/index.js";
-import { showIvaMontoColumn, classifyComprobanteTaxMode, syncFacIvaMontosFromLines } from "../comprobanteTax/index.js";
+import { showIvaMontoColumn, classifyComprobanteTaxMode, syncFacIvaMontosFromLines, lineBase } from "../comprobanteTax/index.js";
 import {
   formatMoney,
   formatNumericForDisplay,
@@ -11,9 +11,16 @@ import {
   optionLabel,
   optionValue,
   findOptionLabel,
+  toNumberLoose,
 } from "../utils/index.js";
 import { normalizeComprobanteNumber } from "../validation/index.js";
-import { comprobanteHasMultipleLines, isFirstRowOfComprobante, groupBounds } from "../singleLine/index.js";
+import {
+  comprobanteHasMultipleLines,
+  isFirstRowOfComprobante,
+  groupBounds,
+  isSoloEncabezado,
+  syncSoloEncabezadoMontos,
+} from "../singleLine/index.js";
 import {
   attachComboboxes,
   isComboboxLoading,
@@ -37,12 +44,21 @@ function syncLineIvaMetadata(state, rowIdx) {
   if (mode === "line") syncFacIvaMontosFromLines(groupRows, mode);
 }
 
+/** Monto sin impuestos: __fac_subtotal si hay; si no, cantidad × precio. */
+function computeSubtotalCell(row) {
+  const fac = toNumberLoose(row?.__fac_subtotal);
+  if (fac > 0) return fac;
+  return lineBase(row);
+}
+
 export function renderComprobanteTable(state, rowIndices, containerEl, refs, handlers, options = {}) {
   const taxMode = options.taxMode || "header";
   if (!state.columns.length || !containerEl) {
     return;
   }
-  const cols = columnsForTaxMode(state.columns, taxMode);
+  const firstRow = rowIndices.length ? state.rows[rowIndices[0]] : null;
+  const soloEncabezado = isSoloEncabezado(firstRow);
+  const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado });
   const colMinWidth = buildColMinWidth(cols);
   const actionDisabled = !(state.rows && state.rows.length);
 
@@ -79,7 +95,8 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
 
   for (const rIdx of rowIndices) {
     const r = state.rows[rIdx];
-    if (showIvaMontoColumn(taxMode) && !r.__iva_monto_manual) {
+    if (isSoloEncabezado(r)) syncSoloEncabezadoMontos(r, state);
+    if (showIvaMontoColumn(taxMode, soloEncabezado) && !r.__iva_monto_manual) {
       computeRowTotal(r, taxMode);
     }
     html.push("<tr>");
@@ -92,15 +109,23 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       if (c.type === "header_action") {
         html.push(`<td class="headerActionBodyCell"${tdStyle}></td>`);
       } else if (c.type === "checkbox") {
-        const showCb =
-          isFirstRowOfComprobante(state.rows, rIdx) && comprobanteHasMultipleLines(state.rows, rIdx);
-        if (showCb) {
+        if (isFirstRowOfComprobante(state.rows, rIdx)) {
+          const checked = isSoloEncabezado(r) ? " checked" : "";
+          const multi = comprobanteHasMultipleLines(state.rows, rIdx);
+          const title = multi
+            ? "Solo encabezado: una línea (elimina líneas extra) y oculta el pie"
+            : "Solo encabezado: muestra Subtotal y oculta el pie del comprobante";
           html.push(
-            `<td class="soloEncabezadoCell"${tdStyle}><input type="checkbox" data-collapse-r="${rIdx}" title="Colapsar a una sola línea (elimina líneas extra del comprobante)" aria-label="Solo encabezado" /></td>`
+            `<td class="soloEncabezadoCell"${tdStyle}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
           );
         } else {
           html.push(`<td${tdStyle}></td>`);
         }
+      } else if (c.type === "computed") {
+        const n = key === "__subtotal" ? computeSubtotalCell(r) : computeRowTotal(r, taxMode);
+        const dataAttr =
+          key === "__subtotal" ? ` data-subtotal-r="${rIdx}"` : ` data-total-r="${rIdx}"`;
+        html.push(`<td class="readonly"${tdStyle}${dataAttr}>${formatMoney(n)}</td>`);
       } else if (c.readonly) {
         html.push(`<td class="readonly"${tdStyle}>${val}</td>`);
       } else if (c.type === "selection") {
@@ -110,8 +135,9 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
         if (key === "iva_pct" && cellVal !== val) r[key] = cellVal;
         const loading = isComboboxLoading(state, optKey);
         if (isComboboxOptionKey(optKey)) {
+          const suggested = optKey === "productos" && !!r.__product_suggested;
           html.push(
-            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, loading, state })
+            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, loading, state, suggested })
           );
         } else {
           const selectLoading =
@@ -147,9 +173,6 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
         html.push(
           `<td${tdStyle}><input inputmode="decimal" data-r="${rIdx}" data-k="${key}" value="${shown.replaceAll('"', "&quot;")}" /></td>`
         );
-      } else if (c.type === "computed") {
-        const n = computeRowTotal(r, taxMode);
-        html.push(`<td class="readonly"${tdStyle} data-total-r="${rIdx}">${formatMoney(n)}</td>`);
       } else if (c.type === "text" && c.editable && key === DOC_NUM_KEY) {
         html.push(
           `<td class="cellWithHint"${tdStyle}><div class="cellStack"><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /><div class="fieldHint" data-doc-hint-row="${rIdx}" aria-live="polite" hidden></div></div></td>`
@@ -168,15 +191,13 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
   html.push("</tbody></table>");
   containerEl.innerHTML = html.join("");
 
-  containerEl.querySelectorAll("input[data-collapse-r]").forEach((cb) => {
+  containerEl.querySelectorAll("input[data-solo-encabezado-r]").forEach((cb) => {
     cb.addEventListener("change", (e) => {
       const t = e.target;
       if (!(t instanceof HTMLInputElement) || t.type !== "checkbox") return;
-      if (!t.checked) return;
-      t.checked = false;
-      const r = parseInt(t.getAttribute("data-collapse-r"), 10);
+      const r = parseInt(t.getAttribute("data-solo-encabezado-r"), 10);
       if (!Number.isFinite(r)) return;
-      handlers.onCollapseComprobante?.(r);
+      handlers.onToggleSoloEncabezado?.(r, t.checked);
     });
   });
 
@@ -185,7 +206,13 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       const r = parseInt(e.target.getAttribute("data-r"), 10);
       const k = e.target.getAttribute("data-k");
       state.rows[r][k] = e.target.value;
-      if (k === "iva_monto") state.rows[r].__iva_monto_manual = true;
+      if (k === "iva_monto") {
+        state.rows[r].__iva_monto_manual = true;
+        if (isSoloEncabezado(state.rows[r])) {
+          state.rows[r].__fac_iva_monto = state.rows[r][k];
+          state.rows[r].__fac_iva_monto_manual = true;
+        }
+      }
       if (isTotalAffectingKey(k)) {
         syncLineIvaMetadata(state, r);
         updateRowTotals(state, refs, r);
@@ -218,7 +245,13 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       const normalized = normalizeNumericValue(e.target.value, k);
       state.rows[r][k] = normalized;
       e.target.value = normalized;
-      if (k === "iva_monto") state.rows[r].__iva_monto_manual = true;
+      if (k === "iva_monto") {
+        state.rows[r].__iva_monto_manual = true;
+        if (isSoloEncabezado(state.rows[r])) {
+          state.rows[r].__fac_iva_monto = state.rows[r][k];
+          state.rows[r].__fac_iva_monto_manual = true;
+        }
+      }
       if (isTotalAffectingKey(k)) {
         syncLineIvaMetadata(state, r);
         updateRowTotals(state, refs, r);

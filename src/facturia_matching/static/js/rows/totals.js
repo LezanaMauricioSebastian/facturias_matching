@@ -4,11 +4,16 @@ import {
   toNumberLoose,
 } from "../utils/index.js";
 import { lineBase, lineIvaSuggested } from "../comprobanteTax/index.js";
+import { isSoloEncabezado } from "../singleLine/index.js";
 
 export function computeRowTotal(row, taxMode = "header") {
   const base = lineBase(row);
   let ivaMonto = 0;
-  if (taxMode === "line") {
+  if (isSoloEncabezado(row)) {
+    const explicit = toNumberLoose(row?.iva_monto);
+    const fromFac = toNumberLoose(row?.__fac_iva_monto);
+    ivaMonto = explicit > 0 ? explicit : fromFac;
+  } else if (taxMode === "line") {
     const explicit = toNumberLoose(row?.iva_monto);
     const suggested = lineIvaSuggested(row);
     if (row?.__iva_monto_manual) {

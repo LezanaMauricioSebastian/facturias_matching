@@ -15,13 +15,22 @@ class TestResolveRequestOdooProfile(unittest.TestCase):
             "sudata",
         )
 
-    def test_odoo_profile_explicit_over_query_cloud_when_in_body(self):
+    def test_odoo_profile_test_explicit_over_query_cloud_when_in_body(self):
+        self.assertEqual(
+            _resolve_request_odoo_profile(
+                odoo_cloud="1",
+                payload={"odoo_profile_test": "aliare"},
+            ),
+            "aliare",
+        )
+
+    def test_legacy_odoo_profile_body_is_ignored(self):
         self.assertEqual(
             _resolve_request_odoo_profile(
                 odoo_cloud="1",
                 payload={"odoo_profile": "aliare"},
             ),
-            "aliare",
+            "sudata",
         )
 
     def test_perfil_query_when_no_cloud(self):

@@ -129,6 +129,11 @@ def _build_line_command(
     product_id = _int_id(row.get("invoice_line_ids/product_id"))
     if include_product_id and product_id:
         vals["product_id"] = product_id
+        # UM viaja siempre junto al producto: escribirla sola sobre una línea con
+        # otro producto puede violar la restricción de categoría UOM de Odoo.
+        product_uom_id = _int_id(row.get("__um_empresa_id"))
+        if product_uom_id:
+            vals["product_uom_id"] = product_uom_id
     po_line_id = _int_id(row.get("__oc_line_id"))
     if include_purchase_link and po_line_id:
         vals["purchase_line_id"] = po_line_id

@@ -1,6 +1,8 @@
 import { toNumberLoose } from "../utils/index.js";
 
 const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado"]);
+/** Especiales que anulan pie 21 % (no incluir "0": es modo header FacturIA legítimo). */
+const EXPLICIT_ZERO_IVA = new Set(["IVA Exento", "IVA No Gravado", "IVA No Corresponde"]);
 
 export function lineHasContent(row) {
   return !!(
@@ -17,6 +19,34 @@ export function ivaPctToRate(raw) {
   if (!s || s === "0" || /no corresponde/i.test(s)) return 0;
   const m = /^(\d+(?:\.\d+)?)/.exec(s);
   return m ? parseFloat(m[1]) / 100 : 0;
+}
+
+export function isExplicitZeroIvaPct(raw) {
+  const label = String(raw ?? "").trim();
+  if (!label) return false;
+  if (EXPLICIT_ZERO_IVA.has(label)) return true;
+  return /no corresponde/i.test(label);
+}
+
+export function allContentLinesExplicitZeroIva(groupRows) {
+  const content = (groupRows || []).filter(lineHasContent);
+  if (!content.length) return false;
+  return content.every((row) => isExplicitZeroIvaPct(row?.iva_pct));
+}
+
+export function clearFacIvaFooter(groupRows) {
+  const first = groupRows?.[0];
+  if (first) {
+    delete first.__fac_iva_montos;
+    first.__fac_iva_monto = "";
+    delete first.__fac_iva_monto_manual;
+  }
+  for (const row of groupRows || []) {
+    if (isExplicitZeroIvaPct(row?.iva_pct)) {
+      row.iva_monto = "";
+      delete row.__iva_monto_manual;
+    }
+  }
 }
 
 export function ivaPctRequiresLineTax(raw) {
@@ -42,7 +72,7 @@ export function shouldShowOtrosFooter(groupRows, totals) {
 export function shouldHideIvaFooter(groupRows) {
   const content = (groupRows || []).filter(lineHasContent);
   if (content.length !== 1) return false;
-  return IVA_ATTACHABLE_ZERO.has(String(content[0]?.iva_pct ?? "").trim());
+  return isExplicitZeroIvaPct(content[0]?.iva_pct);
 }
 
 export function lineBase(row) {
@@ -81,6 +111,10 @@ export function facIvaMonto(groupRows) {
     if (legacy > 0) return legacy;
   }
   return null;
+}
+
+export function facIvaMontoManual(groupRows) {
+  return !!firstRow(groupRows).__fac_iva_monto_manual;
 }
 
 export function sumOtrosImpuestos(groupRows) {

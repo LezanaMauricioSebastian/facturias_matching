@@ -7,11 +7,12 @@ export function otroImpuestoNFromNameKey(key) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-export function columnsForTaxMode(columns, taxMode) {
+export function columnsForTaxMode(columns, taxMode, { soloEncabezado = false } = {}) {
   return columns.filter((c) => {
-    if (c.key === "iva_monto") return showIvaMontoColumn(taxMode);
-    if (c.key === "otros_impuestos_monto") return false;
-    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return false;
+    if (c.key === "iva_monto") return showIvaMontoColumn(taxMode, soloEncabezado);
+    if (c.key === "__subtotal") return soloEncabezado;
+    if (c.key === "otros_impuestos_monto") return soloEncabezado;
+    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return soloEncabezado;
     return true;
   });
 }

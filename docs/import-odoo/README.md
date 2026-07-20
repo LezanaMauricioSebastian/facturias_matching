@@ -117,7 +117,7 @@ flowchart TB
 |---------|----------------|
 | `odoo/api.py` | XML-RPC: `get_odoo_import_config`, `odoo_execute_kw_with_config` |
 | `odoo/env.py` | Perfil activo, `supports_rubro_field` |
-| `odoo/purchase_matching.py` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` (excluye OCs `receipt_status=pending`) |
+| `odoo/purchase_matching.py` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` (candidatos bajo demanda; incluye OCs no recepcionadas) |
 | `core/comprobante_tax.py` | `reconcile_fac_iva_for_import`, modos line/header/mixed |
 | `padron/taxes.py` | Resolución `account.tax` id, IVA, IIBB, `build_csv_tax_ids_dot_id` |
 
@@ -129,8 +129,8 @@ flowchart TB
 |---------|----------------|
 | Entender el flujo completo | [pipeline.md](pipeline.md) |
 | Arreglar IVA / IIBB en Odoo | [impuestos.md](impuestos.md), [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
-| Arreglar precio tras vincular OC | [purchase-oc.md](purchase-oc.md), `planning.plan_product_price_quantity_reapply` |
-| OC no aparece / filtro recepción | [purchase-oc.md](purchase-oc.md#filtro-de-ocs-en-matching), `purchase_matching._partner_po_search_domain` |
+| Arreglar precio tras vincular OC o sobreescribir precio de la orden | [purchase-oc.md](purchase-oc.md), `planning.plan_product_price_quantity_reapply`, `purchase.apply_purchase_order_price_overwrites` |
+| OC no aparece / botón dinámico / Sin OC | [purchase-oc.md](purchase-oc.md#filtro-de-ocs-en-matching), `purchase_matching.search_oc_candidates_for_comprobante`, `rematch_comprobante_purchase` |
 | Duplicados / ref / latam doc number | `create._find_existing_move`, [modulos.md](modulos.md#createpy) |
 | Fecha límite en apuntes AP/AR | `taxes._ensure_move_line_maturity`, [impuestos.md](impuestos.md#fecha-límite-date_maturity) |
 | Añadir un paso al sync | [sync.py](../../src/facturia_matching/odoo/import_/sync.py), [pipeline.md](pipeline.md#sync_move_taxes_from_group) |

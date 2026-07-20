@@ -91,15 +91,14 @@ def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
 
     1. Labels de OTROS_IMPUESTOS_OPTIONS que resuelven a un account.tax purchase
        (un label por tax id; prefiere *Sufrida* si Sufrida/Aplicada comparten id).
-    2. Dinámico: cualquier otro impuesto purchase no-IVA del tenant (nombre Odoo),
-       p.ej. Perc Gananc / Perc IVA / Internal taxes en Aliare.
+    2. Dinámico: cualquier otro impuesto purchase del tenant no cubierto arriba
+       (nombre Odoo), **incluidos los IVA** (p.ej. IVA 21%, Perc Gananc, Internal taxes).
     """
     from facturia_matching.padron.taxes import (
+        display_otros_impuesto_label,
         get_tax_name_by_id,
-        is_iva_tax_id,
         resolve_tax_label_to_id,
     )
-    from facturia_matching.infra.normalization import normalize as _norm
 
     name_by_id = get_tax_name_by_id()
     if not name_by_id:
@@ -116,13 +115,11 @@ def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
     extras: List[str] = []
     for tid, raw_name in sorted(
         name_by_id.items(),
-        key=lambda item: _norm(item[1]).upper(),
+        key=lambda item: display_otros_impuesto_label(item[1]).upper(),
     ):
         if tid in by_tax_id:
             continue
-        if is_iva_tax_id(int(tid)):
-            continue
-        name = _norm(raw_name)
+        name = display_otros_impuesto_label(raw_name)
         if not name:
             continue
         by_tax_id[tid] = name

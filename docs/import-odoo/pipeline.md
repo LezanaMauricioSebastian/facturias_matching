@@ -144,18 +144,26 @@ Si se completaron apuntes → warning con cantidad
 Solo si `_move_line_supports_purchase_link`:
 
 - `plan_purchase_line_updates`
-- Por cada update: `_po_link_write_vals` (OC + price + qty + product)
+- Por cada update: `_po_link_write_vals` (OC + price + qty + product + UM)
 - `_batch_write_move_lines_with_fallback` (context `"OC"`)
 - Re-lee `product_lines` si hubo cambios
 
-### Paso 6 — Re-aplicar precio y cantidad
+### Paso 6 — Re-aplicar precio, cantidad y UM
 
 Solo si purchase soportado:
 
-- `plan_product_price_quantity_reapply` (empareja por OC o orden)
+- `plan_product_price_quantity_reapply` (empareja por OC o orden; incluye `product_uom_id` si hay `__um_empresa_id`)
 - `_batch_write_move_lines`
 
-**Por qué antes de montos tax:** Odoo puede resetear `price_unit` al vincular OC; el precio UI debe quedar fijo antes de pisar IVA/IIBB.
+**Por qué antes de montos tax:** Odoo puede resetear `price_unit` / UM al vincular OC; el precio y la UM UI deben quedar fijos antes de pisar IVA/IIBB.
+
+### Paso 6b — Sobreescribir precio en la OC (opcional)
+
+Solo si purchase soportado **y** el comprobante tiene `__overwrite_oc_price`:
+
+- El opt-in viene del checkbox por comprobante (`__overwrite_oc_price=1`; deshabilitado sin OC).
+- `apply_purchase_order_price_overwrites` escribe `price_unit` en cada `purchase.order.line` vinculada con el precio de la tabla UI.
+- Solo escribe diferencias > 0.001; no modifica `account.move`; errores de permisos/estado de PO → warnings sin abortar el import.
 
 ### Paso 7 — Montos en líneas tax (último paso)
 

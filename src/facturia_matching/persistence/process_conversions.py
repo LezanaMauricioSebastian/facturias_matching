@@ -280,7 +280,9 @@ def save_conversion(
             }
         finally:
             cur.close()
-    except Exception as e:
+    except (ProcessConversionError, KeyError, ValueError, TypeError) as e:
+        raise
+    except RuntimeError as e:
         err = str(e).lower()
         if "template_id_foreign" in err or (
             "foreign key" in err and "template_id" in err
@@ -357,7 +359,7 @@ def load_process_rows(
                 "odoo_profile": profile,
                 "template_id": template_id,
             }
-            purchase_summary = enrich_rows_with_purchase_data(filas)
+            purchase_summary = enrich_rows_with_purchase_data(filas, fetch_candidates=False)
             sanitize_inflated_line_amounts(filas)
             etiqueta_opts: List[str] = []
             for row in filas:

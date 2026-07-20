@@ -17,6 +17,7 @@ import {
   escapeHtml,
 } from "../utils/index.js";
 import { updateProcessTotals, updateRowTotals } from "../table/index.js";
+import { isSoloEncabezado } from "../singleLine/index.js";
 
 function footerMoneyCell(n) {
   return n == null || Number.isNaN(n) ? "—" : formatMoney(n);
@@ -101,6 +102,7 @@ function renderOtrosFooterRow(totals, compIdx, groupRows) {
 }
 
 export function renderFooterHtml(totals, compIdx, groupRows) {
+  if (isSoloEncabezado(groupRows?.[0])) return "";
   return `<div class="comprobanteFooter">
       <table class="comprobanteTotalsTable">
         <tbody>
@@ -151,6 +153,8 @@ function setFooterIvaAmount(state, compIdx, rateKey, rawValue) {
     delete montos[rateKey];
   }
   serializeFacIvaMontos(groupRows, montos);
+  const first = groupRows[0];
+  if (first) first.__fac_iva_monto_manual = true;
 }
 
 function setComprobanteFooterOtros(state, compIdx, rawValue) {
@@ -240,6 +244,7 @@ export function updateComprobanteFooters(state, refs) {
     const card = wrap.querySelector(`.comprobanteCard[data-comp="${CSS.escape(String(g.compIdx))}"]`);
     if (!card) continue;
     const groupRows = g.rowIndices.map((i) => state.rows[i]);
+    if (isSoloEncabezado(groupRows[0])) continue;
     const compKey = String(g.compIdx);
     const mode = state.comprobanteTaxModes?.[compKey] || classifyComprobanteTaxMode(groupRows);
     state.comprobanteTaxModes[compKey] = mode;

@@ -30,6 +30,7 @@ export function buildColMinWidth(cols) {
     otros_impuestos_monto: 200,
     "invoice_line_ids/tax_ids": 220,
     __solo_encabezado: 130,
+    __subtotal: 120,
     __um_proveedor: 110,
     __um_empresa: 110,
     __oc_match_note: 220,

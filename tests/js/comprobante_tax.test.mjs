@@ -20,6 +20,8 @@ import {
   shouldShowOtrosFooter,
   hasOtrosImpuestosSelection,
   ivaPctRequiresLineTax,
+  clearFacIvaFooter,
+  allContentLinesExplicitZeroIva,
 } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
 import { migrateLegacyComprobanteIva, migrateFacIvaMontos } from "../../src/facturia_matching/static/js/comprobanteTax/migration.js";
 
@@ -43,9 +45,9 @@ describe("computeComprobanteTotals (fixtures)", () => {
 });
 
 describe("editability matrix", () => {
-  it("line mode: column visible, footer readonly", () => {
+  it("line mode: column visible, footer editable (override from pie)", () => {
     assert.equal(showIvaMontoColumn("line"), true);
-    assert.equal(footerIvaEditable("line"), false);
+    assert.equal(footerIvaEditable("line"), true);
   });
 
   it("header mode: column hidden, footer editable", () => {
@@ -60,12 +62,20 @@ describe("editability matrix", () => {
 });
 
 describe("proceso4 regression", () => {
-  it("footer breakdown not editable in line mode", () => {
+  it("footer breakdown editable in line mode (override from pie)", () => {
     const scenario = scenarioById("proceso4_line_single_rate");
     const mode = classifyComprobanteTaxMode(scenario.rows);
     const breakdown = computeIvaBreakdown(scenario.rows, { mode });
     assert.ok(breakdown.length > 0);
-    assert.ok(breakdown.every((row) => row.editable === false));
+    assert.ok(breakdown.every((row) => row.editable === true));
+  });
+
+  it("line mode footer override becomes authoritative for totals", () => {
+    const rows = structuredClone(scenarioById("proceso4_line_single_rate").rows);
+    serializeFacIvaMontos(rows, { 21: "50000" });
+    rows[0].__fac_iva_monto_manual = true;
+    const totals = computeComprobanteTotals(rows);
+    assert.ok(Math.abs(totals.ivaOdoo - 50000) <= 0.02);
   });
 });
 
@@ -243,10 +253,50 @@ describe("IVA Exento / No Gravado", () => {
       },
     ];
     const noGravado = [{ ...exento[0], iva_pct: "IVA No Gravado" }];
+    const noCorresponde = [{ ...exento[0], iva_pct: "IVA No Corresponde" }];
     const twoLines = [exento[0], { ...exento[0], "invoice_line_ids/name": "Y" }];
     assert.equal(shouldHideIvaFooter(exento), true);
     assert.equal(shouldHideIvaFooter(noGravado), true);
+    assert.equal(shouldHideIvaFooter(noCorresponde), true);
     assert.equal(shouldHideIvaFooter(twoLines), false);
+  });
+
+  it("clears stale 21% footer when selecting IVA Exento (PDF Mauri)", () => {
+    const rows = [
+      {
+        iva_pct: "IVA Exento",
+        __fac_iva_monto: "57255.38",
+        __fac_iva_montos: '{"21": "57255.38"}',
+        otros_impuestos_monto: "3544.38",
+        "invoice_line_ids/name": "Consumos",
+        "invoice_line_ids/price_unit": "272644.68",
+        "invoice_line_ids/quantity": "1",
+      },
+    ];
+    assert.equal(allContentLinesExplicitZeroIva(rows), true);
+    clearFacIvaFooter(rows);
+    assert.equal(rows[0].__fac_iva_montos, undefined);
+    assert.equal(rows[0].__fac_iva_monto, "");
+    const totals = computeComprobanteTotals(rows);
+    assert.equal(totals.ivaOdoo, 0);
+    assert.ok(Math.abs(totals.totalOdoo - (272644.68 + 3544.38)) <= 0.02);
+    assert.equal(computeIvaBreakdown(rows, { mode: totals.mode }).length, 0);
+  });
+
+  it("keeps footer IVA when iva_pct is empty (header mode)", () => {
+    const rows = [
+      {
+        iva_pct: "",
+        __fac_iva_monto: "57255.38",
+        __fac_iva_montos: '{"21": "57255.38"}',
+        "invoice_line_ids/name": "Consumos",
+        "invoice_line_ids/price_unit": "272644.68",
+        "invoice_line_ids/quantity": "1",
+      },
+    ];
+    assert.equal(allContentLinesExplicitZeroIva(rows), false);
+    const totals = computeComprobanteTotals(rows);
+    assert.ok(Math.abs(totals.ivaOdoo - 57255.38) <= 0.02);
   });
 });
 

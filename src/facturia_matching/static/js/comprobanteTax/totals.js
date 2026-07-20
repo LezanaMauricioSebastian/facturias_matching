@@ -1,6 +1,8 @@
 import { toNumberLoose } from "../utils/index.js";
 import {
+  allContentLinesExplicitZeroIva,
   facIvaMonto,
+  facIvaMontoManual,
   facSubtotal,
   lineIvaSuggested,
   sumLineBases,
@@ -65,18 +67,18 @@ export function classifyComprobanteTaxMode(groupRows) {
   return "header";
 }
 
-/** Monto IVA por línea cuando el impuesto se detecta en particular (modo line). */
-export function showIvaMontoColumn(mode) {
-  return mode === "line";
+/** Monto IVA por línea cuando el impuesto se detecta en particular (modo line o Solo encabezado). */
+export function showIvaMontoColumn(mode, soloEncabezado = false) {
+  return mode === "line" || soloEncabezado;
 }
 
-/** IVA general del comprobante: editable solo en el pie (modo encabezado/mixto). */
-export function footerIvaEditable(mode) {
-  return mode !== "line";
+/** IVA del pie: siempre editable (en modo line el override marca `__fac_iva_monto_manual`). */
+export function footerIvaEditable(_mode, _groupRows) {
+  return true;
 }
 
 export function footerIvaDisplayValue(groupRows, totals) {
-  if (totals?.mode === "line") return sumLineIvaMontos(groupRows);
+  if (totals?.mode === "line" && !facIvaMontoManual(groupRows)) return sumLineIvaMontos(groupRows);
   const breakdown = computeIvaBreakdown(groupRows, totals);
   if (breakdown.length) return breakdown.reduce((acc, row) => acc + (row.amount || 0), 0);
   const stored = facIvaMonto(groupRows);
@@ -88,13 +90,16 @@ export function computeComprobanteTotals(groupRows, mode) {
   const taxMode = mode || classifyComprobanteTaxMode(groupRows);
   const baseLines = sumLineBases(groupRows);
   const baseFac = facSubtotal(groupRows);
-  const ivaFac = facIvaMonto(groupRows);
+  const explicitZeroIva = allContentLinesExplicitZeroIva(groupRows);
+  const ivaFac = explicitZeroIva ? 0 : facIvaMonto(groupRows);
   const lineIvaSum = sumLineIva(groupRows);
   const otros = sumOtrosImpuestos(groupRows);
   const breakdown = computeIvaBreakdown(groupRows, { mode: taxMode });
 
   let ivaOdoo = 0;
-  if (taxMode === "line") {
+  if (explicitZeroIva) {
+    ivaOdoo = 0;
+  } else if (taxMode === "line" && !facIvaMontoManual(groupRows)) {
     ivaOdoo = sumLineIvaMontos(groupRows);
   } else if (breakdown.length) {
     ivaOdoo = breakdown.reduce((acc, row) => acc + (row.amount || 0), 0);

@@ -32,7 +32,8 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
-| `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, duplicados |
+| `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados |
+| `test_purchase_matching.py` | Candidatos OC bajo demanda, factura sin líneas, conservar OC ante fetch vacío, Sin OC sin perder selector, rematch dinámico por proveedor |
 | `test_comprobante_tax.py` | `collect_expected_*`, `_tax_ids_for_odoo_line` con modos IVA |
 | `test_iva_tax_resolve.py` | Resolución tax id Dinner vs Aliare |
 | `test_tax_pipeline.py` | Pipeline fiscal → montos esperados |
@@ -52,6 +53,7 @@ Tras el split, los mocks deben apuntar al **submódulo donde se usa el nombre**,
 | `_move_line_supports_purchase_link` | `facturia_matching.odoo.import_._utils.odoo_execute_kw_with_config` |
 | `plan_purchase_line_updates` sin purchase field | `facturia_matching.odoo.import_._utils.odoo_execute_kw_with_config` |
 | `sanitize_group_purchase_lines` | `facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config` |
+| `apply_purchase_order_price_overwrites` | `facturia_matching.odoo.import_.purchase.odoo_execute_kw_with_config` |
 | `_batch_write_move_lines` | `facturia_matching.odoo.import_.move_lines.odoo_execute_kw_with_config` |
 | `_prepare_rows_for_import` (refresh OC) | `facturia_matching.odoo.import_.purchase._refresh_purchase_links` |
 | mismo + sanitize | `facturia_matching.odoo.import_.purchase.sanitize_group_purchase_lines` |
@@ -110,6 +112,7 @@ assert updates[0]["new_tax_ids"] == [63, 27]
 | Pie IVA es-AR en JSON | `test_explicit_fac_iva_montos_parses_ar_format_strings` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | IIBB en fila encabezado | `test_collect_expected_iibb_from_header_only_row` | [impuestos.md](impuestos.md) |
 | Precio tras OC | `test_plan_product_price_quantity_reapply_po_price_differs` | [purchase-oc.md](purchase-oc.md) |
+| UM tras match | `test_build_line_command_includes_matched_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
 | Ref domain sin latam stored | `test_find_existing_move_uses_ref_domain_not_latam_field` | [pipeline.md](pipeline.md) |
 | Reconcile preserva pie mixed | `test_reconcile_preserves_footer_iva_montos_in_mixed_mode` | [impuestos.md](impuestos.md) |
 

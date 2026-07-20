@@ -32,3 +32,9 @@ export function comprobanteHasMultipleLines(rows, rIdx) {
   const [s, e] = groupBounds(rows, rIdx);
   return e - s > 1;
 }
+
+/** True si la fila está en modo Solo encabezado (tilde activo). */
+export function isSoloEncabezado(row) {
+  const v = row?.__solo_encabezado;
+  return v === true || v === 1 || v === "1" || String(v ?? "").trim().toLowerCase() === "true";
+}

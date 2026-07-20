@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from facturia_matching.core.comprobante_tax import (
     classify_comprobante_tax_mode,
+    fac_iva_monto_manual,
     fac_iva_montos,
     iva_pct_to_rate,
     line_iva_monto,
@@ -213,7 +214,7 @@ def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict
     mode = classify_comprobante_tax_mode(group)
     iva_resolve_row = _iva_tax_resolve_row(group)
 
-    if mode == "line":
+    if mode == "line" and not fac_iva_monto_manual(group):
         for row in content_rows:
             iva_amt = line_iva_monto(row)
             if iva_amt <= 0:
@@ -564,46 +565,77 @@ def _apply_tax_line_amount_overwrites(
     all_warnings: List[str] = []
     tax_line_updates: List[Dict[str, Any]] = []
 
-    for pass_idx in range(2):
-        product_lines = _get_move_product_lines(config, move_id)
-        ensure_warnings = _ensure_missing_tax_lines_on_move(
-            config, move_id, group, product_lines
-        )
-        all_warnings.extend(ensure_warnings)
-        tax_lines = _get_move_tax_lines(config, move_id)
-        tax_line_by_id = {line["id"]: line for line in tax_lines}
-        tax_account_ids = [_m2o_id(line.get("account_id")) for line in tax_lines]
-        tax_accounts = _account_rows_by_id(config, [a for a in tax_account_ids if a])
+    # Primera pasada: intentar sobreescribir montos con líneas tax existentes
+    product_lines = _get_move_product_lines(config, move_id)
+    ensure_warnings = _ensure_missing_tax_lines_on_move(
+        config, move_id, group, product_lines
+    )
+    all_warnings.extend(ensure_warnings)
+    tax_lines = _get_move_tax_lines(config, move_id)
+    tax_line_by_id = {line["id"]: line for line in tax_lines}
+    tax_account_ids = [_m2o_id(line.get("account_id")) for line in tax_lines]
+    tax_accounts = _account_rows_by_id(config, [a for a in tax_account_ids if a])
 
-        planned_amounts, warnings = plan_tax_line_amount_overwrites(
-            tax_lines, expected_amounts
+    planned_amounts, warnings = plan_tax_line_amount_overwrites(
+        tax_lines, expected_amounts
+    )
+    all_warnings.extend(warnings)
+    tax_batch: List[Dict[str, Any]] = []
+    for item in planned_amounts:
+        existing = tax_line_by_id.get(item["line_id"], {})
+        acc_id = _m2o_id(existing.get("account_id"))
+        write_vals = _tax_line_amount_write_vals(
+            item["new_amount"],
+            existing,
+            due_date_iso=due_date_iso,
+            account_row=tax_accounts.get(acc_id) if acc_id else None,
         )
-        all_warnings.extend(warnings)
-        tax_line_updates = []
-        tax_batch: List[Dict[str, Any]] = []
-        for item in planned_amounts:
-            existing = tax_line_by_id.get(item["line_id"], {})
-            acc_id = _m2o_id(existing.get("account_id"))
-            write_vals = _tax_line_amount_write_vals(
-                item["new_amount"],
-                existing,
-                due_date_iso=due_date_iso,
-                account_row=tax_accounts.get(acc_id) if acc_id else None,
-            )
-            tax_batch.append(
-                {
-                    "line_id": item["line_id"],
-                    "line_name": item.get("line_name"),
-                    "write_vals": write_vals,
-                }
-            )
-            tax_line_updates.append({**item, "write_vals": write_vals})
-        if tax_batch:
-            _batch_write_move_lines(config, move_id, tax_batch, all_warnings, context="impuesto")
+        tax_batch.append(
+            {
+                "line_id": item["line_id"],
+                "line_name": item.get("line_name"),
+                "write_vals": write_vals,
+            }
+        )
+        tax_line_updates.append({**item, "write_vals": write_vals})
+    if tax_batch:
+        _batch_write_move_lines(config, move_id, tax_batch, all_warnings, context="impuesto")
 
-        has_missing = any("no hay línea tax" in w for w in warnings)
-        if not has_missing or pass_idx == 1:
-            break
+    # Segunda pasada: re-intentar en caso de que Odoo necesitó generar nuevas líneas tax
+    product_lines = _get_move_product_lines(config, move_id)
+    ensure_warnings_retry = _ensure_missing_tax_lines_on_move(
+        config, move_id, group, product_lines
+    )
+    all_warnings.extend(ensure_warnings_retry)
+    tax_lines = _get_move_tax_lines(config, move_id)
+    tax_line_by_id = {line["id"]: line for line in tax_lines}
+    tax_account_ids = [_m2o_id(line.get("account_id")) for line in tax_lines]
+    tax_accounts = _account_rows_by_id(config, [a for a in tax_account_ids if a])
+
+    planned_amounts_retry, warnings_retry = plan_tax_line_amount_overwrites(
+        tax_lines, expected_amounts
+    )
+    all_warnings.extend(warnings_retry)
+    tax_batch_retry: List[Dict[str, Any]] = []
+    for item in planned_amounts_retry:
+        existing = tax_line_by_id.get(item["line_id"], {})
+        acc_id = _m2o_id(existing.get("account_id"))
+        write_vals = _tax_line_amount_write_vals(
+            item["new_amount"],
+            existing,
+            due_date_iso=due_date_iso,
+            account_row=tax_accounts.get(acc_id) if acc_id else None,
+        )
+        tax_batch_retry.append(
+            {
+                "line_id": item["line_id"],
+                "line_name": item.get("line_name"),
+                "write_vals": write_vals,
+            }
+        )
+        tax_line_updates.append({**item, "write_vals": write_vals})
+    if tax_batch_retry:
+        _batch_write_move_lines(config, move_id, tax_batch_retry, all_warnings, context="impuesto")
 
     if due_date_iso:
         _ensure_move_line_maturity(config, move_id, due_date_iso)

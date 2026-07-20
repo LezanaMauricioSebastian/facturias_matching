@@ -11,6 +11,7 @@ import {
 } from "../rows/index.js";
 
 const SOLO_ENCABEZADO_KEY = "__solo_encabezado";
+const SUBTOTAL_KEY = "__subtotal";
 
 function ensureSoloEncabezadoColumn(state) {
   if (state.columns.some((c) => c.key === SOLO_ENCABEZADO_KEY)) return;
@@ -21,6 +22,20 @@ function ensureSoloEncabezadoColumn(state) {
     readonly: true,
     editable: false,
   });
+}
+
+/** Columna calculada (monto sin impuestos); solo visible con Solo encabezado. */
+function ensureSubtotalColumn(state) {
+  if (state.columns.some((c) => c.key === SUBTOTAL_KEY)) return;
+  const priceIdx = state.columns.findIndex((c) => c.key === "invoice_line_ids/price_unit");
+  const col = {
+    key: SUBTOTAL_KEY,
+    label: "Subtotal",
+    type: "computed",
+    editable: false,
+  };
+  if (priceIdx >= 0) state.columns.splice(priceIdx + 1, 0, col);
+  else state.columns.push(col);
 }
 
 export function odooImportButtonLabel() {
@@ -84,6 +99,7 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   ensureOtroImpuestoColumns(state, 1);
   ensureAddOtroImpuestoActionColumn(state);
   ensureSoloEncabezadoColumn(state);
+  ensureSubtotalColumn(state);
   state.purchaseColumnDefs = (state.columns || []).filter((c) =>
     PURCHASE_COLUMN_KEYS.includes(c.key)
   );

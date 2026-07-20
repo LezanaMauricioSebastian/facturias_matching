@@ -114,7 +114,16 @@ body.embed-mode .contextRow .status { margin-top: 0; }
 body.embed-mode .tableScroll { max-height: min(62vh, 680px); }
 body.embed-mode .card { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05); }
 body.embed-mode .processCard { padding: 10px 12px; }
-body.embed-mode .comprobanteCardHeader { display: none; }
+body.embed-mode .comprobanteCardTitle { display: none; }
+body.embed-mode .comprobanteCardHeader {
+  padding: 8px 10px;
+  background: #eef2f7;
+  border-bottom: 1px solid var(--line);
+}
+body.embed-mode .comprobanteOcControls {
+  width: 100%;
+  justify-content: flex-start;
+}
 body.embed-mode .downloadBtn {
   padding: 8px 14px;
   min-width: 0;
@@ -143,6 +152,7 @@ body.embed-mode .headerActionBtn.secondary {
 label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
 
 input, select {
+  box-sizing: border-box;
   background: #fff;
   color: var(--text);
   border: 1px solid var(--line);
@@ -218,6 +228,22 @@ button:disabled { opacity:.55; cursor:not-allowed; }
   max-height: 520px;
   border: 1px solid var(--line);
   border-radius: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.tableScroll::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.tableScroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.tableScroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .tableScroll #tableWrap { min-width: 100%; }
@@ -235,20 +261,45 @@ thead th {
   line-height: 1.25;
 }
 
-th, td { padding:8px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th, td {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+td {
+  /* Evita que inputs/combobox se desborden a la columna siguiente. */
+  overflow: hidden;
+}
 th { text-align:left; position:sticky; top:0; z-index:1; }
 tbody tr:hover td { background: rgba(37,99,235,.03); }
-td input, td select { min-width:auto; width:100%; padding:8px 10px; border-radius:10px; }
-td.readonly { color: rgba(15,23,42,.75); }
+td input, td select {
+  box-sizing: border-box;
+  /* 0 (no auto): en flex/grid el min intrínseco del <input> empuja a la col. siguiente */
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+td.readonly {
+  color: rgba(15,23,42,.75);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .combobox {
   position: relative;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .combobox-input {
-  min-width: auto !important;
+  box-sizing: border-box;
+  min-width: 0 !important;
   width: 100%;
+  max-width: 100%;
   padding: 8px 10px;
   border-radius: 10px;
 }
@@ -300,6 +351,7 @@ td.readonly { color: rgba(15,23,42,.75); }
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+
 select.selectLoading {
   cursor: wait;
   color: var(--muted);
@@ -333,12 +385,17 @@ select.selectLoading {
 
 .downloadBtn svg { width: 18px; height: 18px; }
 
-.cellWithHint { vertical-align: top; }
+.cellWithHint {
+  vertical-align: top;
+  overflow: hidden;
+}
 .cellStack {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .fieldHint {
   font-size: 11px;
@@ -431,6 +488,45 @@ select.selectLoading {
   font-size: 13px;
   padding: 8px 12px;
 }
+.ocPickerRows {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.ocPickerRow {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.ocPickerCompLabel {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ocSearchBtn {
+  min-width: auto;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.ocResearchBtn {
+  min-width: auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.ocResearchBtn:hover {
+  color: var(--text);
+}
 
 .ocPickerDialog {
   border: none;
@@ -509,6 +605,65 @@ select.selectLoading {
   font-size: 12px;
   color: var(--muted);
 }
+.ocCandidateTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 2px 0;
+}
+.ocReceiptBadge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #f1f5f9;
+  color: var(--muted);
+}
+.ocReceiptBadge.isFull {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+.ocReceiptBadge.isPartial {
+  background: #fef9c3;
+  border-color: #fde047;
+  color: #854d0e;
+}
+.ocReceiptBadge.isPending {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+.ocDeliverTo {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ocDeselectRow {
+  margin-bottom: 10px;
+}
+.ocDeselectBtn {
+  width: 100%;
+  border: 1px dashed var(--line);
+  background: #f8fafc;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ocDeselectBtn:hover {
+  background: #eef2ff;
+}
+.ocDeselectBtn.isActive {
+  border-style: solid;
+  border-color: rgba(37, 99, 235, 0.55);
+  color: #1d4ed8;
+  cursor: default;
+}
 .ocCandidateBody {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--line);
@@ -559,13 +714,23 @@ select.selectLoading {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
-  overflow: hidden;
+  /* visible: la tabla ancha ensancha el wrap y .tableScroll hace un solo scroll-x */
+  overflow: visible;
 }
 
 .comprobanteCardHeader {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--head);
+  border-radius: 10px 10px 0 0;
+}
+
+.comprobanteCardHeaderMain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .comprobanteCardTitle {
@@ -574,20 +739,93 @@ select.selectLoading {
   font-weight: 700;
   color: #0b1324;
   line-height: 1.3;
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+
+.comprobanteOcControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.comprobanteOcRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+}
+
+.comprobanteOcRow .ocSearchBtn,
+.comprobanteOcRow .ocPickerBtn {
+  min-width: auto;
+  font-size: 13px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #0b1324;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.comprobanteOcRow .ocSearchBtn:hover,
+.comprobanteOcRow .ocPickerBtn:hover {
+  background: #f8fafc;
+}
+
+.ocOverwritePrice {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  margin-left: 0;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.ocOverwritePrice.isDisabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ocOverwritePrice input {
+  margin: 0;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  cursor: inherit;
 }
 
 .comprobanteTableMount {
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .comprobanteTableMount table {
   margin: 0;
 }
 
+/* Cada tarjeta trae su propio thead; sticky global en th solo estorba al scrollear. */
+.comprobanteTableMount thead th {
+  position: static;
+}
+
 .comprobanteFooter {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--line);
   background: #fafbfd;
+  border-radius: 0 0 10px 10px;
 }
 
 .comprobanteTotalsTable {
