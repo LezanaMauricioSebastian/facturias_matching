@@ -15,7 +15,23 @@ import {
   updateSummaryFromState,
 } from "./procesoShared.js";
 
-export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverrides = {}) {
+/**
+ * Solo GET /api/proceso — sin tocar DOM.
+ * Sirve para solapar con bootstrap en deep-link (?proceso=).
+ */
+export async function fetchProcesoPayload(state, pn, empresa, urlOverrides = {}) {
+  if (empresa) state.empresa = empresa;
+  syncOdooProfileState(state, urlOverrides);
+  const apiUrl = `/api/proceso/${encodeURIComponent(pn)}${buildApiQuery({
+    empresa,
+    ...apiOdooQueryParams(state),
+  })}`;
+  const res = await fetch(apiUrl);
+  const data = await res.json();
+  return { res, data };
+}
+
+export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverrides = {}, opts = {}) {
   const empresa = String(urlOverrides.empresa ?? refs.companyNumberEl?.value ?? "").trim();
   const pn = String(urlOverrides.proceso ?? refs.processNumberEl?.value ?? "").trim();
   if (empresa) state.empresa = empresa;
@@ -33,12 +49,13 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
   clearAutoSaveTimer(state);
 
   try {
-    const apiUrl = `/api/proceso/${encodeURIComponent(pn)}${buildApiQuery({
-      empresa,
-      ...apiOdooQueryParams(state),
-    })}`;
-    const res = await fetch(apiUrl);
-    const data = await res.json();
+    let res;
+    let data;
+    if (opts.prefetched) {
+      ({ res, data } = opts.prefetched);
+    } else {
+      ({ res, data } = await fetchProcesoPayload(state, pn, empresa, urlOverrides));
+    }
     if (!res.ok) throw new Error(data?.detail || "Error desconocido");
 
     applyProcesoPayload(state, refs, data, pn, empresa);

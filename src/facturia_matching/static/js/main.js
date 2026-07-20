@@ -4,6 +4,7 @@ import {
   loadMetaAndOptions,
   odooImportButtonLabel,
   updateOdooTenantBadge,
+  fetchProcesoPayload,
   buscarProceso,
   descargarCsv,
   importarOdoo,
@@ -25,8 +26,19 @@ async function init() {
   }
 
   const urlParams = getUrlParams();
+  const deepLinkProceso = Boolean(urlParams.proceso);
 
-  setStatusBound("Cargando configuración…");
+  // Deep-link: solapar GET bootstrap ∥ GET proceso (apply sigue en orden).
+  let procesoPrefetch = null;
+  if (deepLinkProceso) {
+    setStatusBound("Cargando configuración y proceso…");
+    const empresa = String(urlParams.empresa || "").trim();
+    const pn = String(urlParams.proceso || "").trim();
+    procesoPrefetch = fetchProcesoPayload(state, pn, empresa, urlParams);
+  } else {
+    setStatusBound("Cargando configuración…");
+  }
+
   refs.btnBuscar.disabled = true;
   refs.btnDescargar.disabled = true;
   try {
@@ -35,11 +47,13 @@ async function init() {
       refs.btnOdooImport.textContent = odooImportButtonLabel(state);
     }
     updateOdooTenantBadge(state, refs);
-    setStatusBound("");
+    if (!deepLinkProceso) setStatusBound("");
     refs.btnBuscar.disabled = false;
   } catch (e) {
     setStatusBound(e?.message || String(e), "bad");
     refs.btnBuscar.disabled = true;
+    // Prefetch en vuelo: no aplicar si bootstrap falló.
+    procesoPrefetch = null;
   }
 
   wireOcPicker(state, refs, handlers, setStatusBound);
@@ -63,11 +77,21 @@ async function init() {
     if (e.key === "Enter") buscarProceso(state, refs, setStatusBound, handlers);
   });
 
-  if (urlParams.proceso) {
+  if (deepLinkProceso && refs.btnBuscar && !refs.btnBuscar.disabled) {
     refs.processNumberEl.value = urlParams.proceso;
-    if (refs.btnBuscar && !refs.btnBuscar.disabled) {
-      await buscarProceso(state, refs, setStatusBound, handlers, urlParams);
+    let prefetched = null;
+    if (procesoPrefetch) {
+      try {
+        prefetched = await procesoPrefetch;
+      } catch (e) {
+        // Fall back to a fresh fetch inside buscarProceso.
+        prefetched = null;
+        setStatusBound(e?.message || String(e), "bad");
+      }
     }
+    await buscarProceso(state, refs, setStatusBound, handlers, urlParams, {
+      prefetched: prefetched || undefined,
+    });
   }
 }
 

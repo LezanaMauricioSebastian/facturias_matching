@@ -8,7 +8,7 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 
 | Archivo | Rol |
 |---------|-----|
-| `main.js` | `init()`: crea state, DOM refs, carga bootstrap, wire botones (buscar, CSV, Odoo, revertir), OC picker, auto-busca si `?proceso=` en URL. |
+| `main.js` | `init()`: crea state, DOM refs, carga bootstrap, wire botones (buscar, CSV, Odoo, revertir), OC picker. Con `?proceso=` en URL: dispara **en paralelo** `fetchProcesoPayload` ∥ `loadMetaAndOptions`, aplica bootstrap y luego el payload del proceso. |
 | `app.js` | Legacy/alternativo si existe; el flujo principal es `main.js`. |
 | `core/state.js` | **`createState()`**: `rows`, `options`, `columns`, `purchaseMatching`, `comprobanteTaxModes`, flags autosave. |
 | `core/dom.js` | Referencias a elementos HTML (`getDomRefs`), `setStatus`. |
@@ -22,7 +22,7 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 |---------|-----|
 | `index.js` | Re-export de submódulos. |
 | `bootstrap.js` | **`loadMetaAndOptions`**: GET `/api/bootstrap`; llena `state.options`, `state.columns`, perfil Odoo. |
-| `proceso.js` | **`buscarProceso`**, **`revertirOriginal`**: GET proceso, PUT conversion implícito vía autosave path. |
+| `proceso.js` | **`fetchProcesoPayload`** (solo GET), **`buscarProceso`** (acepta `prefetched`), **`revertirOriginal`**. |
 | `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). |
 | `autoSave.js` | Debounce PUT `/api/proceso/{n}/conversion`; indicador `dirty` / `saveStatus`. |
 | `export.js` | **`descargarCsv`**, **`importarOdoo`**, **`odooImportButtonLabel`**. |
@@ -158,7 +158,7 @@ flowchart LR
   compView --> table
 ```
 
-1. **Carga**: bootstrap → opciones + columnas → usuario busca proceso → `state.rows` + `purchaseMatching`.
+1. **Carga**: bootstrap → opciones + columnas → usuario busca proceso → `state.rows` + `purchaseMatching`. Deep-link (`?proceso=`): fetch bootstrap ∥ proceso; apply en ese orden.
 2. **Edición celda**: handler → actualiza row → `syncFacIvaMontosFromLines` → re-render fila/comprobante → autosave.
 3. **Export**: `validateRows` → POST `/api/csv` o `/api/odoo/import`.
 
