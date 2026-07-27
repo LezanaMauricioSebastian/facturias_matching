@@ -1,6 +1,8 @@
 """Parse FacturIA process JSON and build UI rows."""
 
 import json
+import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -31,9 +33,14 @@ from facturia_matching.padron.taxes import (
     apply_padron_taxes_to_row,
     get_tax_name_by_id,
 )
-from facturia_matching.core.comprobante_tax import sanitize_inflated_line_amounts
+from facturia_matching.core.comprobante_tax import (
+    propagate_single_footer_iva_to_lines,
+    sanitize_inflated_line_amounts,
+)
 from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data
 from facturia_matching.infra.normalization import doc_type_label, normalize, normalize_comprobante_number, normalize_date_ddmmyyyy
+
+logger = logging.getLogger(__name__)
 
 _FAC_SUBTOTAL_KEYS = [
     "subtotal",
@@ -52,7 +59,9 @@ _FAC_SUBTOTAL_KEYS = [
 def parse_process_json(
     process_number: str, empresa: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
+    t0 = time.perf_counter()
     catalog, odoo_ok = get_catalog()
+    t_catalog = time.perf_counter()
     maps = (catalog or {}).get("maps") or {}
     doc_label_map = maps.get("document_type_labels") or {}
     proveedores_odoo = (catalog or {}).get("proveedores") or []
@@ -62,6 +71,7 @@ def parse_process_json(
     partner_cuit_to_id = (catalog or {}).get("partner_cuit_to_id") or {}
 
     row = get_process(int(process_number), empresa=empresa)
+    t_mysql = time.perf_counter()
     if not row:
         return ([], [], {"enabled": False})
 
@@ -246,12 +256,29 @@ def parse_process_json(
             out_rows.append(row_out)
 
     etiqueta_opts = sorted({p for p in etiqueta_opts if p})
+    t_rows = time.perf_counter()
 
     purchase_summary: Dict[str, Any] = {"enabled": False}
     if odoo_ok and out_rows:
         purchase_summary = enrich_rows_with_purchase_data(out_rows, fetch_candidates=False)
+    t_enrich = time.perf_counter()
 
     sanitize_inflated_line_amounts(out_rows)
+    propagate_single_footer_iva_to_lines(out_rows)
+
+    logger.warning(
+        "timing parse_process_json pn=%s facturas=%s rows=%s odoo_ok=%s "
+        "catalog=%.0fms mysql=%.0fms rows_build=%.0fms enrich=%.0fms total=%.0fms",
+        process_number,
+        len(facturas),
+        len(out_rows),
+        odoo_ok,
+        (t_catalog - t0) * 1000,
+        (t_mysql - t_catalog) * 1000,
+        (t_rows - t_mysql) * 1000,
+        (t_enrich - t_rows) * 1000,
+        (time.perf_counter() - t0) * 1000,
+    )
 
     return (out_rows, etiqueta_opts, purchase_summary)
 

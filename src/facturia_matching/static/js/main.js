@@ -22,6 +22,7 @@ async function init() {
   const { handlers } = createHandlers({ state, refs, setStatusBound });
 
   if (isEmbedMode()) {
+    document.documentElement.classList.add("embed-mode");
     document.body.classList.add("embed-mode");
   }
 

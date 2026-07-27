@@ -1,4 +1,4 @@
-import { apiContextBody } from "../utils/index.js";
+import { apiContextBody, apiOdooQueryParams, buildApiQuery } from "../utils/index.js";
 import { groupBounds } from "../singleLine/index.js";
 import { renderComprobantes } from "../comprobanteView/index.js";
 import { clearAutoSaveTimer } from "./autoSave.js";
@@ -7,6 +7,35 @@ import {
   purchaseStatusPart,
   updateSummaryFromState,
 } from "./procesoShared.js";
+
+const UOM_ROW_KEYS = [
+  "__um_proveedor",
+  "__um_empresa",
+  "__um_empresa_id",
+  "__qty_original",
+  "__qty_escalada",
+  "__um_factor",
+  "__um_note",
+  "__product_suggested",
+  "invoice_line_ids/quantity",
+  "invoice_line_ids/product_id",
+];
+
+function cacheProductUoms(state, productId, uoms) {
+  if (!state.uomOptionsByProductId) state.uomOptionsByProductId = {};
+  const pid = String(productId || "").trim();
+  if (!pid || !Array.isArray(uoms)) return;
+  state.uomOptionsByProductId[pid] = uoms.map((u) => ({
+    id: String(u.id ?? u.value ?? ""),
+    name: String(u.name ?? u.label ?? ""),
+  }));
+}
+
+function applyUomRowUpdate(row, updated) {
+  for (const k of UOM_ROW_KEYS) {
+    if (updated[k] !== undefined) row[k] = updated[k];
+  }
+}
 
 export async function rematchPurchase(state, refs, setStatusFn, handlers, rowIdx) {
   const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
@@ -116,6 +145,107 @@ export async function selectOc(state, refs, setStatusFn, handlers, comprobanteId
     setStatusFn(e?.message || String(e), "bad");
   } finally {
     state.skipAutoSave = false;
+  }
+}
+
+export async function fetchProductUoms(state, productId) {
+  const pn = String(state.processNumber || "").trim();
+  const pid = String(productId || "").trim();
+  if (!pn || !pid) return [];
+  const cached = state.uomOptionsByProductId?.[pid];
+  if (Array.isArray(cached) && cached.length) return cached;
+  const qs = buildApiQuery({
+    product_id: pid,
+    ...(state.empresa ? { empresa: state.empresa } : {}),
+    ...apiOdooQueryParams(state),
+  });
+  const res = await fetch(`/api/proceso/${encodeURIComponent(pn)}/product-uoms${qs}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "No se pudieron cargar las UMs");
+  cacheProductUoms(state, pid, data.uoms || []);
+  return state.uomOptionsByProductId[pid] || [];
+}
+
+export async function rematchProductUom(state, refs, setStatusFn, handlers, rowIdx) {
+  const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
+  if (!pn) return;
+  const row = state.rows?.[rowIdx];
+  if (!row) return;
+
+  const productId = String(row["invoice_line_ids/product_id"] || "").trim();
+  // Optimista: limpia sugerencia; si no hay producto, limpia UM localmente.
+  row.__product_suggested = "";
+  if (!productId) {
+    row.__um_empresa = "";
+    row.__um_empresa_id = "";
+    row.__um_factor = "";
+    row.__um_note = "";
+    handlers?.onRerender?.();
+    return;
+  }
+
+  setStatusFn?.("Actualizando UM del producto…");
+  try {
+    const body = {
+      row_index: rowIdx,
+      product_id: productId,
+      row: { ...row },
+      ...apiContextBody(state),
+    };
+    const res = await fetch(`/api/proceso/${encodeURIComponent(pn)}/rematch-uom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.detail || "No se pudo actualizar la UM");
+    applyUomRowUpdate(row, data.row || {});
+    cacheProductUoms(state, productId, data.uoms || []);
+    handlers?.onRerender?.();
+    const um = row.__um_empresa || "";
+    if (um) setStatusFn?.(`UM: ${um}`, "ok");
+    else setStatusFn?.("Producto sin UM inferida", "ok");
+  } catch (e) {
+    setStatusFn?.(e?.message || String(e), "bad");
+    handlers?.onRerender?.();
+  }
+}
+
+export async function selectProductUom(state, refs, setStatusFn, handlers, rowIdx, uomId) {
+  const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
+  if (!pn) return;
+  const row = state.rows?.[rowIdx];
+  if (!row) return;
+
+  const productId = String(row["invoice_line_ids/product_id"] || "").trim();
+  const uid = String(uomId || "").trim();
+  if (!productId || !uid) return;
+
+  setStatusFn?.("Actualizando UM…");
+  try {
+    const body = {
+      row_index: rowIdx,
+      product_id: productId,
+      uom_id: uid,
+      row: { ...row },
+      ...apiContextBody(state),
+    };
+    const res = await fetch(`/api/proceso/${encodeURIComponent(pn)}/rematch-uom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.detail || "No se pudo actualizar la UM");
+    applyUomRowUpdate(row, data.row || {});
+    cacheProductUoms(state, productId, data.uoms || []);
+    handlers?.onRerender?.();
+    const um = row.__um_empresa || "";
+    if (um) setStatusFn?.(`UM: ${um}`, "ok");
+    else setStatusFn?.("UM actualizada", "ok");
+  } catch (e) {
+    setStatusFn?.(e?.message || String(e), "bad");
+    handlers?.onRerender?.();
   }
 }
 

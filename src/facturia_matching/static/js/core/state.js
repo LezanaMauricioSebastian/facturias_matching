@@ -32,6 +32,7 @@ export function createState() {
     empresaOdooProfiles: {},
     empresaOdooLabels: {},
     purchaseMatching: {},
+    uomOptionsByProductId: {},
     comprobanteTaxModes: {},
   };
 }

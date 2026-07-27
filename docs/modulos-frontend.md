@@ -23,10 +23,10 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 | `index.js` | Re-export de submódulos. |
 | `bootstrap.js` | **`loadMetaAndOptions`**: GET `/api/bootstrap`; llena `state.options`, `state.columns`, perfil Odoo. |
 | `proceso.js` | **`fetchProcesoPayload`** (solo GET), **`buscarProceso`** (acepta `prefetched`), **`revertirOriginal`**. |
-| `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). |
+| `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). **`syncPurchaseColumns`**: muestra columnas UM/OC si `show_purchase_columns` o si las filas ya traen `__um_empresa` / `__oc_line_id` (reload). |
 | `autoSave.js` | Debounce PUT `/api/proceso/{n}/conversion`; indicador `dirty` / `saveStatus`. |
 | `export.js` | **`descargarCsv`**, **`importarOdoo`**, **`odooImportButtonLabel`**. |
-| `purchase.js` | POST `select-oc`, `rematch-purchase`. |
+| `purchase.js` | POST `select-oc`, `rematch-purchase`, `rematch-uom` (UM al cambiar producto o al elegir UM); GET `product-uoms`; cache `state.uomOptionsByProductId`. |
 
 Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.js`.
 
@@ -39,7 +39,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `index.js` | Orquesta render + handlers de tabla. |
 | `columns.js` | Definición de columnas visibles (alineado con `core/constants.py`). |
 | `constants.js` | Keys readonly, clases CSS, índices. |
-| `render.js` | Pinta `<table>`: celdas editables, combobox attach, agrupación visual por comprobante. |
+| `render.js` | Pinta `<table>`: celdas editables, combobox attach, selector UM por producto, agrupación visual por comprobante. |
 | `handlers.js` | Eventos input/blur/change en celdas; sincroniza `state.rows`; llama tax sync y autosave. |
 | `totals.js` | Fila de totales globales si aplica. |
 
@@ -65,7 +65,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`; `lineIvaMonto` respeta `iva_monto` explícito. |
 | `ivaBreakdown.js` | Desglose por alícuota en el pie; en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
 | `groups.js` | Agrupa `state.rows` por `__comprobante_idx`. |
-| `migration.js` | Normaliza filas viejas guardadas (campos legacy). |
+| `migration.js` | Normaliza filas viejas; **`propagateSingleFooterIvaToLines`**: un solo IVA en el pie → `iva_pct` en todas las líneas vacías. |
 
 Ver también [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
@@ -102,7 +102,7 @@ Selector de orden de compra cuando hay purchase matching. **UI: controles en el 
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | **`wireOcPicker`**. |
-| `render.js` | **`renderOcHeaderControls`**: controles por comprobante en su header. Botón `secondary` **«Buscar OCs similares»** → «OC: {nombre} ▾» o «OC: Sin OC ▾»; `↻` re-busca. Checkbox **«Sobreescribir precio de la OC»** (tilde + etiqueta en fila), deshabilitado sin OC. La barra global `#ocPickerBar` queda oculta (legacy). |
+| `render.js` | **`renderOcHeaderControls`**: controles por comprobante en su header. Botón `secondary` **«Buscar OCs similares»** → «OC: {nombre} ▾» o «OC: Sin OC ▾»; `↻` re-busca. Tras reload, si hay `__selected_oc_*` / `selected_oc_by_comprobante`, prioriza la pastilla «OC: {nombre}» aunque no haya candidatos en memoria. Checkbox **«Sobreescribir precio de la OC»** (tilde + etiqueta en fila), deshabilitado sin OC; se oculta junto con el botón si el proveedor no tiene OCs. La barra global `#ocPickerBar` queda oculta (legacy). |
 | `wire.js` | Delegación de eventos en `#tableWrap`: buscar/abrir; si se intenta abrir sin candidatos, ejecuta `searchOc` primero; change del checkbox → `__overwrite_oc_price` + autosave; modal → `selectOc`. |
 
 API: `POST /api/proceso/{n}/search-oc` (candidatos bajo demanda), `POST .../select-oc` (`order_id=0` = Sin OC / deseleccionar) y `POST .../rematch-purchase` al cambiar proveedor. El rematch actualiza `oc_provider_has_ocs_by_comprobante` y hace aparecer/desaparecer el botón dinámicamente. Elegir Sin OC no elimina el acceso al selector.
@@ -117,7 +117,7 @@ UI para modo **Solo encabezado** (`__solo_encabezado`).
 | `collapse.js` | Colapsa multi-línea a una fila; setea `__solo_encabezado`. |
 | `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**. |
 
-Con el tilde activo: columna **Subtotal** (`__subtotal`, calculada); **Monto IVA** y **Monto Otros Impuestos** visibles en la fila; pie oculto en `comprobanteView/footer.js`.
+Con el tilde activo: columna **Subtotal** (`__subtotal`, siempre cantidad × precio); **Monto IVA** y **Monto Otros Impuestos** visibles en la fila; pie oculto en `comprobanteView/footer.js`.
 
 ---
 
@@ -168,8 +168,17 @@ flowchart LR
 
 | Archivo | Rol |
 |---------|-----|
-| `static/html/index.html` | Shell: input proceso, botones, `#table-wrap`, scripts. |
+| `static/html/index.html` | Shell: input proceso, botones, `#tableWrap`, `#totalGeneral`, scripts. |
 | `static/css/styles.css` | Layout tabla, modos embed, comprobante footer, combobox. |
+
+**Scroll / pies fijos**
+
+| Contenedor | Scroll | Qué queda fijo |
+|------------|--------|----------------|
+| `.tableScroll` | **vertical** (lista) con `max-height` | badges + **Total del proceso** (`.footerBar` fuera del scroll) |
+| `.comprobanteTableMount` | horizontal por tarjeta | header OC + pie del comprobante |
+
+En embed/deep-link: `html/body` con `overflow: hidden` + flex; solo scrollea `.tableScroll`. El Total del proceso queda siempre visible abajo de la tarjeta.
 
 Cache bust: `routes.root()` reemplaza `?v=` con mtime de `styles.css`.
 

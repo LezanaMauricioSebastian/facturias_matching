@@ -20,7 +20,7 @@ export function findAddOtroImpuestoInsertAt(columns) {
     }
   }
   if (lastTaxIdx >= 0) return lastTaxIdx + 1;
-  const purchaseIdx = columns.findIndex((c) => c.key === "__um_proveedor");
+  const purchaseIdx = columns.findIndex((c) => c.key === "__um_empresa");
   if (purchaseIdx >= 0) return purchaseIdx;
   const totalIdx = columns.findIndex((c) => c.key === "__total_linea");
   return totalIdx >= 0 ? totalIdx : columns.length;

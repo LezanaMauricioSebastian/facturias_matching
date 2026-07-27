@@ -87,6 +87,19 @@ export function handleSelectionChange(state, r, k, ctx) {
     handlers.onRerender?.();
     return;
   }
+  if (k === "invoice_line_ids/product_id") {
+    if (handlers.onRematchProductUom) {
+      handlers.onRematchProductUom(r);
+      return;
+    }
+  }
+  if (k === "__um_empresa") {
+    if (handlers.onSelectProductUom) {
+      const uomId = String(state.rows[r]?.__um_empresa_id || "").trim();
+      if (uomId) handlers.onSelectProductUom(r, uomId);
+      return;
+    }
+  }
   if (k === "l10n_latam_document_type_id") {
     const docTypeRaw = String(state.rows[r]?.[k] ?? "").trim();
     const ivaKey = "iva_pct";

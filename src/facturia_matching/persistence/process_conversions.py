@@ -1,7 +1,9 @@
 """Persist edited rows in MySQL process_conversions (Odoo template 99)."""
 
 import json
+import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,6 +16,8 @@ from facturia_matching.odoo.env import (
     current_odoo_profile,
     get_conversion_template_id,
 )
+
+logger = logging.getLogger(__name__)
 
 CONVERSIONS_TABLE = "process_conversions"
 EXPORT_TEMPLATES_TABLE = "export_templates"
@@ -331,27 +335,45 @@ def load_process_rows(
     from facturia_matching.persistence.back_check import get_process
     from facturia_matching.core.process import attach_facturia_item_quantities, backfill_fac_iva_montos_from_process, parse_process_json
     from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data
-    from facturia_matching.core.comprobante_tax import sanitize_inflated_line_amounts
+    from facturia_matching.core.comprobante_tax import (
+        propagate_single_footer_iva_to_lines,
+        sanitize_inflated_line_amounts,
+    )
+
+    t0 = time.perf_counter()
+    profile = current_odoo_profile()
+    template_id = get_conversion_template_id()
 
     process_row = get_process(process_number, empresa=empresa)
+    t_mysql = time.perf_counter()
     if not process_row:
+        logger.warning(
+            "timing load_process_rows pn=%s path=generated reason=process_not_found "
+            "profile=%s template_id=%s mysql=%.0fms total=%.0fms",
+            process_number,
+            profile,
+            template_id,
+            (t_mysql - t0) * 1000,
+            (time.perf_counter() - t0) * 1000,
+        )
         return ([], [], {"enabled": False}, "generated", None)
 
     process_id = process_row.get("id")
     conversion_meta: Optional[Dict[str, Any]] = None
 
-    profile = current_odoo_profile()
-    template_id = get_conversion_template_id()
-
     if not regenerate and process_id:
         saved = get_saved_conversion(int(process_id))
+        t_lookup = time.perf_counter()
         if saved and saved.get("rows"):
             from facturia_matching.persistence.saved_row_remap import remap_saved_rows_to_catalog
 
             filas = remap_saved_rows_to_catalog(saved["rows"])
+            t_remap = time.perf_counter()
             filas = attach_facturia_item_quantities(filas, process_number, empresa=empresa)
             filas = backfill_fac_iva_montos_from_process(filas, process_number, empresa=empresa)
+            propagate_single_footer_iva_to_lines(filas)
             _strip_empty_extra_otro_impuesto_slots(filas)
+            t_attach = time.perf_counter()
             conversion_meta = {
                 "id": saved.get("id"),
                 "saved_at": _format_dt(saved.get("updated_at") or saved.get("created_at")),
@@ -360,6 +382,7 @@ def load_process_rows(
                 "template_id": template_id,
             }
             purchase_summary = enrich_rows_with_purchase_data(filas, fetch_candidates=False)
+            t_enrich = time.perf_counter()
             sanitize_inflated_line_amounts(filas)
             etiqueta_opts: List[str] = []
             for row in filas:
@@ -367,10 +390,48 @@ def load_process_rows(
                 if desc and str(desc).strip():
                     etiqueta_opts.append(str(desc).strip())
             etiqueta_opts = sorted({p for p in etiqueta_opts if p})
+            logger.warning(
+                "timing load_process_rows pn=%s path=saved reason=ok conversion_id=%s "
+                "profile=%s template_id=%s rows=%s mysql=%.0fms lookup=%.0fms "
+                "remap=%.0fms attach=%.0fms enrich=%.0fms total=%.0fms",
+                process_number,
+                saved.get("id"),
+                profile,
+                template_id,
+                len(filas),
+                (t_mysql - t0) * 1000,
+                (t_lookup - t_mysql) * 1000,
+                (t_remap - t_lookup) * 1000,
+                (t_attach - t_remap) * 1000,
+                (t_enrich - t_attach) * 1000,
+                (time.perf_counter() - t0) * 1000,
+            )
             return (filas, etiqueta_opts, purchase_summary, "saved", conversion_meta)
 
+        reason = "no_saved_conversion" if not saved else "saved_empty_rows"
+    else:
+        t_lookup = t_mysql
+        reason = "regenerate_flag" if regenerate else "no_process_id"
+
+    t_before_parse = time.perf_counter()
     filas, etiqueta_opts, purchase_summary = parse_process_json(process_number, empresa=empresa)
+    t_parse = time.perf_counter()
     _strip_empty_extra_otro_impuesto_slots(filas)
+    logger.warning(
+        "timing load_process_rows pn=%s path=generated reason=%s "
+        "profile=%s template_id=%s process_id=%s rows=%s "
+        "mysql=%.0fms lookup=%.0fms parse=%.0fms total=%.0fms",
+        process_number,
+        reason,
+        profile,
+        template_id,
+        process_id,
+        len(filas or []),
+        (t_mysql - t0) * 1000,
+        (t_lookup - t_mysql) * 1000,
+        (t_parse - t_before_parse) * 1000,
+        (time.perf_counter() - t0) * 1000,
+    )
     return (filas, etiqueta_opts, purchase_summary, "generated", conversion_meta)
 
 

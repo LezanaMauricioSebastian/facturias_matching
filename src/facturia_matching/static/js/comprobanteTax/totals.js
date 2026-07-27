@@ -109,8 +109,10 @@ export function computeComprobanteTotals(groupRows, mode) {
     ivaOdoo = ivaFac || 0;
   }
 
+  // En header/mixed el pie FacturIA manda: Base = __fac_subtotal (no salta al
+  // poner IVA en una línea). Solo en mode line usamos Σ(qty×precio).
   let baseOdoo;
-  if (taxMode === "header" && baseFac != null) {
+  if ((taxMode === "header" || taxMode === "mixed") && baseFac != null) {
     baseOdoo = baseFac;
   } else {
     baseOdoo = baseLines;

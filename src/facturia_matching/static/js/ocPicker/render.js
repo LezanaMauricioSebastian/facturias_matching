@@ -166,17 +166,9 @@ export function renderOcHeaderControls(state, compKey) {
 
   let ocButtons = "";
   if (showOcPill) {
-    if (!searched) {
-      ocButtons = `<button type="button" class="ocSearchBtn secondary" data-search-oc="${escapeHtml(key)}">
-        Buscar OCs similares
-      </button>`;
-    } else if (!hasSelectedOc) {
-      // Tras «Sin OC»: queda como selector OC para reabrir el modal, sin número de factura.
-      ocButtons = `<button type="button" class="ocPickerBtn secondary" data-open-oc="${escapeHtml(key)}">
-        OC: Sin OC ▾
-      </button>
-      <button type="button" class="ocResearchBtn" data-search-oc="${escapeHtml(key)}" title="Buscar de nuevo">↻</button>`;
-    } else {
+    // Prioridad: OC guardada/seleccionada (sobrevive reload vía __selected_oc_*),
+    // luego «Sin OC» si ya se buscó, si no el CTA de buscar.
+    if (hasSelectedOc) {
       const ocName =
         selectedOcName(pm, key) ||
         String(
@@ -189,7 +181,22 @@ export function renderOcHeaderControls(state, compKey) {
         OC: ${escapeHtml(ocName)} ▾
       </button>
       <button type="button" class="ocResearchBtn" data-search-oc="${escapeHtml(key)}" title="Buscar de nuevo">↻</button>`;
+    } else if (!searched) {
+      ocButtons = `<button type="button" class="ocSearchBtn secondary" data-search-oc="${escapeHtml(key)}">
+        Buscar OCs similares
+      </button>`;
+    } else {
+      // Tras «Sin OC»: queda como selector OC para reabrir el modal, sin número de factura.
+      ocButtons = `<button type="button" class="ocPickerBtn secondary" data-open-oc="${escapeHtml(key)}">
+        OC: Sin OC ▾
+      </button>
+      <button type="button" class="ocResearchBtn" data-search-oc="${escapeHtml(key)}" title="Buscar de nuevo">↻</button>`;
     }
+  }
+
+  // Sin OCs del proveedor: no mostrar ni pastilla ni checkbox.
+  if (!showOcPill) {
+    return "";
   }
 
   const disabledAttr = hasSelectedOc ? "" : " disabled";
@@ -200,10 +207,6 @@ export function renderOcHeaderControls(state, compKey) {
       <input type="checkbox" data-overwrite-oc-price="${escapeHtml(key)}"${overwrite ? " checked" : ""}${disabledAttr} />
       <span>Sobreescribir precio de la OC</span>
     </label>`;
-
-  if (!showOcPill) {
-    return `<div class="comprobanteOcControls">${checkHtml}</div>`;
-  }
 
   return `<div class="comprobanteOcControls">
     <div class="ocPickerRow comprobanteOcRow">

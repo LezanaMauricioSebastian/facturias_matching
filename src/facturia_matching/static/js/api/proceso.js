@@ -26,8 +26,13 @@ export async function fetchProcesoPayload(state, pn, empresa, urlOverrides = {})
     empresa,
     ...apiOdooQueryParams(state),
   })}`;
+  const t0 = performance.now();
   const res = await fetch(apiUrl);
   const data = await res.json();
+  console.log(
+    `[timing] GET /api/proceso/${pn} ${(performance.now() - t0).toFixed(0)}ms`,
+    { empresa: empresa || null, ok: res.ok, rows: data?.rows?.length ?? null, source: data?.source || null }
+  );
   return { res, data };
 }
 

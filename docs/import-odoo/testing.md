@@ -33,7 +33,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
 | `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados |
-| `test_purchase_matching.py` | Candidatos OC bajo demanda, factura sin líneas, conservar OC ante fetch vacío, Sin OC sin perder selector, rematch dinámico por proveedor |
+| `test_purchase_matching.py` | Candidatos OC bajo demanda, factura sin líneas, conservar OC ante fetch vacío / tras reload (pastilla searched), solo encabezado con OC guardada, Sin OC sin perder selector, rematch dinámico por proveedor |
 | `test_comprobante_tax.py` | `collect_expected_*`, `_tax_ids_for_odoo_line` con modos IVA |
 | `test_iva_tax_resolve.py` | Resolución tax id Dinner vs Aliare |
 | `test_tax_pipeline.py` | Pipeline fiscal → montos esperados |
@@ -110,9 +110,12 @@ assert updates[0]["new_tax_ids"] == [63, 27]
 | Caso | Test (ejemplo) | Doc |
 |------|----------------|-----|
 | Pie IVA es-AR en JSON | `test_explicit_fac_iva_montos_parses_ar_format_strings` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
+| Base no salta al poner IVA (header→mixed) | `test_mixed_mode_keeps_fac_subtotal_as_base_odoo`, `keeps fac subtotal as Base when selecting IVA flips header→mixed` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | IIBB en fila encabezado | `test_collect_expected_iibb_from_header_only_row` | [impuestos.md](impuestos.md) |
 | Precio tras OC | `test_plan_product_price_quantity_reapply_po_price_differs` | [purchase-oc.md](purchase-oc.md) |
-| UM tras match | `test_build_line_command_includes_matched_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
+| UM tras match | `test_build_line_command_includes_matched_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_apply_uom_scaling_kg_collision_uses_target_category`, `test_apply_uom_scaling_oc_custom_pack_from_kg_invoice`, `test_match_invoice_row_oc_uses_product_purchase_uom_not_po_line` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
+| UM elegida a mano | `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
+| Sugerencia fuzzy sin rescale / sin falso positivo | `test_suggest_product_does_not_rescale_pack_qty_as_kg`, `test_line_match_score_rejects_tomate_seco_vs_triturado` | [purchase-oc.md](purchase-oc.md#sugerencia-de-producto-por-fuzzy-sin-vincular-oc) |
 | Ref domain sin latam stored | `test_find_existing_move_uses_ref_domain_not_latam_field` | [pipeline.md](pipeline.md) |
 | Reconcile preserva pie mixed | `test_reconcile_preserves_footer_iva_montos_in_mixed_mode` | [impuestos.md](impuestos.md) |
 

@@ -17,6 +17,7 @@ from facturia_matching.core.comprobante_tax import (
     line_base,
     line_iva_monto,
     line_iva_suggested,
+    propagate_single_footer_iva_to_lines,
     reconcile_fac_iva_for_import,
     sanitize_inflated_line_amounts,
     sum_line_iva_montos,
@@ -305,6 +306,65 @@ class TestComprobanteTax(unittest.TestCase):
         montos = json.loads(rows[0]["__fac_iva_montos"])
         self.assertEqual(float(montos.get("21")), 60000.0)
 
+    def test_propagate_single_footer_iva_to_lines(self):
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "__fac_iva_monto": "2183.37",
+                "__fac_iva_montos": '{"21":"2183.37"}',
+                "invoice_line_ids/name": "Servicio",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "10397",
+                "iva_pct": "",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "Otro",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "100",
+                "iva_pct": "0",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "Exento",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "50",
+                "iva_pct": "IVA Exento",
+            },
+        ]
+        self.assertEqual(propagate_single_footer_iva_to_lines(rows), 2)
+        self.assertEqual(rows[0]["iva_pct"], "21")
+        self.assertEqual(rows[1]["iva_pct"], "21")
+        self.assertEqual(rows[2]["iva_pct"], "IVA Exento")
+
+    def test_propagate_skips_multi_rate_footer(self):
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "__fac_iva_montos": '{"21":"100","10.5":"50"}',
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "1000",
+                "iva_pct": "",
+            }
+        ]
+        self.assertEqual(propagate_single_footer_iva_to_lines(rows), 0)
+        self.assertEqual(rows[0]["iva_pct"], "")
+
+    def test_propagate_maps_10_5_rate_key_to_ui(self):
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "__fac_iva_montos": '{"10.5":"105"}',
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "1000",
+                "iva_pct": "",
+            }
+        ]
+        self.assertEqual(propagate_single_footer_iva_to_lines(rows), 1)
+        self.assertEqual(rows[0]["iva_pct"], "10,5")
+
     def test_reconcile_fac_iva_when_line_differs_from_stale_header(self):
         """Regresión proceso 4: iva_monto 60000 pero __fac_iva_monto 6000 en import."""
         rows = [
@@ -489,6 +549,34 @@ class TestComprobanteTax(unittest.TestCase):
         before = rows[0]["__fac_iva_montos"]
         reconcile_fac_iva_for_import(rows)
         self.assertEqual(rows[0]["__fac_iva_montos"], before)
+
+    def test_mixed_mode_keeps_fac_subtotal_as_base_odoo(self):
+        """PDF Mauri: al poner IVA en una línea (header→mixed) Base no debe saltar."""
+        rows = [
+            {
+                "__fac_subtotal": "188102.36",
+                "__fac_iva_monto": "39501.50",
+                "__fac_iva_montos": '{"21": "39501,50"}',
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "14056",
+                "iva_pct": "21",
+            },
+            {
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "18097",
+                "iva_pct": "",
+            },
+            {
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "12421",
+                "iva_pct": "",
+            },
+        ]
+        self.assertEqual(classify_comprobante_tax_mode(rows), "mixed")
+        totals = compute_comprobante_totals(rows)
+        self.assertAlmostEqual(totals["base_odoo"], 188102.36)
+        self.assertAlmostEqual(totals["base_lines"], 76727.0)
+        self.assertAlmostEqual(totals["iva_odoo"], 39501.50)
 
 
 if __name__ == "__main__":

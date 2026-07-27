@@ -32,7 +32,7 @@ Cada factura tiene un bloque expandible con:
 
 | Campo | Qué es |
 |-------|--------|
-| **Base imponible** | Subtotal (solo lectura) |
+| **Base imponible** | Subtotal FacturIA (`__fac_subtotal`) en modos header/mixed; suma de líneas en modo line (solo lectura) |
 | **IVA 21 % / 10,5 % / …** | Montos de IVA por alícuota (editables en el pie en todos los modos) |
 | **Otros impuestos** | IIBB, percepciones, etc. (editable) |
 | **Total** | Base + IVA + otros (solo lectura) |
@@ -71,7 +71,7 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 Con el tilde **Solo encabezado** en la primera fila del comprobante:
 
 1. Si hay varias líneas, se colapsan a una sola (para deshacer: **Restaurar original**).
-2. Aparece la columna calculada **Subtotal** (monto sin impuestos: `__fac_subtotal` o cantidad × precio).
+2. Aparece la columna calculada **Subtotal** (siempre cantidad × precio; se actualiza al editar).
 3. Aparecen en la fila **Monto IVA** y **Monto Otros Impuestos** (editables; se copian desde el encabezado FacturIA si venían vacíos).
 4. Se **oculta el pie** del comprobante (base / IVA / otros / total).
 
@@ -86,7 +86,8 @@ Al confirmar **Importar a Odoo**:
 3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre **al final** del sync, después de vincular OC **y** de re-aplicar el precio de la tabla.
 4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra. Luego se aplican los montos de impuesto del pie.
 5. En el header de cada factura, **«Buscar OCs similares»** abre las OCs del proveedor. Luego queda «OC: {nombre} ▾»; si elegís no vincular, queda «OC: Sin OC ▾». Al cambiar proveedor, el botón se recalcula dinámicamente.
-6. Opcional: con OC seleccionada, el checkbox **«Sobreescribir precio de la OC»** (texto arriba, tilde debajo) hace que al importar también se actualice el precio unitario en la orden de compra de Odoo. Sin OC, la tilde queda deshabilitada.
+6. Con producto asignado, la columna **UM** permite elegir otra unidad de la misma categoría del producto (p. ej. Unidades ↔ pack). Al cambiarla se re-escala la cantidad; al importar se envía esa UM a Odoo.
+7. Opcional: con OC seleccionada, el checkbox **«Sobreescribir precio de la OC»** (texto arriba, tilde debajo) hace que al importar también se actualice el precio unitario en la orden de compra de Odoo. Sin OC seleccionada, la tilde queda deshabilitada; si el proveedor no tiene OCs, el checkbox no se muestra.
 
 Si el import dice “Actualizadas en Odoo” con “X impuestos”, los montos del pie se aplicaron. Si los montos en Odoo siguen siendo los calculados, revisá la sección [Problemas frecuentes](#problemas-frecuentes).
 
@@ -159,9 +160,9 @@ Completar **fecha de vencimiento** en FacturIA. El import propaga `invoice_date_
 
 Tras importar con OC vinculada, Odoo puede mostrar el precio negociado en la orden de compra. El import debe restaurar el **Precio** de la tabla (FacturIA). Si ves el precio viejo de la OC: confirmá que el borrador está en `draft`, que la columna Precio en la UI es la correcta, y reimportá con la versión actual del servidor.
 
-Si además necesitás que la **orden de compra** quede con el precio de la factura, marcá **«Sobreescribir precio de la OC»** en el header del comprobante e importá de nuevo. El texto está arriba y la tilde debajo; solo se habilita con una OC seleccionada.
+Si además necesitás que la **orden de compra** quede con el precio de la factura, marcá **«Sobreescribir precio de la OC»** en el header del comprobante e importá de nuevo. El texto está arriba y la tilde debajo; solo aparece si el proveedor tiene OCs y solo se habilita con una OC seleccionada.
 
-Si elegís **Sin OC**, el selector no desaparece: queda **«OC: Sin OC ▾»** para poder abrirlo y elegir otra. Al cambiar proveedor, **«Buscar OCs similares»** aparece o desaparece según las OCs del nuevo proveedor.
+Si elegís **Sin OC**, el selector no desaparece: queda **«OC: Sin OC ▾»** para poder abrirlo y elegir otra. Al cambiar proveedor, **«Buscar OCs similares»** y el checkbox **«Sobreescribir precio de la OC»** aparecen o desaparecen según las OCs del nuevo proveedor.
 
 ### La OC no aparece en el selector
 

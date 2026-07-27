@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="FacturIA">
+  <defs>
+    <linearGradient id="g" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- invoice sheet -->
+  <path fill="#fff" fill-opacity=".95" d="M9 7.5h10.5a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/>
+  <path fill="#2563eb" d="M10.5 11h9v1.6h-9zm0 3.2h9v1.6h-9zm0 3.2h6v1.6h-6z"/>
+  <!-- match check -->
+  <circle cx="22.5" cy="22.5" r="6.2" fill="#16a34a"/>
+  <path fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M19.8 22.5l1.7 1.7 3.4-3.5"/>
+</svg>

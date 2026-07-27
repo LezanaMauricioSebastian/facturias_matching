@@ -178,6 +178,33 @@ Re-ejecuta matching OC sobre las filas actuales de un comprobante. Se llama al c
 }
 ```
 
+### `POST /api/proceso/{process_number}/rematch-uom`
+
+Recalcula la UM al elegir o borrar `invoice_line_ids/product_id`, o al elegir otra UM a mano. Sin `uom_id` usa `uom_po_id` del producto (misma lógica que el matching automático). Con `uom_id`, re-escala desde qty/UM original de factura hacia esa UM (misma categoría).
+
+**Body**:
+```json
+{
+  "row_index": 0,
+  "product_id": "620",
+  "uom_id": "100",
+  "row": { },
+  "empresa": "optional"
+}
+```
+
+`uom_id` es opcional.
+
+**Respuesta**: `{ "ok": true, "row": { ...con __um_empresa_id... }, "uom": { ... }, "uoms": [ {"id": 1, "name": "Unidades"}, ... ] }`.
+
+### `GET /api/proceso/{process_number}/product-uoms`
+
+Lista UOMs de la categoría del producto **sin mutar** la fila (para abrir el selector con conversión ya guardada).
+
+**Query**: `product_id` (requerido), `empresa`, `odoo_profile_test` opcionales.
+
+**Respuesta**: `{ "ok": true, "product_id": "620", "uoms": [ {"id": 1, "name": "Unidades"}, ... ] }`.
+
 ---
 
 ## Export

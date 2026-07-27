@@ -79,9 +79,13 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   const empresa = urlParams.empresa || "";
   const odoo_profile = urlParams.odoo_profile || "";
   const odoo_cloud = urlParams.odoo_cloud || "";
-  const boot = await fetch(
-    `/api/bootstrap${buildApiQuery({ empresa, odoo_profile, odoo_cloud })}`
-  ).then((r) => r.json());
+  const url = `/api/bootstrap${buildApiQuery({ empresa, odoo_profile, odoo_cloud })}`;
+  const t0 = performance.now();
+  const boot = await fetch(url).then((r) => r.json());
+  console.log(
+    `[timing] GET /api/bootstrap ${(performance.now() - t0).toFixed(0)}ms`,
+    { empresa: empresa || null, odoo_profile: odoo_profile || null }
+  );
   const meta = boot?.metadata || {};
   const options = boot?.options || {};
   state.empresaOdooProfiles = boot?.empresa_odoo_profiles || {};
@@ -113,7 +117,6 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
 export const PURCHASE_COLUMN_KEYS = [
   "__qty_pedido",
   "__qty_recibido",
-  "__um_proveedor",
   "__um_empresa",
   "__oc_match_note",
 ];

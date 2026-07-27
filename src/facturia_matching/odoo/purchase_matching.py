@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
 
@@ -95,6 +95,64 @@ def _split_desc_tokens(desc_upper: str) -> List[str]:
     return out
 
 
+# Tokens de envase / ruido que no discriminan producto.
+_NOISE_MATCH_TOKENS = {
+    "KG",
+    "KG.",
+    "UN",
+    "UNID",
+    "UNIDS",
+    "LT",
+    "LTS",
+    "LTS.",
+    "GR",
+    "GRS",
+    "UND",
+    "UDS",
+    "PACK",
+    "CAJA",
+    "BOLSA",
+}
+# Prefijos de categoría Odoo (ALM-, CON-, …) — no cuentan como overlap de producto.
+_PREFIX_MATCH_TOKENS = {"ALM", "CON", "BEB", "MOT", "SER", "LIM", "CAR"}
+
+# Pares de modificadores incompatibles (factura vs OC).
+_CONFLICTING_MODIFIER_PAIRS: Tuple[Tuple[FrozenSet[str], FrozenSet[str]], ...] = (
+    (
+        frozenset({"SECO", "SECOS", "SECA", "SECAS"}),
+        frozenset({"TRITURADO", "TRITURADA", "TRITURADOS", "TRITURADAS", "MOLIDO", "MOLIDA"}),
+    ),
+    (
+        frozenset({"ENTERO", "ENTEROS", "ENTERA", "ENTERAS"}),
+        frozenset({"FILETEADO", "FILETEADA", "FILETEADOS", "TROCADO", "TROCADA"}),
+    ),
+    (
+        frozenset({"FRESCO", "FRESCA", "FRESCOS", "FRESCAS"}),
+        frozenset({"CONGELADO", "CONGELADA", "CONGELADOS", "CONGELADAS"}),
+    ),
+)
+
+
+def _content_match_tokens(tokens: List[str]) -> List[str]:
+    out: List[str] = []
+    for tok in tokens:
+        key = tok.upper().rstrip(".")
+        if key in _NOISE_MATCH_TOKENS or key in _PREFIX_MATCH_TOKENS:
+            continue
+        if key.isdigit():
+            continue
+        out.append(key)
+    return out
+
+
+def _has_conflicting_modifiers(inv_tokens: List[str], po_tokens: List[str]) -> bool:
+    inv = set(_content_match_tokens(inv_tokens))
+    po = set(_content_match_tokens(po_tokens))
+    for left, right in _CONFLICTING_MODIFIER_PAIRS:
+        if (inv & left and po & right) or (inv & right and po & left):
+            return True
+    return False
+
 def _normalize(s: Any) -> str:
     if s is None:
         return ""
@@ -147,7 +205,9 @@ def _resolve_invoice_qty_um(
     desc_qty, desc_um = _extract_qty_um_from_description(desc)
 
     um_raw = _normalize(row.get("__um_proveedor") or "")
-    if desc_um and not um_raw:
+    # «X 500 G» en la descripción es tamaño de envase, no UM facturada.
+    # Solo tomamos UM del texto si no hay cantidad de línea/FacturIA.
+    if desc_um and not um_raw and fac_qty is None and invoice_qty is None:
         um_raw = desc_um
 
     polluted_by_desc = (
@@ -184,6 +244,45 @@ def _resolve_invoice_qty_um(
     return qty, um_raw
 
 
+def _catalog_add_name(
+    by_name: Dict[str, List[Dict[str, Any]]], key: str, item: Dict[str, Any]
+) -> None:
+    """Indexa UM por nombre; permite colisiones (mismo nombre en distintas categorías)."""
+    if not key:
+        return
+    bucket = by_name.setdefault(key, [])
+    iid = int(item["id"])
+    if any(int(u.get("id") or 0) == iid for u in bucket):
+        return
+    bucket.append(item)
+
+
+def _by_name_candidates(
+    catalog: Dict[str, Dict[str, Any]], key: str
+) -> List[Dict[str, Any]]:
+    """Lista de UOMs para una clave; acepta by_name legado (dict único) o lista."""
+    if not key:
+        return []
+    raw = (catalog.get("by_name") or {}).get(key)
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        return [raw]
+    return list(raw)
+
+
+def _prefer_uom(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda u: (
+            0 if (u.get("uom_type") or "") == "reference" else 1,
+            int(u.get("id") or 0),
+        ),
+    )[0]
+
+
 def _fetch_uom_catalog() -> Dict[str, Dict[str, Any]]:
     rows = odoo_search_read(
         "uom.uom",
@@ -192,7 +291,7 @@ def _fetch_uom_catalog() -> Dict[str, Dict[str, Any]]:
         limit=500,
         config=_purchase_odoo_config(),
     )
-    by_name: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, List[Dict[str, Any]]] = {}
     by_id: Dict[int, Dict[str, Any]] = {}
     for row in rows or []:
         iid = int(row["id"])
@@ -205,14 +304,13 @@ def _fetch_uom_catalog() -> Dict[str, Dict[str, Any]]:
             "uom_type": row.get("uom_type"),
         }
         by_id[iid] = item
-        by_name[_normalize_key(name)] = item
+        _catalog_add_name(by_name, _normalize_key(name), item)
         canon = _canonical_um(name)
         if canon:
-            by_name[_normalize_key(canon)] = item
+            _catalog_add_name(by_name, _normalize_key(canon), item)
     for alias, target in _UM_ALIASES.items():
-        tgt = by_name.get(_normalize_key(target))
-        if tgt:
-            by_name[_normalize_key(alias)] = tgt
+        for tgt in by_name.get(_normalize_key(target)) or []:
+            _catalog_add_name(by_name, _normalize_key(alias), tgt)
     return {"by_name": by_name, "by_id": by_id}
 
 
@@ -240,10 +338,11 @@ def get_uom_catalog() -> Dict[str, Dict[str, Any]]:
 
 
 def resolve_uom(raw: Any, catalog: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Resuelve UM por nombre/alias. Si hay colisión entre categorías, prefiere reference + id menor."""
     key = _normalize_key(_canonical_um(raw) or raw)
     if not key:
         return None
-    return (catalog.get("by_name") or {}).get(key)
+    return _prefer_uom(_by_name_candidates(catalog, key))
 
 
 def convert_qty(qty: float, from_uom: Dict[str, Any], to_uom: Dict[str, Any]) -> Optional[float]:
@@ -299,6 +398,37 @@ def _product_default_uom_id(product_id: int) -> Optional[int]:
     return uom_id
 
 
+def _find_uom_in_category(
+    raw_um: str,
+    category_id: Optional[int],
+    catalog: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Matchea UM de factura contra UOMs de una categoría Odoo.
+    None si no hay match por nombre (no cae al default del producto).
+    """
+    key = _normalize_key(_canonical_um(raw_um) or raw_um)
+    if not key:
+        return None
+    candidates = _by_name_candidates(catalog, key)
+    if category_id is not None:
+        in_cat = [u for u in candidates if _category_id(u) == int(category_id)]
+        if in_cat:
+            return _prefer_uom(in_cat)
+        # Fallback: escanear by_id (nombres custom / catálogo legado sin listas)
+        for uom in (catalog.get("by_id") or {}).values():
+            if _category_id(uom) != int(category_id):
+                continue
+            names = {
+                _normalize_key(uom.get("name")),
+                _normalize_key(_canonical_um(uom.get("name"))),
+            }
+            if key in names:
+                return uom
+        return None
+    return _prefer_uom(candidates) or resolve_uom(raw_um, catalog)
+
+
 def _resolve_uom_in_product_category(
     raw_um: str,
     product_uom_id: int,
@@ -310,21 +440,60 @@ def _resolve_uom_in_product_category(
     if not product_uom:
         return resolve_uom(raw_um, catalog)
     cat_id = _category_id(product_uom)
-    direct = resolve_uom(raw_um, catalog)
-    if direct and (not cat_id or _category_id(direct) == cat_id):
-        return direct
-    if not cat_id:
-        return direct or product_uom
-    key = _normalize_key(_canonical_um(raw_um) or raw_um)
-    if not key:
+    found = _find_uom_in_category(raw_um, cat_id, catalog)
+    if found:
+        return found
+    if not _normalize_key(_canonical_um(raw_um) or raw_um):
         return product_uom
+    return product_uom
+
+
+def list_uoms_for_product(product_id: int) -> List[Dict[str, Any]]:
+    """
+    UOMs de la categoría del producto (uom_po_id / uom_id).
+
+    Sin uom_ids por producto en Dinner: la lista usable = misma category_id.
+    """
+    if not product_id:
+        return []
+    product_uom_id = _product_default_uom_id(int(product_id))
+    if not product_uom_id:
+        return []
+    catalog = get_uom_catalog()
+    by_id = catalog.get("by_id") or {}
+    product_uom = by_id.get(int(product_uom_id))
+    if not product_uom:
+        return []
+    cat_id = _category_id(product_uom)
+    if cat_id is None:
+        return [{"id": int(product_uom["id"]), "name": product_uom.get("name") or ""}]
+    out: List[Dict[str, Any]] = []
     for uom in by_id.values():
         if _category_id(uom) != cat_id:
             continue
-        names = {_normalize_key(uom.get("name")), _normalize_key(_canonical_um(uom.get("name")))}
-        if key in names:
-            return uom
-    return product_uom
+        uid = uom.get("id")
+        if uid is None:
+            continue
+        out.append({"id": int(uid), "name": uom.get("name") or ""})
+    out.sort(key=lambda x: ((x.get("name") or "").lower(), int(x["id"])))
+    return out
+
+
+def _resolve_target_uom_for_product(
+    product_id: int,
+    uom_catalog: Dict[str, Dict[str, Any]],
+    target_uom_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """UM destino: la elegida (si está en la categoría del producto) o uom_po default."""
+    product_uom_id = _product_default_uom_id(product_id)
+    by_id = uom_catalog.get("by_id") or {}
+    default_uom = by_id.get(int(product_uom_id)) if product_uom_id else None
+    if target_uom_id is not None:
+        candidate = by_id.get(int(target_uom_id))
+        if candidate:
+            if default_uom is None or _category_id(candidate) == _category_id(default_uom):
+                return candidate
+    return default_uom
 
 
 def _apply_uom_scaling_for_product(
@@ -334,9 +503,10 @@ def _apply_uom_scaling_for_product(
     invoice_um_raw: str,
     product_id: int,
     uom_catalog: Dict[str, Dict[str, Any]],
+    target_uom_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    product_uom_id = _product_default_uom_id(product_id)
-    if not product_uom_id:
+    to_uom = _resolve_target_uom_for_product(product_id, uom_catalog, target_uom_id)
+    if not to_uom:
         return {
             "um_proveedor": invoice_um_raw or "",
             "um_empresa": "",
@@ -346,19 +516,89 @@ def _apply_uom_scaling_for_product(
             "um_factor": "",
             "um_note": "Sin UM producto",
         }
-    by_id = uom_catalog.get("by_id") or {}
-    company_uom = by_id.get(int(product_uom_id)) or {}
-    company_name = company_uom.get("name") or ""
-    from_uom = _resolve_uom_in_product_category(invoice_um_raw, product_uom_id, uom_catalog)
-    to_uom = company_uom or from_uom
+    company_name = to_uom.get("name") or ""
     return _apply_uom_scaling(
         row,
         invoice_qty=invoice_qty,
         invoice_um_raw=invoice_um_raw,
-        po_uom_id=int(to_uom["id"]) if to_uom and to_uom.get("id") else None,
+        po_uom_id=int(to_uom["id"]) if to_uom.get("id") is not None else None,
         po_uom_name=company_name,
         uom_catalog=uom_catalog,
     )
+
+
+def apply_product_uom_to_row(
+    row: Dict[str, Any],
+    product_id: Optional[int] = None,
+    uom_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Recalcula UM para una fila tras elegir/borrar producto o elegir UM a mano.
+
+    Sin uom_id: usa uom_po_id del producto (mismo camino que match automático).
+    Con uom_id: re-escala desde qty/UM original de factura hacia esa UM (misma
+    categoría). Si no hay product_id, limpia __um_empresa_*. Devuelve los campos
+    UM aplicados.
+    """
+    if not isinstance(row, dict):
+        return {}
+    pid = product_id
+    if pid is None:
+        raw = _normalize(row.get("invoice_line_ids/product_id"))
+        pid = int(raw) if raw.isdigit() else None
+
+    # Limpiar sugerencia de producto al fijar manualmente.
+    row["__product_suggested"] = ""
+
+    if not pid:
+        row["__um_empresa"] = ""
+        row["__um_empresa_id"] = ""
+        row["__um_factor"] = ""
+        row["__um_note"] = ""
+        return {
+            "um_empresa": "",
+            "um_empresa_id": "",
+            "um_factor": "",
+            "um_note": "",
+            "qty_escalada": row.get("invoice_line_ids/quantity") or "",
+        }
+
+    desc = _normalize(row.get("invoice_line_ids/name") or row.get("Nombre de producto"))
+    # Selección manual de UM: partir de qty/UM original (no de qty ya re-escalada).
+    if uom_id is not None:
+        qty = _parse_amount(row.get("__qty_original"))
+        um_raw = _normalize(row.get("__um_proveedor") or "")
+        if qty is None:
+            qty, resolved_um = _resolve_invoice_qty_um(row, desc, repair_row=True)
+            if not um_raw:
+                um_raw = resolved_um
+    else:
+        qty, um_raw = _resolve_invoice_qty_um(row, desc, repair_row=True)
+        if not um_raw:
+            um_raw = _normalize(row.get("__um_proveedor") or "")
+
+    uom_catalog = get_uom_catalog()
+    uom_info = _apply_uom_scaling_for_product(
+        row,
+        invoice_qty=qty,
+        invoice_um_raw=um_raw,
+        product_id=int(pid),
+        uom_catalog=uom_catalog,
+        target_uom_id=int(uom_id) if uom_id is not None else None,
+    )
+    row["__um_proveedor"] = uom_info.get("um_proveedor") or um_raw
+    row["__um_empresa"] = uom_info.get("um_empresa") or ""
+    row["__um_empresa_id"] = uom_info.get("um_empresa_id") or ""
+    row["__qty_original"] = uom_info.get("qty_original") or ("" if qty is None else str(qty))
+    row["__qty_escalada"] = uom_info.get("qty_escalada") or row["__qty_original"]
+    row["__um_factor"] = uom_info.get("um_factor") or ""
+    row["__um_note"] = uom_info.get("um_note") or ""
+    if uom_info.get("um_note") == "Re-escalado" and uom_info.get("qty_escalada"):
+        row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
+    elif uom_info.get("qty_escalada") and uom_id is not None:
+        # Misma UM o factor 1: igual sincronizar qty visible con la escalada.
+        row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
+    return uom_info
 
 
 def _resolve_po_partner_scope(partner_id: int) -> int:
@@ -521,6 +761,19 @@ def _line_match_score(
     if desc and po_name:
         po_upper = po_name.upper()
         po_tokens = [t for t in re.split(r"[\s/\-]+", po_upper) if len(t) >= 3]
+        inv_tokens = _split_desc_tokens(desc.upper())
+        if _has_conflicting_modifiers(inv_tokens, po_tokens):
+            # Misma familia (TOMATE) pero forma distinta (SECO vs TRITURADO).
+            partial_best = 0.0
+            for desc_variant in _desc_match_variants(desc):
+                partial_best = max(
+                    partial_best, float(fuzz.token_set_ratio(desc_variant, po_upper))
+                )
+                partial_best = max(
+                    partial_best, float(fuzz.partial_ratio(desc_variant, po_upper))
+                )
+            return min(partial_best, 60.0)
+
         best_sc = 0.0
         for desc_variant in _desc_match_variants(desc):
             sc = float(fuzz.token_set_ratio(desc_variant, po_upper))
@@ -528,10 +781,18 @@ def _line_match_score(
             if sc >= 80:
                 return sc
             # tokens cortos tipo "pan" vs "ALM-PAN FRANCES" (con OCR fix en CHOCL0→CHOCLO)
-            for dt in _split_desc_tokens(desc_variant):
-                for pt in po_tokens:
-                    if dt in pt or pt in dt:
-                        best_sc = max(best_sc, 75.0)
+            # Solo boost a 75 si hay overlap real y no es un solo género compartido
+            # con otros discriminadores distintos (TOMATE SECO ≠ TOMATE TRITURADO).
+            inv_content = set(_content_match_tokens(_split_desc_tokens(desc_variant)))
+            po_content = set(_content_match_tokens(po_tokens))
+            overlap = inv_content & po_content
+            if overlap:
+                if len(overlap) >= 2 or len(inv_content) <= 2:
+                    for dt in inv_content:
+                        for pt in po_content:
+                            if dt in pt or pt in dt:
+                                best_sc = max(best_sc, 75.0)
+                                break
             best_sc = max(best_sc, float(fuzz.partial_ratio(desc_variant, po_upper)))
         if best_sc >= 75.0:
             return best_sc
@@ -609,7 +870,14 @@ def _apply_uom_scaling(
         _stamp_target_uom(out, to_uom, po_uom_name=po_uom_name)
         return out
 
-    from_uom = resolve_uom(invoice_um_raw, uom_catalog)
+    # Resolver UM factura dentro de la categoría del destino (evita colisión kg/L
+    # entre categorías custom vs estándar, p.ej. Dinner Crema / LITROS).
+    if to_uom:
+        from_uom = _find_uom_in_category(
+            invoice_um_raw, _category_id(to_uom), uom_catalog
+        )
+    else:
+        from_uom = resolve_uom(invoice_um_raw, uom_catalog)
 
     if not from_uom or not to_uom:
         if not invoice_um_raw and to_uom:
@@ -944,6 +1212,16 @@ def match_invoice_row(
                 product_id=int(product_raw),
                 uom_catalog=uom_catalog,
             )
+            # Sugerencia fuzzy (sin OC): stamp UM pero no reescribir cantidad.
+            # UM factura suele ser ambigua (UNID/KG) y el re-escalado a packs
+            # de peso inventa qtys (20 → 0.32 en Sal fina / PDF Mauri).
+            if suggested and uom_info.get("um_note") == "Re-escalado":
+                uom_info = {
+                    **uom_info,
+                    "qty_escalada": result["__qty_original"],
+                    "um_factor": "",
+                    "um_note": "UM sugerida sin re-escalar qty",
+                }
             result.update(
                 {
                     "__um_proveedor": uom_info.get("um_proveedor") or um_raw,
@@ -955,7 +1233,11 @@ def match_invoice_row(
                     "__um_note": uom_info.get("um_note") or "",
                 }
             )
-            if uom_info.get("um_note") == "Re-escalado" and uom_info.get("qty_escalada"):
+            if (
+                not suggested
+                and uom_info.get("um_note") == "Re-escalado"
+                and uom_info.get("qty_escalada")
+            ):
                 row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
         if suggested:
             result["__product_suggested"] = f"{suggested['score']:.0f}"
@@ -970,14 +1252,26 @@ def match_invoice_row(
             )
         return result
 
-    uom_info = _apply_uom_scaling(
-        row,
-        invoice_qty=qty,
-        invoice_um_raw=um_raw,
-        po_uom_id=best.get("product_uom_id"),
-        po_uom_name=best.get("product_uom_name") or "",
-        uom_catalog=uom_catalog,
-    )
+    # TODO / invariante: UM inferida = lista/default del *producto* (uom_po_id),
+    # no la UM de la línea OC. La OC sigue vinculada vía __oc_line_id.
+    product_id = best.get("product_id")
+    if product_id:
+        uom_info = _apply_uom_scaling_for_product(
+            row,
+            invoice_qty=qty,
+            invoice_um_raw=um_raw,
+            product_id=int(product_id),
+            uom_catalog=uom_catalog,
+        )
+    else:
+        uom_info = _apply_uom_scaling(
+            row,
+            invoice_qty=qty,
+            invoice_um_raw=um_raw,
+            po_uom_id=best.get("product_uom_id"),
+            po_uom_name=best.get("product_uom_name") or "",
+            uom_catalog=uom_catalog,
+        )
 
     oc_note = f"OC {best.get('order_name') or ''} · {best.get('line_name') or ''}".strip(" ·")
     result.update(
@@ -1004,7 +1298,6 @@ def match_invoice_row(
     if uom_info.get("um_note") == "Re-escalado" and uom_info.get("qty_escalada"):
         row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
 
-    product_id = best.get("product_id")
     if product_id:
         row["invoice_line_ids/product_id"] = str(product_id)
 
@@ -1084,8 +1377,6 @@ def enrich_rows_with_purchase_data(
     for comprobante_rows in _group_rows_by_comprobante(rows).values():
         content_rows = [r for r in comprobante_rows if _is_content_row(r)]
         summary["rows_total"] += len(content_rows)
-        if not content_rows:
-            continue
 
         partner_raw = ""
         for row in comprobante_rows:
@@ -1093,6 +1384,46 @@ def enrich_rows_with_purchase_data(
             if pid:
                 partner_raw = pid
                 break
+
+        comp_idx = comprobante_rows[0].get("__comprobante_idx")
+        comp_key = str(comp_idx) if comp_idx is not None else "0"
+
+        # Solo encabezado: re-aplica OC guardada para el header tras reload;
+        # no auto-elige ni matchea líneas (no hay).
+        if not content_rows:
+            if not partner_raw.isdigit():
+                continue
+            partner_id = int(partner_raw)
+            if partner_id not in partner_lines:
+                partner_lines[partner_id] = fetch_partner_po_lines(partner_id)
+                summary["partners"] += 1
+            po_lines = partner_lines[partner_id]
+            summary["oc_provider_has_ocs_by_comprobante"][comp_key] = bool(po_lines)
+            summary["oc_candidates_by_comprobante"][comp_key] = (
+                score_oc_candidates(comprobante_rows, po_lines) if fetch_candidates else []
+            )
+            saved_oid = _saved_oc_order_id(comprobante_rows)
+            selected_oid: Optional[int] = None
+            selected_name = ""
+            if saved_oid and any(int(p.get("order_id") or 0) == saved_oid for p in po_lines):
+                selected_oid = saved_oid
+                selected_name = _normalize(comprobante_rows[0].get("__selected_oc_name"))
+                for po in po_lines:
+                    if int(po.get("order_id") or 0) == saved_oid:
+                        selected_name = selected_name or po.get("order_name") or ""
+                        break
+            elif saved_oid and not po_lines:
+                selected_oid = saved_oid
+                selected_name = _normalize(comprobante_rows[0].get("__selected_oc_name"))
+            elif saved_oid and po_lines:
+                _set_comprobante_oc_selection(comprobante_rows, None, "")
+            if selected_oid:
+                summary["selected_oc_by_comprobante"][comp_key] = selected_oid
+                summary.setdefault("oc_searched_by_comprobante", {})[comp_key] = True
+                _set_comprobante_oc_selection(comprobante_rows, selected_oid, selected_name)
+                if selected_name:
+                    oc_detected_names.append(selected_name)
+            continue
 
         if not partner_raw.isdigit():
             for row in content_rows:
@@ -1106,8 +1437,6 @@ def enrich_rows_with_purchase_data(
             summary["partners"] += 1
 
         po_lines = partner_lines[partner_id]
-        comp_idx = comprobante_rows[0].get("__comprobante_idx")
-        comp_key = str(comp_idx) if comp_idx is not None else "0"
         summary["oc_provider_has_ocs_by_comprobante"][comp_key] = bool(po_lines)
 
         if fetch_candidates:
@@ -1118,7 +1447,7 @@ def enrich_rows_with_purchase_data(
         else:
             summary["oc_candidates_by_comprobante"][comp_key] = []
             saved_oid = _saved_oc_order_id(comprobante_rows)
-            selected_oid: Optional[int] = None
+            selected_oid = None
             selected_name = ""
             if saved_oid and any(int(p.get("order_id") or 0) == saved_oid for p in po_lines):
                 selected_oid = saved_oid
@@ -1136,6 +1465,9 @@ def enrich_rows_with_purchase_data(
                 selected_name = _normalize(comprobante_rows[0].get("__selected_oc_name"))
         if selected_oid:
             summary["selected_oc_by_comprobante"][comp_key] = selected_oid
+            # Marca «ya buscado» para que el header muestre la pastilla OC tras reload
+            # (sin forzar una lista de candidatos nueva).
+            summary.setdefault("oc_searched_by_comprobante", {})[comp_key] = True
             _set_comprobante_oc_selection(comprobante_rows, selected_oid, selected_name)
             if selected_name:
                 oc_detected_names.append(selected_name)
@@ -1146,9 +1478,11 @@ def enrich_rows_with_purchase_data(
         summary["rows_matched"] += matched
 
     summary["oc_detected"] = oc_detected_names[0] if oc_detected_names else ""
+    # Columnas UM/OC: con candidatos en memoria (tras buscar) O con datos ya
+    # matcheados/guardados en filas (reload tras select-oc).
     summary["show_purchase_columns"] = has_any_oc_candidates(
         summary["oc_candidates_by_comprobante"]
-    )
+    ) or compute_show_purchase_columns(rows)
     return summary
 
 
@@ -1186,6 +1520,9 @@ def search_oc_candidates_for_comprobante(
     summary["oc_candidates_by_comprobante"][comp_key] = candidates
     summary["oc_provider_has_ocs_by_comprobante"][comp_key] = bool(po_lines)
     summary.setdefault("oc_searched_by_comprobante", {})[comp_key] = True
+    summary["show_purchase_columns"] = has_any_oc_candidates(
+        summary["oc_candidates_by_comprobante"]
+    ) or compute_show_purchase_columns(rows)
     return summary
 
 

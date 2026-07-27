@@ -1,9 +1,13 @@
 import { groupBounds } from "../singleLine/index.js";
-import { toNumberLoose } from "../utils/index.js";
+import { normalizeIvaPctValue, toNumberLoose } from "../utils/index.js";
 import { listComprobanteGroups } from "./groups.js";
 import { classifyComprobanteTaxMode, TOLERANCE } from "./totals.js";
-import { facSubtotal } from "./lineCalc.js";
-import { computeIvaBreakdown, parseFacIvaMontos, serializeFacIvaMontos } from "./ivaBreakdown.js";
+import { facSubtotal, isExplicitZeroIvaPct, lineHasContent } from "./lineCalc.js";
+import {
+  computeIvaBreakdown,
+  explicitFacIvaMontos,
+  serializeFacIvaMontos,
+} from "./ivaBreakdown.js";
 
 export function resolveTaxModeForRow(state, rowIdx) {
   const [s, e] = groupBounds(state.rows, rowIdx);
@@ -80,4 +84,41 @@ export function migrateFacIvaMontos(rows) {
     }
     if (Object.keys(montos).length) serializeFacIvaMontos(groupRows, montos);
   }
+}
+
+/** "21" | "10.5" (clave pie) → valor del selector Impuesto IVA ("21" | "10,5"). */
+export function rateKeyToIvaPct(rateKey) {
+  const key = String(rateKey ?? "").trim();
+  if (!key || key === "_total") return "";
+  return normalizeIvaPctValue(key);
+}
+
+function lineNeedsFooterIvaFill(row) {
+  const cur = String(row?.iva_pct ?? "").trim();
+  if (isExplicitZeroIvaPct(cur)) return false;
+  return !cur || cur === "0";
+}
+
+/**
+ * Si el pie tiene una sola alícuota IVA, la copia a Impuesto IVA de todas las líneas
+ * del comprobante que aún no tienen tasa (vacío / "0"). No pisa Exento / No Gravado / No Corresponde.
+ */
+export function propagateSingleFooterIvaToLines(rows) {
+  if (!Array.isArray(rows)) return 0;
+  let filled = 0;
+  for (const group of listComprobanteGroups(rows)) {
+    const groupRows = group.rowIndices.map((i) => rows[i]);
+    const explicit = explicitFacIvaMontos(groupRows);
+    if (!explicit) continue;
+    const keys = Object.keys(explicit);
+    if (keys.length !== 1) continue;
+    const ivaPct = rateKeyToIvaPct(keys[0]);
+    if (!ivaPct) continue;
+    for (const row of groupRows) {
+      if (!lineHasContent(row) || !lineNeedsFooterIvaFill(row)) continue;
+      row.iva_pct = ivaPct;
+      filled += 1;
+    }
+  }
+  return filled;
 }

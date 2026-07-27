@@ -11,7 +11,12 @@ import {
   restoreExtraOtroImpuestoColumns,
   resetExtraOtroImpuestoColumns,
 } from "../rows/index.js";
-import { migrateFacIvaMontos, migrateLegacyComprobanteIva, sanitizeInflatedLineAmounts } from "../comprobanteTax/index.js";
+import {
+  migrateFacIvaMontos,
+  migrateLegacyComprobanteIva,
+  propagateSingleFooterIvaToLines,
+  sanitizeInflatedLineAmounts,
+} from "../comprobanteTax/index.js";
 import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
 import { PURCHASE_COLUMN_KEYS, odooImportButtonLabel, updateOdooTenantBadge } from "./bootstrap.js";
 import { renderSummary, scheduleAutoSave } from "./autoSave.js";
@@ -25,7 +30,18 @@ function cachePurchaseColumnDefs(state) {
 
 export function syncPurchaseColumns(state, purchaseMatching = {}) {
   cachePurchaseColumnDefs(state);
-  const showCols = !!(purchaseMatching.enabled && purchaseMatching.show_purchase_columns);
+  const fromFlag = !!(purchaseMatching.enabled && purchaseMatching.show_purchase_columns);
+  // Tras F5 sin candidatos en memoria el flag puede venir false; igual mostrar
+  // si las filas ya tienen UM / vínculo OC (misma regla que compute_show_purchase_columns).
+  const fromRows =
+    !!purchaseMatching.enabled &&
+    (state.rows || []).some(
+      (r) =>
+        String(r?.__um_empresa || "").trim() ||
+        String(r?.__oc_line_id || "").trim() ||
+        String(r?.__oc_match_note || "").trim().startsWith("OC ")
+    );
+  const showCols = fromFlag || fromRows;
   const hadPurchase = state.columns.some((c) => PURCHASE_COLUMN_KEYS.includes(c.key));
 
   if (showCols) {
@@ -77,6 +93,7 @@ export function applyProcesoPayload(state, refs, data, pn, empresa) {
   propagateAccountDown(state.rows);
   migrateLegacyComprobanteIva(state.rows);
   migrateFacIvaMontos(state.rows);
+  propagateSingleFooterIvaToLines(state.rows);
   sanitizeInflatedLineAmounts(state.rows);
   resetExtraOtroImpuestoColumns(state);
   restoreExtraOtroImpuestoColumns(state, data.extra_tax_indices);

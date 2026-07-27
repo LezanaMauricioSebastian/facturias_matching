@@ -60,6 +60,7 @@ El pie guarda montos como strings en JSON, a menudo con formato argentino (`"53.
 
 ## Edición en la UI
 
+- **Un solo IVA en el pie:** al cargar, si `__fac_iva_montos` tiene una sola alícuota, se rellena **Impuesto IVA** (`iva_pct`) en todas las líneas vacías/`0` del comprobante (`propagateSingleFooterIvaToLines` / `propagate_single_footer_iva_to_lines`).
 - **Modo `line`:** se puede editar **IVA monto** en la tabla **o** el total/alícuotas en el **pie**. Si se edita el pie, se marca `__fac_iva_monto_manual` y ese valor manda al import (no se recalcula desde las líneas).
 - **Override desde el pie distinta a la suma por línea:** la clasificación puede pasar de `line` → `header` (o `mixed` si hay varias alícuotas que no cierran). Es **esperado**: el IVA pasa a vivir en el pie, la columna **IVA monto** se oculta y el import usa el pie. Si el monto editado sigue cerrando con las líneas (tolerancia), el modo puede quedarse en `line` con `__fac_iva_monto_manual`.
 - **Modo `header` / `mixed`:** editar IVA en el **pie** del comprobante (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
@@ -203,12 +204,26 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite y
 - **Causa:** al cambiar precio, JS recalculaba `iva_monto` de la línea y el desglose del pie caía al sugerido por línea en lugar de respetar el monto fijo de FacturIA (`__fac_iva_monto` / `iva_monto` explícito).
 - **Solución:** deploy con `computeRowTotal` + `computeIvaBreakdown` actualizados; recargar la UI. Tests: `header footer IVA fixed when price changes` en `tests/js/comprobante_tax.test.mjs`.
 
+### Base imponible salta al agregar IVA en una línea (PDF Mauri 24/7/2026)
+
+- **Síntoma:** comprobante en modo **header** (líneas sin `iva_pct`, pie con IVA); al elegir **IVA 21 %** en una línea la **Base imponible** baja de p. ej. `$188.102` (`__fac_subtotal`) a `$78.727` (Σ qty×precio).
+- **Causa:** el modo pasaba a **mixed** y `computeComprobanteTotals` / `compute_comprobante_totals` solo usaban `__fac_subtotal` en `header`; en `mixed` cambiaban a suma de líneas.
+- **Solución:** en **header** y **mixed**, Base = `__fac_subtotal` cuando existe; en **line**, Base = suma de líneas. El IVA del pie sigue mandando en mixed (invariante).
+- Tests: `test_mixed_mode_keeps_fac_subtotal_as_base_odoo`, `keeps fac subtotal as Base when selecting IVA flips header→mixed (PDF Mauri)`.
+
 ### IVA Exento / No Gravado / No Corresponde deja IVA 21 % residual
 
 - **Síntoma (testing Mauri 16/7/2026):** se elige **IVA Exento**, **IVA No Gravado** o **IVA No Corresponde** en Impuesto IVA, pero el pie sigue con total que incluye 21 % y Odoo muestra **IVA 21 %** + el impuesto elegido en `$0,00`.
 - **Causa:** `__fac_iva_montos` / `__fac_iva_monto` de FacturIA no se limpiaban al cambiar el selector; el import usaba esos montos y `_ensure_missing_tax_lines_on_move` re-agregaba IVA 21 % en la línea.
 - **Solución:** al elegir IVA cero explícito en todas las líneas del comprobante, se limpia el pie (`clear_fac_iva_footer` / `clearFacIvaFooter`); `fac_iva_montos` / `computeIvaBreakdown` ignoran el JSON residual; `reconcile_fac_iva_for_import` limpia antes del sync. El modo **header** con `iva_pct` vacío sigue usando el pie.
 - Tests: `test_meriti_exento_clears_stale_21_footer_amounts`, `clears stale 21% footer when selecting IVA Exento` en `tests/js/comprobante_tax.test.mjs`.
+
+### Pie con un solo IVA y líneas sin Impuesto IVA
+
+- **Síntoma:** el pie muestra p. ej. **IVA 21 %** con monto, pero la columna **Impuesto IVA** de las líneas está vacía (FacturIA trajo `iva_21` en encabezado sin `alicuota_iva` por ítem).
+- **Comportamiento:** si `__fac_iva_montos` tiene **una sola** alícuota, se copia a `iva_pct` de **todas** las líneas del comprobante que estén vacías o en `"0"` (no pisa Exento / No Gravado / No Corresponde). Con varias alícuotas en el pie, no se propaga.
+- **Dónde:** JS `propagateSingleFooterIvaToLines` al cargar proceso; Python `propagate_single_footer_iva_to_lines` al parsear / backfill de conversión.
+- Tests: `propagates single footer IVA to empty line iva_pct`, `test_propagate_single_footer_iva_to_lines`.
 
 ### Encabezado desincronizado (línea editada, JSON viejo)
 

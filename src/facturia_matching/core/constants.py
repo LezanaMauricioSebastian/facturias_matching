@@ -106,8 +106,7 @@ UI_COLUMNS = [
 PURCHASE_UI_COLUMNS = [
     "__qty_pedido",
     "__qty_recibido",
-    "__um_proveedor",
-    "__um_empresa",
+    "__um_empresa",  # UM elegible (categoría del producto); default = uom_po
     "__oc_match_note",
 ]
 
@@ -129,8 +128,7 @@ COLUMN_LABELS = {
     "iva_monto": "Monto IVA",
     "otros_impuestos": "Otros Impuestos",
     "otros_impuestos_monto": "Monto Otros Impuestos",
-    "__um_proveedor": "UM proveedor",
-    "__um_empresa": "UM empresa",
+    "__um_empresa": "UM",
     "__oc_match_note": "Notas OC/UM",
     "__qty_pedido": "Cant. pedida",
     "__qty_recibido": "Cant. recibida",
@@ -165,6 +163,18 @@ def purchase_numeric_keys() -> set:
 def append_purchase_columns(columns: List[Dict[str, Any]], readonly_cols: set) -> None:
     numeric_cols = purchase_numeric_keys()
     for key in PURCHASE_UI_COLUMNS:
+        if key == "__um_empresa":
+            columns.append(
+                {
+                    "key": key,
+                    "label": COLUMN_LABELS.get(key, key),
+                    "type": "selection",
+                    "options_key": None,
+                    "readonly": False,
+                    "editable": True,
+                }
+            )
+            continue
         col_type = "numeric" if key in numeric_cols else "text"
         columns.append(
             {

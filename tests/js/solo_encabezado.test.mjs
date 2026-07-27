@@ -5,6 +5,7 @@ import { isSoloEncabezado } from "../../src/facturia_matching/static/js/singleLi
 import { columnsForTaxMode } from "../../src/facturia_matching/static/js/table/columns.js";
 import { collapseGroupAtRow, prepareSoloEncabezadoRow } from "../../src/facturia_matching/static/js/singleLine/collapse.js";
 import { computeRowTotal } from "../../src/facturia_matching/static/js/rows/totals.js";
+import { lineBase } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
 
 describe("isSoloEncabezado", () => {
   it("accepts truthy flag shapes", () => {
@@ -66,6 +67,32 @@ describe("computeRowTotal solo encabezado", () => {
     };
     const total = computeRowTotal(row, "header");
     assert.ok(Math.abs(total - (307053.66 + 64481.27 + 1500)) < 0.02);
+  });
+});
+
+describe("Subtotal columna (Solo encabezado)", () => {
+  it("usa cantidad × precio aunque exista __fac_subtotal", () => {
+    const row = {
+      __solo_encabezado: true,
+      __fac_subtotal: "1000",
+      "invoice_line_ids/quantity": "2",
+      "invoice_line_ids/price_unit": "150",
+    };
+    assert.equal(lineBase(row), 300);
+  });
+
+  it("recalcula al cambiar cantidad o precio", () => {
+    const row = {
+      __solo_encabezado: true,
+      __fac_subtotal: "500",
+      "invoice_line_ids/quantity": "1",
+      "invoice_line_ids/price_unit": "200",
+    };
+    assert.equal(lineBase(row), 200);
+    row["invoice_line_ids/quantity"] = "3";
+    assert.equal(lineBase(row), 600);
+    row["invoice_line_ids/price_unit"] = "250";
+    assert.equal(lineBase(row), 750);
   });
 });
 

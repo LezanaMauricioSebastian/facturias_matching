@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-from facturia_matching.core.amounts import amount_to_str, parse_amount_loose
+from facturia_matching.core.amounts import amount_to_str, normalize_iva_pct_value, parse_amount_loose
 
 _TAX_TOLERANCE = 0.02
 _IVA_NO_CORRESPONDE = re.compile(r"no corresponde", re.I)
@@ -371,6 +371,45 @@ def sanitize_inflated_line_amounts(rows: List[Dict[str, Any]]) -> int:
     return fixed
 
 
+def _rate_key_to_iva_pct(rate_key: str) -> str:
+    key = _normalize(rate_key)
+    if not key or key == "_total":
+        return ""
+    return normalize_iva_pct_value(key)
+
+
+def _line_needs_footer_iva_fill(row: Dict[str, Any]) -> bool:
+    cur = _normalize(row.get("iva_pct"))
+    if is_explicit_zero_iva_pct(cur):
+        return False
+    return not cur or cur == "0"
+
+
+def propagate_single_footer_iva_to_lines(rows: List[Dict[str, Any]]) -> int:
+    """
+    Si el pie tiene una sola alícuota IVA, la copia a Impuesto IVA de todas las
+    líneas del comprobante sin tasa (vacío / \"0\"). No pisa Exento / No Gravado /
+    No Corresponde. Paridad con JS propagateSingleFooterIvaToLines.
+    """
+    if not rows:
+        return 0
+    filled = 0
+    for group in _group_rows_by_comprobante(rows):
+        explicit = _explicit_fac_iva_montos(group)
+        if len(explicit) != 1:
+            continue
+        rate_key = next(iter(explicit))
+        iva_pct = _rate_key_to_iva_pct(rate_key)
+        if not iva_pct:
+            continue
+        for row in group:
+            if not _line_has_content(row) or not _line_needs_footer_iva_fill(row):
+                continue
+            row["iva_pct"] = iva_pct
+            filled += 1
+    return filled
+
+
 def _suggested_iva_by_rate(group_rows: List[Dict[str, Any]], mode: str) -> Dict[str, float]:
     out: Dict[str, float] = defaultdict(float)
     for row in group_rows:
@@ -503,7 +542,9 @@ def compute_comprobante_totals(group_rows: List[Dict[str, Any]], mode: Optional[
     else:
         iva_odoo = iva_fac or 0.0
 
-    if mode == "header" and base_fac is not None:
+    # header/mixed: Base = __fac_subtotal (no cambia al asignar IVA en líneas).
+    # line: Base = Σ(qty×precio).
+    if mode in ("header", "mixed") and base_fac is not None:
         base_odoo = base_fac
     else:
         base_odoo = base_lines
@@ -511,7 +552,11 @@ def compute_comprobante_totals(group_rows: List[Dict[str, Any]], mode: Optional[
     total_odoo = base_odoo + iva_odoo + otros
 
     warnings: List[str] = []
-    if base_fac is not None and mode != "header" and abs(base_fac - base_lines) > max(_TAX_TOLERANCE, base_fac * 0.001):
+    if (
+        base_fac is not None
+        and mode == "line"
+        and abs(base_fac - base_lines) > max(_TAX_TOLERANCE, base_fac * 0.001)
+    ):
         warnings.append(
             f"Base FacturIA ({base_fac:.2f}) ≠ suma de líneas ({base_lines:.2f})"
         )

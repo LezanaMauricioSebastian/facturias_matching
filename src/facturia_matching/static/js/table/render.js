@@ -11,7 +11,6 @@ import {
   optionLabel,
   optionValue,
   findOptionLabel,
-  toNumberLoose,
 } from "../utils/index.js";
 import { normalizeComprobanteNumber } from "../validation/index.js";
 import {
@@ -26,6 +25,7 @@ import {
   isComboboxLoading,
   renderComboboxCellHtml,
 } from "../combobox/index.js";
+import { fetchProductUoms } from "../api/purchase.js";
 import { buildColMinWidth, DOC_NUM_KEY } from "./constants.js";
 import { columnsForTaxMode, otroImpuestoNFromNameKey, otrosImpuestoKey } from "./columns.js";
 import { mergeDomRefs, updateRowTotals } from "./totals.js";
@@ -44,11 +44,40 @@ function syncLineIvaMetadata(state, rowIdx) {
   if (mode === "line") syncFacIvaMontosFromLines(groupRows, mode);
 }
 
-/** Monto sin impuestos: __fac_subtotal si hay; si no, cantidad × precio. */
+/** Monto sin impuestos: siempre cantidad × precio (dinámico al editar). */
 function computeSubtotalCell(row) {
-  const fac = toNumberLoose(row?.__fac_subtotal);
-  if (fac > 0) return fac;
   return lineBase(row);
+}
+
+function escapeAttr(s) {
+  return String(s ?? "").replaceAll('"', "&quot;");
+}
+
+function renderUmSelectHtml(state, r, rIdx, tdStyle) {
+  const productId = String(r["invoice_line_ids/product_id"] || "").trim();
+  const selectedId = String(r.__um_empresa_id || "").trim();
+  const selectedName = String(r.__um_empresa || "").trim();
+  const opts = productId ? state.uomOptionsByProductId?.[productId] || [] : [];
+  const disabled = !productId ? " disabled" : "";
+  const parts = [
+    `<td${tdStyle}><select class="umSelect" data-r="${rIdx}" data-k="__um_empresa"${disabled}>`,
+  ];
+  parts.push(`<option value=""></option>`);
+  const values = new Set();
+  for (const o of opts) {
+    const ov = optionValue(o);
+    if (!ov || values.has(ov)) continue;
+    values.add(ov);
+    const sel = ov === selectedId ? " selected" : "";
+    const lab = escapeAttr(o.name || o.label || ov);
+    parts.push(`<option${sel} value="${escapeAttr(ov)}">${lab}</option>`);
+  }
+  if (selectedId && !values.has(selectedId)) {
+    const lab = escapeAttr(selectedName || selectedId);
+    parts.push(`<option selected value="${escapeAttr(selectedId)}">${lab}</option>`);
+  }
+  parts.push(`</select></td>`);
+  return parts.join("");
 }
 
 export function renderComprobanteTable(state, rowIndices, containerEl, refs, handlers, options = {}) {
@@ -126,6 +155,8 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
         const dataAttr =
           key === "__subtotal" ? ` data-subtotal-r="${rIdx}"` : ` data-total-r="${rIdx}"`;
         html.push(`<td class="readonly"${tdStyle}${dataAttr}>${formatMoney(n)}</td>`);
+      } else if (key === "__um_empresa") {
+        html.push(renderUmSelectHtml(state, r, rIdx, tdStyle));
       } else if (c.readonly) {
         html.push(`<td class="readonly"${tdStyle}>${val}</td>`);
       } else if (c.type === "selection") {
@@ -268,16 +299,40 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       if (e.target.disabled) return;
       const r = parseInt(e.target.getAttribute("data-r"), 10);
       const k = e.target.getAttribute("data-k");
+      if (k === "__um_empresa") {
+        const uomId = String(e.target.value || "").trim();
+        state.rows[r].__um_empresa_id = uomId;
+        const opt = e.target.selectedOptions?.[0];
+        state.rows[r].__um_empresa = opt ? String(opt.textContent || "").trim() : "";
+        handleSelectionChange(state, r, k, { refs, handlers });
+        return;
+      }
       state.rows[r][k] = e.target.value;
       handleSelectionChange(state, r, k, { refs, handlers });
       handlers.onAutoSave?.();
     });
+    if (sel.classList.contains("umSelect")) {
+      sel.addEventListener("focus", () => {
+        if (sel.disabled) return;
+        const r = parseInt(sel.getAttribute("data-r"), 10);
+        const productId = String(state.rows[r]?.["invoice_line_ids/product_id"] || "").trim();
+        if (!productId) return;
+        const cached = state.uomOptionsByProductId?.[productId];
+        if (Array.isArray(cached) && cached.length) return;
+        fetchProductUoms(state, productId)
+          .then(() => handlers.onRerender?.())
+          .catch(() => {});
+      });
+    }
   });
 
   const selectionCtx = { refs, handlers };
   attachComboboxes(containerEl, state, (r, k) => {
     handleSelectionChange(state, r, k, selectionCtx);
-    handlers.onAutoSave?.();
+    // Producto: rematch-uom async + autosave al terminar (evita guardar UM vacía).
+    if (k !== "invoice_line_ids/product_id") {
+      handlers.onAutoSave?.();
+    }
   });
 
   containerEl.querySelectorAll("button[data-remove-otro-impuesto]").forEach((btn) => {

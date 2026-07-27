@@ -32,12 +32,12 @@ Dominio en `_partner_po_search_domain`:
 
 - A la izquierda se muestra un botón `secondary` **«Buscar OCs similares»**. Después de buscar pasa a **«OC: {nombre} ▾»**; si se elige no vincular, queda **«OC: Sin OC ▾»** (sin anteponer el número de factura). `↻` fuerza una búsqueda nueva.
 - A la derecha está el checkbox **«Sobreescribir precio de la OC»**: el texto aparece arriba y la tilde debajo. Se muestra deshabilitado mientras no haya una OC seleccionada.
-- El botón aparece cuando el comprobante tiene proveedor y todavía no se confirmó que no tenga OCs. Tras `rematch-purchase`, se oculta solo si Odoo confirmó `oc_provider_has_ocs_by_comprobante[comp]=false`; si el nuevo proveedor tiene OCs, aparece dinámicamente.
+- El botón y el checkbox aparecen juntos cuando el comprobante tiene proveedor y todavía no se confirmó que no tenga OCs. Tras `rematch-purchase`, se ocultan ambos si Odoo confirmó `oc_provider_has_ocs_by_comprobante[comp]=false`; si el nuevo proveedor tiene OCs, aparecen dinámicamente.
 - Al abrir el selector sin candidatos en memoria, el frontend vuelve a ejecutar `search-oc` antes de abrir el modal.
 
 Si el operador elige **«Sin OC»**, se limpian los vínculos de líneas y el checkbox queda deshabilitado, pero se conservan candidatos / flags de búsqueda: el selector queda como **«OC: Sin OC ▾»** y no desaparece.
 
-**Carga inicial:** `enrich_rows_with_purchase_data(..., fetch_candidates=False)` no lista candidatos ni auto-elige la mejor OC; solo re-aplica una OC guardada válida (`__selected_oc_order_id`).
+**Carga inicial:** `enrich_rows_with_purchase_data(..., fetch_candidates=False)` no lista candidatos ni auto-elige la mejor OC; solo re-aplica una OC guardada válida (`__selected_oc_order_id` / `__selected_oc_name` en las filas de la conversión). Si hay selección válida, también marca `oc_searched_by_comprobante` para que el header muestre **«OC: {nombre} ▾»** tras reload (no el CTA «Buscar OCs similares»). Mismo criterio en facturas **solo encabezado**. Las columnas UM/OC (`show_purchase_columns`) se muestran si hay candidatos **o** si las filas ya tienen match/UM guardados (`compute_show_purchase_columns`) — sin eso, tras F5 la pastilla OC volvía pero la columna **UM** desaparecía.
 
 **Efecto histórico (cambio):** antes se excluían OCs `receipt_status=pending`; ahora se listan con label para que el operador decida.
 
@@ -60,12 +60,21 @@ No todas las líneas de factura terminan vinculadas a una línea de OC (proveedo
 - **No** setea `__oc_line_id` ni `__oc_order_id` (no vincula OC, solo sugiere producto).
 - Setea `__product_suggested` (score) y `__oc_match_note = "Producto sugerido (fuzzy N%)"`.
 - Si la fila ya trae `invoice_line_ids/product_id`, se respeta (no se sugiere encima).
+- **No** re-escala cantidad al sugerir (solo stamp de UM): UM factura ambigua (`KG` / `UNID/KG`) + `uom_po` en packs de peso inventaba qtys (p. ej. Sal fina 20 → 0,32). El re-escalado sigue en match OC y en `rematch-uom` manual.
+- Rechaza falsos positivos por modificadores incompatibles (p. ej. **TOMATE SECO** ≠ **TOMATE TRITURADO**): no alcanza un solo token de género.
+- Hongos / Pasas / productos nunca comprados al proveedor quedan vacíos: la sugerencia solo busca en el pool de OCs del partner, no en todo el catálogo. **Limitación conocida.**
 
-**UI:** la celda de producto sugerida se muestra **resaltada en naranja** (`combobox-suggested`) con tooltip "revisá antes de importar". Al elegir/borrar el producto manualmente se limpia el flag y el resaltado (`combobox/attach.js`).
+**UI:** la celda de producto sugerida se muestra **resaltada en naranja** (`combobox-suggested`) con tooltip "revisá antes de importar". Al elegir/borrar el producto manualmente se limpia el flag; al elegir producto se llama `rematch-uom` para inferir UM (`combobox/attach.js` + `purchase.js`).
 
-Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_match_invoice_row_no_suggestion_below_threshold` en `tests/test_purchase_matching.py`.
+Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_match_invoice_row_no_suggestion_below_threshold`, `test_line_match_score_rejects_tomate_seco_vs_triturado`, `test_suggest_product_does_not_rescale_pack_qty_as_kg` en `tests/test_purchase_matching.py`.
 
-Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetch_partner_po_lines_includes_receipt_and_deliver_fields`, `test_search_oc_candidates_for_comprobante`, `test_apply_oc_selection_sin_oc_clears_match` en `tests/test_purchase_matching.py`.
+### Unidad de medida — envase en descripción
+
+La descripción suele traer el **tamaño del envase** (`X 500 G`, `X 2 KG`), no la UM facturada. `_resolve_invoice_qty_um` **no** copia esa UM del texto cuando ya hay cantidad de línea o `__fac_item_cantidad` (evita tratar packs como gramos/kilos).
+
+Tests: `test_resolve_invoice_qty_ignores_package_um_when_qty_present`, `test_resolve_invoice_qty_prefers_facturia_over_package_size`.
+
+Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetch_partner_po_lines_includes_receipt_and_deliver_fields`, `test_search_oc_candidates_for_comprobante`, `test_enrich_restores_saved_oc_and_marks_searched`, `test_enrich_restores_saved_oc_on_solo_encabezado`, `test_apply_oc_selection_sin_oc_clears_match` en `tests/test_purchase_matching.py`.
 
 ---
 
@@ -76,12 +85,13 @@ Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetc
 | `__oc_line_id` | `purchase_matching` / selección UI | `purchase_line_id` en Odoo |
 | `__oc_name` | Nombre PO | `invoice_origin`, warnings |
 | `__oc_order_id` | Id orden | Metadata |
-| `__selected_oc_name` | Picker UI | Prioridad en `invoice_origin` |
+| `__selected_oc_name` | Picker UI | Prioridad en `invoice_origin`; label del header tras reload |
+| `__selected_oc_order_id` | Picker UI / `select-oc` | Persiste en la conversión; re-aplicada al cargar el proceso |
 | `invoice_line_ids/product_id` | FacturIA / OC / **sugerencia fuzzy** | Producto al vincular OC o sugerido desde OCs del proveedor |
 | `__product_suggested` | `match_invoice_row` (fuzzy) | Marca producto sugerido (no confirmado); resalte naranja en UI |
 | `__overwrite_oc_price` | Checkbox UI por comprobante | Si truthy (`1`/`true`), al importar escribe `price_unit` en `purchase.order.line` |
-| `__um_empresa` / `__um_empresa_id` | Matching UM (categoría del producto / `product_uom` de OC) | `product_uom_id` en la línea de factura al importar |
-| `__um_proveedor`, `__qty_escalada`, `__um_note` | Escalado qty factura → UM empresa | UI / debug; qty re-escrita en `invoice_line_ids/quantity` si hubo re-escalado |
+| `__um_empresa` / `__um_empresa_id` | UM del producto (default `uom_po_id`; editable en UI). Columna **UM** | `product_uom_id` en la línea de factura al importar |
+| `__um_proveedor`, `__qty_escalada`, `__um_note` | UM cruda FacturIA + escalado (interno; `__um_proveedor` no se muestra) | Matching / debug; qty re-escrita en `invoice_line_ids/quantity` si hubo re-escalado |
 
 El **precio** y la **cantidad** de la **factura** vienen de `invoice_line_ids/price_unit` y `invoice_line_ids/quantity` — no del precio de la PO. El matching OC no pisa precio (solo producto, metadata y UM).
 
@@ -96,7 +106,7 @@ Si el operador marca el checkbox **«Sobreescribir precio de la OC»** en el hea
 3. Solo escribe si difiere (tolerancia 0.001). Errores de Odoo → warning, no abortan el import.
 4. Al deseleccionar OC / rematch, el flag se limpia con el resto de campos purchase.
 
-**UI:** controles OC + checkbox viven en el **header de cada tarjeta de factura** (la barra global quedó legacy/oculta). El checkbox siempre se renderiza; sin OC queda deshabilitado. Su etiqueta está arriba y la tilde debajo.
+**UI:** controles OC + checkbox viven en el **header de cada tarjeta de factura** (la barra global quedó legacy/oculta). Solo se renderizan si el proveedor tiene (o puede tener) OCs; si Odoo confirma que no tiene, no se muestran. Con OCs visibles pero sin OC seleccionada, el checkbox queda deshabilitado. Su etiqueta está arriba y la tilde debajo.
 
 Tests: `test_apply_purchase_order_price_overwrites_*`, `test_group_wants_overwrite_oc_price`.
 
@@ -105,18 +115,23 @@ Tests: `test_apply_purchase_order_price_overwrites_*`, `test_group_wants_overwri
 Flujo:
 
 1. Detectar / asignar `invoice_line_ids/product_id` (OC, fuzzy o manual).
-2. Resolver la UM de la factura contra las UOMs de la **categoría** del producto en Odoo (`uom.uom` con mismo `category_id` que `uom_po_id` / `uom_id`). Con OC vinculada se usa además `product_uom` de la línea PO.
-3. Si hace falta, re-escalar `invoice_line_ids/quantity` a la UM empresa y guardar `__um_empresa_id`.
-4. Al importar, `_build_line_command` / sync escriben `product_uom_id` en `account.move.line` (create, contenido, vínculo OC y reapply final).
+2. Resolver la UM de la factura contra las UOMs de la **categoría del producto** (`uom.uom` con mismo `category_id` que `uom_po_id` / `uom_id` del producto). La UM **inferida** por defecto (`__um_empresa`) es el default de compra del producto (`uom_po_id`, p.ej. `pack (12 unidades)`), **no** la UM de la línea OC (esa puede ser `Unidades` aunque el producto compre en packs). Sin `uom_ids` por producto en Dinner: la “lista” = UOMs de esa categoría (incluye custom).
+3. Si hace falta, re-escalar `invoice_line_ids/quantity` a la UM destino y guardar `__um_empresa_id`.
+4. Al importar, `_build_line_command` / sync escriben `product_uom_id` en `account.move.line` (create, contenido, vínculo OC y reapply final). El vínculo OC (`purchase_line_id`) es independiente de la UM elegida.
+
+**UI — selector de UM:** la columna **UM** es un `<select>` por fila. Opciones = `list_uoms_for_product` (misma categoría). Sin producto, el select queda vacío y deshabilitado. Al cambiar producto, `POST .../rematch-uom` infiere el default y cachea las opciones (`state.uomOptionsByProductId`). Al elegir otra UM, el mismo endpoint con `uom_id` re-escala desde `__qty_original` / `__um_proveedor`. Si la fila ya tenía producto guardado, al enfocar el select se llama `GET .../product-uoms` (solo lista, sin mutar).
+
+**Resolve category-aware:** `_apply_uom_scaling` matchea la UM de FacturIA (`KG`, `LT`, …) **dentro de la categoría del destino** (`_find_uom_in_category`), no solo por `by_name` global. El catálogo indexa colisiones de nombre como listas (`by_name[key] = […]`): en Dinner hay dos `kg` (Peso vs Conversión Crema) y dos `L` (Volumen vs LITROS); sin filtro por categoría el alias global elegía la categoría equivocada y fallaba con `Categoría UM distinta`.
 
 **No se escribe** `product_uom_id` cuando:
 
 - El mapeo falló (`UM sin mapeo` / `Categoría UM distinta`): la cantidad sigue en la UM de factura y Odoo usa el default del producto.
-- La fila **no tiene** `invoice_line_ids/product_id` (ej. el usuario borró el producto tras el matching): una UM huérfana podría violar la restricción de categoría UOM de Odoo. La UI (`combobox/attach.js`) limpia `__um_empresa_id` al cambiar o borrar el producto.
+- La fila **no tiene** `invoice_line_ids/product_id` (ej. el usuario borró el producto tras el matching): una UM huérfana podría violar la restricción de categoría UOM de Odoo. La UI limpia `__um_empresa_*` al borrar el producto.
+- Al **elegir producto a mano**, `POST .../rematch-uom` recalcula la UM con `uom_po_id` del producto (mismo paso 2 que el matching automático) y re-escala cantidad si aplica. Un `uom_id` fuera de la categoría del producto se ignora y se usa el default.
 
 **Caches por tenant:** `_po_cache`, `_product_uom_cache` y `_uom_cache` se indexan por `base_url|db` — los ids de `uom.uom` / `product.product` no son portables entre perfiles Odoo (Dinner/Aliare/Sudata). `clear_purchase_cache()` limpia todo.
 
-Tests: `test_apply_uom_scaling_sets_empresa_id`, `test_build_line_command_includes_matched_product_uom`, `test_plan_product_line_content_updates_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_uom_not_written_without_product`.
+Tests: `test_apply_uom_scaling_sets_empresa_id`, `test_apply_uom_scaling_kg_collision_uses_target_category`, `test_apply_uom_scaling_oc_custom_pack_from_kg_invoice`, `test_apply_uom_scaling_lt_collision_uses_volume_category`, `test_match_invoice_row_oc_uses_product_purchase_uom_not_po_line`, `test_build_line_command_includes_matched_product_uom`, `test_plan_product_line_content_updates_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_uom_not_written_without_product`, `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom`.
 
 ---
 
@@ -296,6 +311,8 @@ flowchart TD
 - `test_search_oc_candidates_for_comprobante`
 - `test_score_oc_candidates_lists_ocs_without_content_rows`
 - `test_enrich_keeps_saved_oc_when_po_fetch_empty`
+- `test_enrich_restores_saved_oc_and_marks_searched`
+- `test_enrich_restores_saved_oc_on_solo_encabezado`
 - `test_apply_oc_selection_sin_oc_clears_match` (el selector sigue visible después de «Sin OC»)
 
 Patch paths: [testing.md](testing.md#mockpatch-rutas-por-submódulo).

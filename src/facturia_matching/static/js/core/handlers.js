@@ -1,4 +1,4 @@
-import { renderSummary, scheduleAutoSave, rematchPurchase } from "../api/index.js";
+import { renderSummary, scheduleAutoSave, rematchPurchase, rematchProductUom, selectProductUom } from "../api/index.js";
 import { addOtroImpuesto, removeOtroImpuesto } from "../rows/index.js";
 import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
 import { collapseGroupAtRow, comprobanteHasMultipleLines, prepareSoloEncabezadoRow } from "../singleLine/index.js";
@@ -76,6 +76,16 @@ export function createHandlers({ state, refs, setStatusBound }) {
     },
     onRematchPurchase: (rIdx) => {
       rematchPurchase(state, refs, setStatusBound, handlers, rIdx);
+    },
+    onRematchProductUom: (rIdx) => {
+      rematchProductUom(state, refs, setStatusBound, handlers, rIdx).then(() => {
+        scheduleAutoSave(state, refs, setStatusBound);
+      });
+    },
+    onSelectProductUom: (rIdx, uomId) => {
+      selectProductUom(state, refs, setStatusBound, handlers, rIdx, uomId).then(() => {
+        scheduleAutoSave(state, refs, setStatusBound);
+      });
     },
   };
 

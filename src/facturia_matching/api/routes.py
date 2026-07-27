@@ -1,9 +1,13 @@
 """FastAPI route handlers."""
 
+import logging
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
+
+logger = logging.getLogger(__name__)
 
 from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME, PROCESS_SCHEMA
 from facturia_matching.odoo.empresa_profile import (
@@ -46,6 +50,8 @@ from facturia_matching.persistence.process_conversions import (
 )
 from facturia_matching.odoo.purchase_matching import (
     apply_oc_selection,
+    apply_product_uom_to_row,
+    list_uoms_for_product,
     rematch_comprobante_purchase,
     search_oc_candidates_for_comprobante,
 )
@@ -193,9 +199,12 @@ def get_bootstrap(
         perfil, odoo_profile_q, odoo_cloud, empresa=empresa
     )
     def _boot():
+        t0 = time.perf_counter()
         meta = build_metadata_payload()
+        t_meta = time.perf_counter()
         opts = get_options(padron=False)
-        return {
+        t_opts = time.perf_counter()
+        payload = {
             "metadata": meta,
             "options": opts,
             "odoo_profile": current_odoo_profile(),
@@ -203,6 +212,14 @@ def get_bootstrap(
             "empresa_odoo_profiles": empresa_odoo_profile_map(),
             "empresa_odoo_labels": empresa_odoo_display_labels(),
         }
+        logger.warning(
+            "timing /api/bootstrap profile=%s meta=%.0fms options=%.0fms total=%.0fms",
+            current_odoo_profile(),
+            (t_meta - t0) * 1000,
+            (t_opts - t_meta) * 1000,
+            (time.perf_counter() - t0) * 1000,
+        )
+        return payload
 
     return _with_odoo_profile(odoo_profile, _boot)
 
@@ -381,12 +398,14 @@ def get_proceso(
         perfil, odoo_profile_q, odoo_cloud, empresa=empresa
     )
     def _load():
+        t0 = time.perf_counter()
         filas, etiqueta_options, purchase_summary, source, conversion_meta = load_process_rows(
             process_number,
             empresa=empresa,
             regenerate=regenerate,
         )
-        return _build_proceso_response(
+        t_load = time.perf_counter()
+        resp = _build_proceso_response(
             process_number,
             empresa,
             filas,
@@ -395,6 +414,19 @@ def get_proceso(
             source,
             conversion_meta,
         )
+        logger.warning(
+            "timing /api/proceso/%s profile=%s empresa=%s source=%s rows=%s "
+            "load=%.0fms build=%.0fms total=%.0fms",
+            process_number,
+            current_odoo_profile(),
+            empresa or "-",
+            source,
+            len(filas or []),
+            (t_load - t0) * 1000,
+            (time.perf_counter() - t_load) * 1000,
+            (time.perf_counter() - t0) * 1000,
+        )
+        return resp
 
     return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _load))
 
@@ -570,6 +602,69 @@ def post_proceso_rematch_purchase(process_number: str, payload: Dict[str, Any]):
         )
 
     return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _rematch))
+
+
+@router.post("/api/proceso/{process_number}/rematch-uom")
+def post_proceso_rematch_uom(process_number: str, payload: Dict[str, Any]):
+    """Recalcula UM al elegir/borrar producto o al elegir UM a mano (uom_id opcional)."""
+    row = payload.get("row")
+    odoo_profile = _payload_odoo_profile(payload)
+    if not isinstance(row, dict):
+        raise HTTPException(status_code=400, detail="payload.row debe ser un objeto")
+
+    def _rematch_uom():
+        resolve_process_row(process_number, empresa=payload.get("empresa"))
+        pid_raw = str(
+            payload.get("product_id") or row.get("invoice_line_ids/product_id") or ""
+        ).strip()
+        product_id = int(pid_raw) if pid_raw.isdigit() else None
+        if product_id is not None:
+            row["invoice_line_ids/product_id"] = str(product_id)
+        else:
+            row["invoice_line_ids/product_id"] = ""
+        uom_id = None
+        raw_uom = payload.get("uom_id")
+        if raw_uom is not None and str(raw_uom).strip() != "":
+            try:
+                uom_id = int(raw_uom)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="payload.uom_id inválido")
+        uom_info = apply_product_uom_to_row(row, product_id, uom_id=uom_id)
+        uoms = list_uoms_for_product(product_id) if product_id else []
+        return {
+            "ok": True,
+            "row_index": payload.get("row_index"),
+            "row": row,
+            "uom": uom_info,
+            "uoms": uoms,
+        }
+
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _rematch_uom))
+
+
+@router.get("/api/proceso/{process_number}/product-uoms")
+def get_proceso_product_uoms(
+    process_number: str,
+    product_id: str = Query(...),
+    empresa: Optional[str] = Query(None),
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    """Lista UOMs de la categoría del producto (sin mutar la fila)."""
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, empresa=empresa
+    )
+    pid_raw = str(product_id or "").strip()
+    if not pid_raw.isdigit():
+        raise HTTPException(status_code=400, detail="product_id inválido")
+    pid = int(pid_raw)
+
+    def _list():
+        resolve_process_row(process_number, empresa=empresa)
+        return {"ok": True, "product_id": str(pid), "uoms": list_uoms_for_product(pid)}
+
+    return _handle_process_load_errors(lambda: _with_odoo_profile(odoo_profile, _list))
 
 
 @router.put("/api/proceso/{process_number}/conversion")

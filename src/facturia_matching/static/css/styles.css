@@ -81,9 +81,30 @@ body.embed-mode .odooTenantBadge {
   padding: 2px 8px;
 }
 
+/* Embed: la página no scrollea; scrollea .tableScroll y el Total queda fijo abajo. */
+html.embed-mode,
+body.embed-mode {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
 body.embed-mode .searchBar { display: none; }
-body.embed-mode .wrap { padding: 0 12px 12px; }
-body.embed-mode .grid { gap: 10px; }
+body.embed-mode .wrap {
+  box-sizing: border-box;
+  height: 100%;
+  max-height: 100%;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.embed-mode .grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 10px;
+  display: flex;
+  flex-direction: column;
+}
 body.embed-mode .actionTitle { display: none; }
 body.embed-mode .actionHint { display: none; }
 body.embed-mode .contextRowTop {
@@ -91,8 +112,8 @@ body.embed-mode .contextRowTop {
   min-height: 0;
 }
 body.embed-mode .actionCard {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
+  position: relative;
   z-index: 10;
   padding: 8px 12px;
   border-radius: 10px;
@@ -111,9 +132,30 @@ body.embed-mode .contextRow { margin-top: 6px; min-height: 14px; }
 body.embed-mode .summaryHint { margin-bottom: 6px; }
 body.embed-mode .ocPickerBar { margin-bottom: 8px; padding: 8px 10px; }
 body.embed-mode .contextRow .status { margin-top: 0; }
-body.embed-mode .tableScroll { max-height: min(62vh, 680px); }
 body.embed-mode .card { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05); }
-body.embed-mode .processCard { padding: 10px 12px; }
+body.embed-mode .processCard {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+}
+body.embed-mode .processCard > .summaryHint,
+body.embed-mode .processCard > .ocPickerBar {
+  flex: 0 0 auto;
+}
+body.embed-mode .tableScroll {
+  flex: 1 1 auto;
+  min-height: 140px;
+  /* Tope duro: evita el scroll de toda la página / iframe al alto del contenido */
+  max-height: min(680px, calc(100vh - 150px));
+}
+body.embed-mode .footerBar {
+  flex: 0 0 auto;
+  position: static;
+  box-shadow: none;
+}
 body.embed-mode .comprobanteCardTitle { display: none; }
 body.embed-mode .comprobanteCardHeader {
   padding: 8px 10px;
@@ -221,15 +263,24 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .status.bad { color: var(--bad); }
 .grid { display:grid; gap: 14px; grid-template-columns: 1fr; }
 
-.processCard { overflow: hidden; }
+.processCard {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .tableScroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  max-height: 520px;
+  max-height: min(520px, 70vh);
   border: 1px solid var(--line);
   border-radius: 12px;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
+  width: 100%;
+  max-width: 100%;
+  overscroll-behavior: contain;
 }
 
 .tableScroll::-webkit-scrollbar {
@@ -359,11 +410,13 @@ select.selectLoading {
 }
 
 .footerBar {
-  display:flex;
+  display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items:center;
-  padding-top: 14px;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 12px 0 2px;
+  background: var(--card);
 }
 
 .totalBox {
@@ -714,8 +767,8 @@ select.selectLoading {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
-  /* visible: la tabla ancha ensancha el wrap y .tableScroll hace un solo scroll-x */
-  overflow: visible;
+  /* hidden: el scroll-x vive en .comprobanteTableMount para que header/pie no se vayan */
+  overflow: hidden;
 }
 
 .comprobanteCardHeader {
@@ -809,7 +862,24 @@ select.selectLoading {
 }
 
 .comprobanteTableMount {
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.comprobanteTableMount::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.comprobanteTableMount::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.comprobanteTableMount::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .comprobanteTableMount table {
@@ -822,6 +892,8 @@ select.selectLoading {
 }
 
 .comprobanteFooter {
+  position: relative;
+  z-index: 1;
   padding: 12px 14px 14px;
   border-top: 1px solid var(--line);
   background: #fafbfd;

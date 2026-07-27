@@ -65,8 +65,7 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
         state.rows[r].__product_suggested = "";
         root.classList.remove("combobox-suggested");
       }
-      // UM matcheada pertenece al producto anterior; sin limpiar, el import
-      // podría escribir un product_uom_id de otra categoría y fallar en Odoo.
+      // UM se recalcula en rematch-uom al cambiar producto; al borrar, limpiar acá.
       if (state.rows[r].__um_empresa_id) {
         state.rows[r].__um_empresa_id = "";
         state.rows[r].__um_empresa = "";
@@ -99,7 +98,17 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
       const changedProduct =
         k === "invoice_line_ids/product_id" && v !== String(state.rows[r][k] ?? "");
       state.rows[r][k] = v;
-      if (changedProduct) clearProductMatchMeta();
+      // Al cambiar producto: no dejar UM del producto anterior; rematch-uom completa.
+      if (changedProduct) {
+        if (state.rows[r].__product_suggested) {
+          state.rows[r].__product_suggested = "";
+          root.classList.remove("combobox-suggested");
+        }
+        state.rows[r].__um_empresa_id = "";
+        state.rows[r].__um_empresa = "";
+        state.rows[r].__um_factor = "";
+        state.rows[r].__um_note = "";
+      }
       input.value = findOptionLabel(getOpts(), v) || v;
       listEl.hidden = true;
       root.classList.remove("combobox-open");

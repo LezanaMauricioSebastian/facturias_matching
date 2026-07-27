@@ -23,7 +23,7 @@ import {
   clearFacIvaFooter,
   allContentLinesExplicitZeroIva,
 } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
-import { migrateLegacyComprobanteIva, migrateFacIvaMontos } from "../../src/facturia_matching/static/js/comprobanteTax/migration.js";
+import { migrateLegacyComprobanteIva, migrateFacIvaMontos, propagateSingleFooterIvaToLines } from "../../src/facturia_matching/static/js/comprobanteTax/migration.js";
 
 describe("classifyComprobanteTaxMode (fixtures)", () => {
   for (const scenario of loadTaxScenarios()) {
@@ -148,6 +148,69 @@ describe("migrations", () => {
     migrateFacIvaMontos(rows);
     const montos = parseFacIvaMontos(rows);
     assert.ok(Object.keys(montos).length >= 2);
+  });
+
+  it("propagates single footer IVA to empty line iva_pct", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_iva_monto: "2183.37",
+        __fac_iva_montos: '{"21":"2183.37"}',
+        "invoice_line_ids/name": "Servicio",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "10397",
+        iva_pct: "",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "Otro",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        iva_pct: "0",
+      },
+    ];
+    const n = propagateSingleFooterIvaToLines(rows);
+    assert.equal(n, 2);
+    assert.equal(rows[0].iva_pct, "21");
+    assert.equal(rows[1].iva_pct, "21");
+  });
+
+  it("does not propagate when footer has multiple IVA rates", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_iva_montos: '{"21":"100","10.5":"50"}',
+        "invoice_line_ids/name": "A",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "1000",
+        iva_pct: "",
+      },
+    ];
+    assert.equal(propagateSingleFooterIvaToLines(rows), 0);
+    assert.equal(rows[0].iva_pct, "");
+  });
+
+  it("does not overwrite Exento when propagating single footer IVA", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_iva_montos: '{"21":"100"}',
+        "invoice_line_ids/name": "Exento",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "1000",
+        iva_pct: "IVA Exento",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "Gravado",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "500",
+        iva_pct: "",
+      },
+    ];
+    assert.equal(propagateSingleFooterIvaToLines(rows), 1);
+    assert.equal(rows[0].iva_pct, "IVA Exento");
+    assert.equal(rows[1].iva_pct, "21");
   });
 });
 
@@ -334,7 +397,7 @@ describe("partial multi-rate IVA breakdown total", () => {
     assert.ok(Math.abs(totals.totalOdoo - 96262.14) > 1);
   });
 
-  it("matches screenshot: header base with partial __fac_iva_montos and extra line rate", () => {
+    it("matches screenshot: header base with partial __fac_iva_montos and extra line rate", () => {
     const rows = [
       {
         "__fac_subtotal": "64242",
@@ -351,6 +414,35 @@ describe("partial multi-rate IVA breakdown total", () => {
     assert.equal(mode, "header");
     assert.ok(Math.abs(totals.baseOdoo - 64242) <= 0.02);
     assert.ok(Math.abs(totals.totalOdoo - 98597.55) <= 0.02);
+  });
+
+  it("keeps fac subtotal as Base when selecting IVA flips header→mixed (PDF Mauri)", () => {
+    const rows = [
+      {
+        __fac_subtotal: "188102.36",
+        __fac_iva_monto: "39501.50",
+        __fac_iva_montos: '{"21":"39501,50"}',
+        "invoice_line_ids/quantity": "2",
+        "invoice_line_ids/price_unit": "14056",
+        iva_pct: "21",
+      },
+      {
+        "invoice_line_ids/quantity": "2",
+        "invoice_line_ids/price_unit": "18097",
+        iva_pct: "",
+      },
+      {
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "12421",
+        iva_pct: "",
+      },
+    ];
+    const mode = classifyComprobanteTaxMode(rows);
+    const totals = computeComprobanteTotals(rows, mode);
+    assert.equal(mode, "mixed");
+    assert.ok(Math.abs(totals.baseOdoo - 188102.36) <= 0.02);
+    assert.ok(Math.abs(totals.baseLines - 76727) <= 0.02);
+    assert.ok(Math.abs(totals.ivaOdoo - 39501.5) <= 0.02);
   });
 });
 
