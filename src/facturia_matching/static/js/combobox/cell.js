@@ -12,7 +12,7 @@ export function renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, lo
   const cls = (loading ? " combobox-loading" : "") + (suggested ? " combobox-suggested" : "");
   const placeholder = loading ? "" : "Buscar…";
   const title = suggested
-    ? ' title="Producto sugerido automáticamente (fuzzy con OCs del proveedor). Revisá antes de importar."'
+    ? ' title="Producto sugerido (historial del proveedor o fuzzy con OCs). Revisá antes de importar."'
     : "";
   return (
     `<td${tdStyle}>` +

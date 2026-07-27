@@ -62,11 +62,31 @@ No todas las líneas de factura terminan vinculadas a una línea de OC (proveedo
 - Si la fila ya trae `invoice_line_ids/product_id`, se respeta (no se sugiere encima).
 - **No** re-escala cantidad al sugerir (solo stamp de UM): UM factura ambigua (`KG` / `UNID/KG`) + `uom_po` en packs de peso inventaba qtys (p. ej. Sal fina 20 → 0,32). El re-escalado sigue en match OC y en `rematch-uom` manual.
 - Rechaza falsos positivos por modificadores incompatibles (p. ej. **TOMATE SECO** ≠ **TOMATE TRITURADO**): no alcanza un solo token de género.
-- Hongos / Pasas / productos nunca comprados al proveedor quedan vacíos: la sugerencia solo busca en el pool de OCs del partner, no en todo el catálogo. **Limitación conocida.**
+- Hongos / Pasas / productos nunca comprados al proveedor quedan vacíos: la sugerencia solo busca en el pool de OCs del partner, no en todo el catálogo. **Limitación conocida** (mitigada en parte por [aprendizaje](#aprendizaje-de-producto-procesos-pasados)).
 
-**UI:** la celda de producto sugerida se muestra **resaltada en naranja** (`combobox-suggested`) con tooltip "revisá antes de importar". Al elegir/borrar el producto manualmente se limpia el flag; al elegir producto se llama `rematch-uom` para inferir UM (`combobox/attach.js` + `purchase.js`).
+**UI:** la celda de producto sugerida se muestra **resaltada en naranja** (`combobox-suggested`) con tooltip de revisión. Al elegir/borrar el producto manualmente se limpia el flag; al elegir producto se llama `rematch-uom` para inferir UM (`combobox/attach.js` + `purchase.js`).
 
 Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_match_invoice_row_no_suggestion_below_threshold`, `test_line_match_score_rejects_tomate_seco_vs_triturado`, `test_suggest_product_does_not_rescale_pack_qty_as_kg` en `tests/test_purchase_matching.py`.
+
+## Aprendizaje de producto (procesos pasados)
+
+Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (p. ej. `SPRITE` → `GASEOSAS`) en un proceso anterior del **mismo proveedor**, el matching vuelve a sugerir ese producto aunque no esté en las OCs recientes.
+
+**Código:** `persistence/product_label_memory.py` + `match_invoice_row(..., learned_product_id=…)` vía `_match_comprobante_rows` / `enrich_rows_with_purchase_data(..., company_id=…)`.
+
+**Prioridad (sin producto previo en la fila):**
+
+1. Match de línea OC (sigue ganando).
+2. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta normalizada (`invoice_line_ids/name`), scoped por `company_id` + `template_id` (perfil Odoo).
+3. Fuzzy contra productos de las OCs del proveedor.
+
+**Señales “confirmadas”:** filas de conversiones guardadas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy sin revisar).
+
+**Spike actual:** lee las últimas ~40 filas de `process_conversions` (sin tabla dedicada). Setea `__product_suggested=memory` y nota `Producto aprendido (proceso pasado)`; misma UI naranja que fuzzy. No re-escala qty.
+
+**Limitaciones:** etiqueta exacta (tras normalizar mayúsculas/espacios); sin match fuzzy de labels (`SPRITE` ≠ `SPRITE 2L`); rematch bajo demanda sin `company_id` no consulta memoria todavía. Si una línea OC queda descartada por “ya asignada a otra fila”, se reintenta memoria/fuzzy (antes quedaba vacía y no aprendía).
+
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_oc_beats_learned` en `tests/test_product_label_memory.py` / `tests/test_purchase_matching.py`.
 
 ### Unidad de medida — envase en descripción
 
@@ -87,8 +107,8 @@ Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetc
 | `__oc_order_id` | Id orden | Metadata |
 | `__selected_oc_name` | Picker UI | Prioridad en `invoice_origin`; label del header tras reload |
 | `__selected_oc_order_id` | Picker UI / `select-oc` | Persiste en la conversión; re-aplicada al cargar el proceso |
-| `invoice_line_ids/product_id` | FacturIA / OC / **sugerencia fuzzy** | Producto al vincular OC o sugerido desde OCs del proveedor |
-| `__product_suggested` | `match_invoice_row` (fuzzy) | Marca producto sugerido (no confirmado); resalte naranja en UI |
+| `invoice_line_ids/product_id` | FacturIA / OC / **sugerencia fuzzy** / **aprendizaje** | Producto al vincular OC, sugerido desde OCs del proveedor, o última elección confirmada del mismo proveedor+etiqueta |
+| `__product_suggested` | `match_invoice_row` (fuzzy o memory) | Marca producto sugerido (no confirmado); resalte naranja en UI (`memory` o score fuzzy) |
 | `__overwrite_oc_price` | Checkbox UI por comprobante | Si truthy (`1`/`true`), al importar escribe `price_unit` en `purchase.order.line` |
 | `__um_empresa` / `__um_empresa_id` | UM del producto (default `uom_po_id`; editable en UI). Columna **UM** | `product_uom_id` en la línea de factura al importar |
 | `__um_proveedor`, `__qty_escalada`, `__um_note` | UM cruda FacturIA + escalado (interno; `__um_proveedor` no se muestra) | Matching / debug; qty re-escrita en `invoice_line_ids/quantity` si hubo re-escalado |

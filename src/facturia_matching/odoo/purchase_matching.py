@@ -1092,6 +1092,8 @@ def _match_comprobante_rows(
     po_lines: List[Dict[str, Any]],
     uom_catalog: Dict[str, Dict[str, Any]],
     selected_order_id: Optional[int],
+    *,
+    product_memory: Optional[Dict[Tuple[int, str], int]] = None,
 ) -> int:
     """Matchea líneas del comprobante contra la OC elegida. Devuelve filas matcheadas."""
     scoped = (
@@ -1101,6 +1103,12 @@ def _match_comprobante_rows(
     )
     matched = 0
     used_po_line_ids: set = set()
+    partner_raw = ""
+    for row in comprobante_rows:
+        pid = _normalize(row.get("partner_id"))
+        if pid:
+            partner_raw = pid
+            break
     for row in comprobante_rows:
         saved_sel = {
             "__selected_oc_order_id": row.get("__selected_oc_order_id", ""),
@@ -1112,20 +1120,55 @@ def _match_comprobante_rows(
             continue
         row.update(_empty_purchase_fields())
         row.update(saved_sel)
+        learned_id: Optional[int] = None
+        if product_memory and partner_raw.isdigit():
+            from facturia_matching.persistence.product_label_memory import lookup_in_index
+
+            learned_id = lookup_in_index(
+                product_memory,
+                partner_raw,
+                row.get("invoice_line_ids/name") or row.get("Nombre de producto"),
+            )
         match_fields = match_invoice_row(
-            row, scoped, uom_catalog, suggest_pool=po_lines
+            row,
+            scoped,
+            uom_catalog,
+            suggest_pool=po_lines,
+            learned_product_id=learned_id,
         )
         po_line_raw = match_fields.get("__oc_line_id")
         if po_line_raw and str(po_line_raw).isdigit():
             po_line_int = int(po_line_raw)
             if po_line_int in used_po_line_ids:
-                match_fields["__oc_line_id"] = ""
+                # Match OC inválido (línea ya usada): no dejar el producto a medias.
+                # Reintentar sin OC para que aplique memoria / fuzzy.
+                row["invoice_line_ids/product_id"] = ""
+                match_fields = match_invoice_row(
+                    row,
+                    [],
+                    uom_catalog,
+                    suggest_pool=po_lines,
+                    learned_product_id=learned_id,
+                )
                 match_fields["__oc_match_note"] = _compose_match_note(
                     match_fields.get("__oc_match_note") or "",
                     "Línea OC ya asignada a otra fila",
                 )
             else:
                 used_po_line_ids.add(po_line_int)
+        # OC vinculada pero sin product_id en la PO: igual sugerir desde memoria.
+        product_raw = _normalize(row.get("invoice_line_ids/product_id"))
+        if (
+            not product_raw.isdigit()
+            and learned_id
+            and not str(match_fields.get("__product_suggested") or "").strip()
+        ):
+            row["invoice_line_ids/product_id"] = str(int(learned_id))
+            match_fields["__product_suggested"] = "memory"
+            match_fields["__oc_match_note"] = _compose_match_note(
+                "Producto aprendido (proceso pasado)",
+                match_fields.get("__oc_match_note") or "",
+            )
         row.update(match_fields)
         row.update(saved_sel)
         if match_fields.get("__oc_line_id"):
@@ -1177,6 +1220,7 @@ def match_invoice_row(
     uom_catalog: Dict[str, Dict[str, Any]],
     *,
     suggest_pool: Optional[List[Dict[str, Any]]] = None,
+    learned_product_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     codigo = _normalize(row.get("__item_codigo") or row.get("invoice_line_ids/name"))
     desc = _normalize(row.get("invoice_line_ids/name") or row.get("Nombre de producto"))
@@ -1199,11 +1243,27 @@ def match_invoice_row(
     if not best or best_score < min_score:
         product_raw = _normalize(row.get("invoice_line_ids/product_id"))
         suggested: Optional[Dict[str, Any]] = None
-        if not product_raw.isdigit() and suggest_pool:
+        suggestion_source = ""
+        # Prioridad sin OC: producto ya en fila > memoria de procesos pasados > fuzzy OC.
+        if (
+            not product_raw.isdigit()
+            and learned_product_id is not None
+            and int(learned_product_id) > 0
+        ):
+            product_raw = str(int(learned_product_id))
+            row["invoice_line_ids/product_id"] = product_raw
+            suggested = {
+                "product_id": int(learned_product_id),
+                "score": 100.0,
+                "line_name": "",
+            }
+            suggestion_source = "memory"
+        elif not product_raw.isdigit() and suggest_pool:
             suggested = _suggest_product_from_pool(codigo, desc, qty, suggest_pool)
             if suggested:
                 product_raw = str(suggested["product_id"])
                 row["invoice_line_ids/product_id"] = product_raw
+                suggestion_source = "fuzzy"
         if product_raw.isdigit():
             uom_info = _apply_uom_scaling_for_product(
                 row,
@@ -1212,7 +1272,7 @@ def match_invoice_row(
                 product_id=int(product_raw),
                 uom_catalog=uom_catalog,
             )
-            # Sugerencia fuzzy (sin OC): stamp UM pero no reescribir cantidad.
+            # Sugerencia (fuzzy o memoria, sin OC): stamp UM pero no reescribir cantidad.
             # UM factura suele ser ambigua (UNID/KG) y el re-escalado a packs
             # de peso inventa qtys (20 → 0.32 en Sal fina / PDF Mauri).
             if suggested and uom_info.get("um_note") == "Re-escalado":
@@ -1240,9 +1300,14 @@ def match_invoice_row(
             ):
                 row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
         if suggested:
-            result["__product_suggested"] = f"{suggested['score']:.0f}"
+            if suggestion_source == "memory":
+                result["__product_suggested"] = "memory"
+                suggest_note = "Producto aprendido (proceso pasado)"
+            else:
+                result["__product_suggested"] = f"{suggested['score']:.0f}"
+                suggest_note = f"Producto sugerido (fuzzy {suggested['score']:.0f}%)"
             result["__oc_match_note"] = _compose_match_note(
-                f"Producto sugerido (fuzzy {suggested['score']:.0f}%)",
+                suggest_note,
                 result.get("__um_note") or "",
             )
         else:
@@ -1349,10 +1414,15 @@ def enrich_rows_with_purchase_data(
     rows: List[Dict[str, Any]],
     *,
     fetch_candidates: bool = True,
+    company_id: Optional[int] = None,
+    product_memory: Optional[Dict[Tuple[int, str], int]] = None,
 ) -> Dict[str, Any]:
     """
     Enriquece filas UI con OC, comparación pedido/recibido/facturado y re-escalado UM.
     Devuelve resumen para debug/API.
+
+    Si se pasa `company_id` (o un `product_memory` prearmado), sugiere producto
+    desde elecciones confirmadas de procesos pasados antes del fuzzy de OCs.
     """
     summary: Dict[str, Any] = {
         "enabled": False,
@@ -1373,6 +1443,13 @@ def enrich_rows_with_purchase_data(
     uom_catalog = get_uom_catalog()
     partner_lines: Dict[int, List[Dict[str, Any]]] = {}
     oc_detected_names: List[str] = []
+    memory_index = product_memory
+    if memory_index is None and company_id is not None:
+        from facturia_matching.persistence.product_label_memory import (
+            build_memory_index_for_company,
+        )
+
+        memory_index = build_memory_index_for_company(company_id)
 
     for comprobante_rows in _group_rows_by_comprobante(rows).values():
         content_rows = [r for r in comprobante_rows if _is_content_row(r)]
@@ -1473,7 +1550,11 @@ def enrich_rows_with_purchase_data(
                 oc_detected_names.append(selected_name)
 
         matched = _match_comprobante_rows(
-            comprobante_rows, po_lines, uom_catalog, selected_oid
+            comprobante_rows,
+            po_lines,
+            uom_catalog,
+            selected_oid,
+            product_memory=memory_index,
         )
         summary["rows_matched"] += matched
 

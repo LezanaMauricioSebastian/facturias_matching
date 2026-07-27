@@ -61,7 +61,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM (default o elegida). Candidatos bajo demanda (también sin líneas de producto), OCs no recepcionadas, conservar selección ante fetch vacío, Sin OC mantiene candidatos y rematch dinámico al cambiar proveedor. |
+| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM (default o elegida) + aprendizaje de producto desde procesos pasados (`company_id`). Candidatos bajo demanda (también sin líneas de producto), OCs no recepcionadas, conservar selección ante fetch vacío, Sin OC mantiene candidatos y rematch dinámico al cambiar proveedor. |
 | `__init__.py` | Marcador. |
 
 ---
@@ -72,6 +72,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
 | `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
+| `product_label_memory.py` | **`build_memory_index_for_company`**, **`lookup_in_index`**: última elección confirmada de producto por `partner_id` + etiqueta (lee conversiones recientes). |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
 | `__init__.py` | Marcador. |
 

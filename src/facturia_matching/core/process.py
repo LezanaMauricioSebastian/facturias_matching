@@ -260,7 +260,15 @@ def parse_process_json(
 
     purchase_summary: Dict[str, Any] = {"enabled": False}
     if odoo_ok and out_rows:
-        purchase_summary = enrich_rows_with_purchase_data(out_rows, fetch_candidates=False)
+        company_raw = row.get("company_id")
+        company_id = (
+            int(company_raw)
+            if company_raw is not None and str(company_raw).strip().isdigit()
+            else None
+        )
+        purchase_summary = enrich_rows_with_purchase_data(
+            out_rows, fetch_candidates=False, company_id=company_id
+        )
     t_enrich = time.perf_counter()
 
     sanitize_inflated_line_amounts(out_rows)
