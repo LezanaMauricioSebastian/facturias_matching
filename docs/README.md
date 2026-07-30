@@ -98,7 +98,7 @@ Contexto por request: `odoo/request_context.py` + `odoo/env.py`.
 
 El padrón Postgres puede traer tax ids de Dinner; `PADRON_TAX_SOURCE_PROFILE` (default `default`) define el tenant fuente para remapear a ids del perfil activo (`padron/taxes.py`).
 
-## Matching de producto (OC → memoria → fuzzy)
+## Matching de producto (memoria → OC → fuzzy)
 
 Por cada línea de factura, el matching **no** busca en todo el catálogo de Odoo. Solo usa productos de las OCs del proveedor (+ memoria de elecciones pasadas). Detalle: [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md).
 
@@ -106,24 +106,25 @@ Por cada línea de factura, el matching **no** busca en todo el catálogo de Odo
 flowchart TD
   start([Línea de factura]) --> hasPartner{¿Proveedor Odoo?}
   hasPartner -->|No| empty1[Producto vacío<br/>Sin proveedor Odoo]
-  hasPartner -->|Sí| fetchOC[Cargar líneas OC del proveedor]
+  hasPartner -->|Sí| mem{¿Memoria<br/>partner + etiqueta exacta?}
+  mem -->|Sí| sugMem[Producto aprendido<br/>naranja]
+  sugMem --> sameOc{¿OC seleccionada con<br/>el mismo product_id?}
+  sameOc -->|Sí| memPlusOc[Memoria + vínculo OC]
+  sameOc -->|No| memOnly[Solo memoria<br/>sin vínculo OC]
+  mem -->|No| fetchOC[Cargar líneas OC del proveedor]
   fetchOC --> hasOCs{¿El proveedor tiene OCs?}
-  hasOCs -->|No| memOnly{¿Memoria<br/>partner + etiqueta?}
-  memOnly -->|Sí| sugMem1[Sugerir producto aprendido<br/>naranja]
-  memOnly -->|No| empty2[Producto vacío<br/>sin fuzzy]
+  hasOCs -->|No| empty2[Producto vacío]
   hasOCs -->|Sí| hasSelOC{¿Hay OC<br/>seleccionada?}
   hasSelOC -->|Sí| matchOC{¿Etiqueta matchea<br/>línea de ESA OC?}
   hasSelOC -->|No| noOcMatch[Sin match de línea OC]
   matchOC -->|Sí y línea libre| linked[Producto + vínculo OC<br/>confirmado]
   matchOC -->|No / línea ya usada| noOcMatch
-  noOcMatch --> mem2{¿Memoria<br/>partner + etiqueta?}
-  mem2 -->|Sí| sugMem2[Sugerir producto aprendido<br/>naranja]
-  mem2 -->|No| fuzzy{¿Fuzzy etiqueta vs<br/>productos de OCs del proveedor<br/>≥ umbral?}
+  noOcMatch --> fuzzy{¿Fuzzy etiqueta vs<br/>productos de OCs del proveedor<br/>≥ umbral?}
   fuzzy -->|Sí| sugFuzzy[Sugerir producto fuzzy<br/>naranja · sin vincular OC]
   fuzzy -->|No| empty3[Producto vacío]
 ```
 
-Orden corto: **OC vinculada → memoria → fuzzy de OCs del proveedor → vacío**.
+Orden corto: **memoria (elección confirmada) → OC vinculada → fuzzy de OCs del proveedor → vacío**.
 
 ## Índice de documentos
 

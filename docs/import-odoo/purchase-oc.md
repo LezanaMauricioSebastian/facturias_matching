@@ -45,7 +45,7 @@ Si el operador elige **«Sin OC»**, se limpian los vínculos de líneas y el ch
 
 ## Sugerencia de producto por fuzzy (sin vincular OC)
 
-Diagrama de decisión (OC → memoria → fuzzy): [docs/README.md § Matching de producto](../README.md#matching-de-producto-oc--memoria--fuzzy).
+Diagrama de decisión (memoria → OC → fuzzy): [docs/README.md § Matching de producto](../README.md#matching-de-producto-memoria--oc--fuzzy).
 
 No todas las líneas de factura terminan vinculadas a una línea de OC (proveedor sin OC seleccionada, o línea que no matchea la OC elegida). Para esos casos se **sugiere** el `invoice_line_ids/product_id` haciendo fuzzy de la etiqueta contra los **productos de las OC del proveedor** (`fetch_partner_po_lines`, ya en memoria: sin llamadas extra a Odoo).
 
@@ -78,8 +78,8 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 
 **Prioridad (sin producto previo en la fila):**
 
-1. Match de línea OC (sigue ganando).
-2. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta normalizada (`invoice_line_ids/name`), scoped por `company_id` + `template_id` (perfil Odoo).
+1. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta normalizada (`invoice_line_ids/name`), scoped por `company_id` + `template_id` (perfil Odoo). Gana al match OC para respetar lo que el operador ya decidió.
+2. Match de línea OC (producto + vínculo). Si la memoria ya eligió el **mismo** `product_id`, también se vincula la línea OC.
 3. Fuzzy contra productos de las OCs del proveedor.
 
 **Señales “confirmadas”:** filas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy/memoria sin revisar).
@@ -101,7 +101,7 @@ Clave única: `(company_id, template_id, partner_id, label_key)`. La app crea la
 
 **Limitaciones:** etiqueta exacta (tras normalizar mayúsculas/espacios); sin match fuzzy de labels (`SPRITE` ≠ `SPRITE 2L`); rematch bajo demanda sin `company_id` no consulta memoria todavía. Si una línea OC queda descartada por “ya asignada a otra fila”, se reintenta memoria/fuzzy.
 
-Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_oc_beats_learned` en `tests/test_product_label_memory.py`.
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product` en `tests/test_product_label_memory.py`.
 
 ### Unidad de medida — envase en descripción
 

@@ -104,7 +104,8 @@ class TestProductLabelMemory(unittest.TestCase):
         self.assertIn("aprendido", out.get("__oc_match_note", "").lower())
         self.assertFalse(out.get("__oc_line_id"))
 
-    def test_match_invoice_row_oc_beats_learned(self):
+    def test_match_invoice_row_learned_beats_oc(self):
+        """Memoria gana al match OC cuando el producto aprendido es otro."""
         row = {
             "invoice_line_ids/name": "CON-CHOCLO",
             "__item_codigo": "100967",
@@ -132,9 +133,43 @@ class TestProductLabelMemory(unittest.TestCase):
             {"by_name": {}, "by_id": {}},
             learned_product_id=999,
         )
+        self.assertEqual(row.get("invoice_line_ids/product_id"), "999")
+        self.assertEqual(out.get("__product_suggested"), "memory")
+        self.assertFalse(out.get("__oc_line_id"))
+        self.assertIn("aprendido", out.get("__oc_match_note", "").lower())
+
+    def test_match_invoice_row_learned_keeps_oc_when_same_product(self):
+        """Si memoria y OC coinciden en product_id, se sugiere y se vincula OC."""
+        row = {
+            "invoice_line_ids/name": "CON-CHOCLO",
+            "__item_codigo": "100967",
+            "invoice_line_ids/quantity": "3",
+            "__um_proveedor": "KG",
+        }
+        po_lines = [
+            {
+                "line_name": "CON-CHOCLO",
+                "product_qty": 3,
+                "product_id": 575,
+                "order_name": "P06345",
+                "order_id": 1,
+                "line_id": 1,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 12,
+                "product_uom_name": "kg",
+            }
+        ]
+        out = match_invoice_row(
+            row,
+            po_lines,
+            {"by_name": {}, "by_id": {}},
+            learned_product_id=575,
+        )
         self.assertEqual(row.get("invoice_line_ids/product_id"), "575")
+        self.assertEqual(out.get("__product_suggested"), "memory")
         self.assertEqual(out.get("__oc_line_id"), "1")
-        self.assertFalse(out.get("__product_suggested"))
 
     def test_duplicate_oc_line_falls_back_to_memory(self):
         """Si la línea OC ya está usada, no dejar vacío: aplicar memoria."""
@@ -185,7 +220,7 @@ class TestProductLabelMemory(unittest.TestCase):
         self.assertEqual(rows[1].get("__oc_line_id"), "")
         self.assertEqual(rows[1].get("invoice_line_ids/product_id"), "620")
         self.assertEqual(rows[1].get("__product_suggested"), "memory")
-        self.assertIn("asignada", (rows[1].get("__oc_match_note") or "").lower())
+        self.assertIn("aprendido", (rows[1].get("__oc_match_note") or "").lower())
 
     @patch("facturia_matching.persistence.product_label_memory.get_conversion_template_id", return_value=99)
     @patch("facturia_matching.persistence.product_label_memory.ensure_product_label_memory_table")

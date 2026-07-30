@@ -1240,30 +1240,79 @@ def match_invoice_row(
     result["__qty_escalada"] = "" if qty is None else str(qty)
 
     min_score = _min_match_score(codigo)
-    if not best or best_score < min_score:
-        product_raw = _normalize(row.get("invoice_line_ids/product_id"))
-        suggested: Optional[Dict[str, Any]] = None
-        suggestion_source = ""
-        # Prioridad sin OC: producto ya en fila > memoria de procesos pasados > fuzzy OC.
-        if (
-            not product_raw.isdigit()
-            and learned_product_id is not None
-            and int(learned_product_id) > 0
-        ):
-            product_raw = str(int(learned_product_id))
-            row["invoice_line_ids/product_id"] = product_raw
-            suggested = {
-                "product_id": int(learned_product_id),
-                "score": 100.0,
-                "line_name": "",
+    product_raw = _normalize(row.get("invoice_line_ids/product_id"))
+    # Prioridad: producto ya en fila > memoria (elección confirmada) > match OC > fuzzy.
+    # Memoria gana al match OC para no pisar lo que el operador ya decidió.
+    if (
+        not product_raw.isdigit()
+        and learned_product_id is not None
+        and int(learned_product_id) > 0
+    ):
+        learned_id = int(learned_product_id)
+        product_raw = str(learned_id)
+        row["invoice_line_ids/product_id"] = product_raw
+        uom_info = _apply_uom_scaling_for_product(
+            row,
+            invoice_qty=qty,
+            invoice_um_raw=um_raw,
+            product_id=learned_id,
+            uom_catalog=uom_catalog,
+        )
+        if uom_info.get("um_note") == "Re-escalado":
+            uom_info = {
+                **uom_info,
+                "qty_escalada": result["__qty_original"],
+                "um_factor": "",
+                "um_note": "UM sugerida sin re-escalar qty",
             }
-            suggestion_source = "memory"
-        elif not product_raw.isdigit() and suggest_pool:
+        result.update(
+            {
+                "__um_proveedor": uom_info.get("um_proveedor") or um_raw,
+                "__um_empresa": uom_info.get("um_empresa") or "",
+                "__um_empresa_id": uom_info.get("um_empresa_id") or "",
+                "__qty_original": uom_info.get("qty_original") or result["__qty_original"],
+                "__qty_escalada": uom_info.get("qty_escalada") or result["__qty_escalada"],
+                "__um_factor": uom_info.get("um_factor") or "",
+                "__um_note": uom_info.get("um_note") or "",
+                "__product_suggested": "memory",
+            }
+        )
+        # Si la OC coincide en el mismo producto, también vincular la línea.
+        oc_note = "Producto aprendido (proceso pasado)"
+        if (
+            best
+            and best_score >= min_score
+            and int(best.get("product_id") or 0) == learned_id
+        ):
+            result.update(
+                {
+                    "__oc_name": best.get("order_name") or "",
+                    "__oc_partner_ref": best.get("partner_ref") or "",
+                    "__oc_line_name": best.get("line_name") or "",
+                    "__oc_match_score": f"{best_score:.0f}",
+                    "__qty_pedido": f"{best.get('product_qty', 0):g}",
+                    "__qty_recibido": f"{best.get('qty_received', 0):g}",
+                    "__qty_facturado_po": f"{best.get('qty_invoiced', 0):g}",
+                    "__oc_order_id": str(best.get("order_id") or ""),
+                    "__oc_line_id": str(best.get("line_id") or ""),
+                }
+            )
+            oc_note = _compose_match_note(
+                oc_note,
+                f"OC {best.get('order_name') or ''} · {best.get('line_name') or ''}".strip(" ·"),
+            )
+        result["__oc_match_note"] = _compose_match_note(
+            oc_note, result.get("__um_note") or ""
+        )
+        return result
+
+    if not best or best_score < min_score:
+        suggested: Optional[Dict[str, Any]] = None
+        if not product_raw.isdigit() and suggest_pool:
             suggested = _suggest_product_from_pool(codigo, desc, qty, suggest_pool)
             if suggested:
                 product_raw = str(suggested["product_id"])
                 row["invoice_line_ids/product_id"] = product_raw
-                suggestion_source = "fuzzy"
         if product_raw.isdigit():
             uom_info = _apply_uom_scaling_for_product(
                 row,
@@ -1272,7 +1321,7 @@ def match_invoice_row(
                 product_id=int(product_raw),
                 uom_catalog=uom_catalog,
             )
-            # Sugerencia (fuzzy o memoria, sin OC): stamp UM pero no reescribir cantidad.
+            # Sugerencia fuzzy (sin OC): stamp UM pero no reescribir cantidad.
             # UM factura suele ser ambigua (UNID/KG) y el re-escalado a packs
             # de peso inventa qtys (20 → 0.32 en Sal fina / PDF Mauri).
             if suggested and uom_info.get("um_note") == "Re-escalado":
@@ -1300,14 +1349,9 @@ def match_invoice_row(
             ):
                 row["invoice_line_ids/quantity"] = uom_info["qty_escalada"]
         if suggested:
-            if suggestion_source == "memory":
-                result["__product_suggested"] = "memory"
-                suggest_note = "Producto aprendido (proceso pasado)"
-            else:
-                result["__product_suggested"] = f"{suggested['score']:.0f}"
-                suggest_note = f"Producto sugerido (fuzzy {suggested['score']:.0f}%)"
+            result["__product_suggested"] = f"{suggested['score']:.0f}"
             result["__oc_match_note"] = _compose_match_note(
-                suggest_note,
+                f"Producto sugerido (fuzzy {suggested['score']:.0f}%)",
                 result.get("__um_note") or "",
             )
         else:
