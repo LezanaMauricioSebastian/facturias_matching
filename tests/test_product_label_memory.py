@@ -9,7 +9,7 @@ from facturia_matching.persistence.product_label_memory import (
     lookup_in_index,
     normalize_label_key,
 )
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class TestProductLabelMemory(unittest.TestCase):
@@ -186,6 +186,57 @@ class TestProductLabelMemory(unittest.TestCase):
         self.assertEqual(rows[1].get("invoice_line_ids/product_id"), "620")
         self.assertEqual(rows[1].get("__product_suggested"), "memory")
         self.assertIn("asignada", (rows[1].get("__oc_match_note") or "").lower())
+
+    @patch("facturia_matching.persistence.product_label_memory.get_conversion_template_id", return_value=99)
+    @patch("facturia_matching.persistence.product_label_memory.ensure_product_label_memory_table")
+    @patch("facturia_matching.persistence.product_label_memory.get_mysql_connection")
+    def test_upsert_writes_confirmed_choices(self, mock_conn_fn, _ensure, _tid):
+        from facturia_matching.persistence import product_label_memory as mem
+
+        conn = MagicMock()
+        mock_conn_fn.return_value = conn
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        rows = [
+            {
+                "partner_id": "1582",
+                "invoice_line_ids/name": "SPRITE",
+                "invoice_line_ids/product_id": "620",
+                "__product_suggested": "",
+                "__comprobante_idx": 0,
+            },
+            {
+                "partner_id": "1582",
+                "invoice_line_ids/name": "FANTA",
+                "invoice_line_ids/product_id": "111",
+                "__product_suggested": "82",
+                "__comprobante_idx": 0,
+            },
+        ]
+        n = mem.upsert_product_memory_choices(
+            1, rows, template_id=99, source_process_id=290, source_conversion_id=140
+        )
+        self.assertEqual(n, 1)
+        self.assertEqual(cur.execute.call_count, 1)
+        sql = cur.execute.call_args[0][0]
+        self.assertIn("ON DUPLICATE KEY UPDATE", sql)
+        args = cur.execute.call_args[0][1]
+        self.assertEqual(args[0], 1)
+        self.assertEqual(args[1], 99)
+        self.assertEqual(args[2], 1582)
+        self.assertEqual(args[3], "SPRITE")
+        self.assertEqual(args[4], 620)
+
+    @patch("facturia_matching.persistence.product_label_memory._seed_table_from_conversions")
+    @patch("facturia_matching.persistence.product_label_memory.fetch_memory_index_from_table")
+    def test_build_index_seeds_when_table_empty(self, mock_fetch, mock_seed):
+        from facturia_matching.persistence import product_label_memory as mem
+
+        mock_fetch.return_value = {}
+        mock_seed.return_value = {(1582, "SPRITE"): 620}
+        index = mem.build_memory_index_for_company(1, template_id=99)
+        self.assertEqual(index[(1582, "SPRITE")], 620)
+        mock_seed.assert_called_once()
 
 
 if __name__ == "__main__":

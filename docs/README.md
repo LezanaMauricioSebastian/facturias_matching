@@ -98,6 +98,33 @@ Contexto por request: `odoo/request_context.py` + `odoo/env.py`.
 
 El padrón Postgres puede traer tax ids de Dinner; `PADRON_TAX_SOURCE_PROFILE` (default `default`) define el tenant fuente para remapear a ids del perfil activo (`padron/taxes.py`).
 
+## Matching de producto (OC → memoria → fuzzy)
+
+Por cada línea de factura, el matching **no** busca en todo el catálogo de Odoo. Solo usa productos de las OCs del proveedor (+ memoria de elecciones pasadas). Detalle: [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md).
+
+```mermaid
+flowchart TD
+  start([Línea de factura]) --> hasPartner{¿Proveedor Odoo?}
+  hasPartner -->|No| empty1[Producto vacío<br/>Sin proveedor Odoo]
+  hasPartner -->|Sí| fetchOC[Cargar líneas OC del proveedor]
+  fetchOC --> hasOCs{¿El proveedor tiene OCs?}
+  hasOCs -->|No| memOnly{¿Memoria<br/>partner + etiqueta?}
+  memOnly -->|Sí| sugMem1[Sugerir producto aprendido<br/>naranja]
+  memOnly -->|No| empty2[Producto vacío<br/>sin fuzzy]
+  hasOCs -->|Sí| hasSelOC{¿Hay OC<br/>seleccionada?}
+  hasSelOC -->|Sí| matchOC{¿Etiqueta matchea<br/>línea de ESA OC?}
+  hasSelOC -->|No| noOcMatch[Sin match de línea OC]
+  matchOC -->|Sí y línea libre| linked[Producto + vínculo OC<br/>confirmado]
+  matchOC -->|No / línea ya usada| noOcMatch
+  noOcMatch --> mem2{¿Memoria<br/>partner + etiqueta?}
+  mem2 -->|Sí| sugMem2[Sugerir producto aprendido<br/>naranja]
+  mem2 -->|No| fuzzy{¿Fuzzy etiqueta vs<br/>productos de OCs del proveedor<br/>≥ umbral?}
+  fuzzy -->|Sí| sugFuzzy[Sugerir producto fuzzy<br/>naranja · sin vincular OC]
+  fuzzy -->|No| empty3[Producto vacío]
+```
+
+Orden corto: **OC vinculada → memoria → fuzzy de OCs del proveedor → vacío**.
+
 ## Índice de documentos
 
 | Documento | Contenido |
@@ -139,7 +166,7 @@ facturia-matching-ui/
 | Arreglar matching de proveedor | `padron/postgres.py`, `odoo/catalog.py` |
 | Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, [import-odoo/](import-odoo/README.md), [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
 | Import a Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
-| Matching con OC | `odoo/purchase_matching.py`, `static/js/ocPicker/` |
+| Matching con OC / producto / aprendizaje | `odoo/purchase_matching.py`, [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md), diagrama en esta página |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |
 | Nuevo endpoint | `api/routes.py` |
 | Variables de entorno | `.env.example`, `infra/config.py`, `odoo/env.py` |

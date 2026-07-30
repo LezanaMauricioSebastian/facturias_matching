@@ -72,7 +72,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
 | `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
-| `product_label_memory.py` | **`build_memory_index_for_company`**, **`lookup_in_index`**: última elección confirmada de producto por `partner_id` + etiqueta (lee conversiones recientes). |
+| `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod separados). **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada por `partner_id` + etiqueta. Seed lazy desde conversiones si la tabla está vacía. |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
 | `__init__.py` | Marcador. |
 

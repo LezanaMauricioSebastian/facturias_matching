@@ -26,7 +26,7 @@ Documentación del paquete que convierte filas de la UI en facturas de proveedor
 | [modulos.md](modulos.md) | Referencia archivo por archivo (funciones, responsabilidades) |
 | [pipeline.md](pipeline.md) | Flujo paso a paso: `import_rows_to_odoo` y `sync_move_taxes_from_group` |
 | [impuestos.md](impuestos.md) | `tax_ids`, montos esperados, sobreescritura en líneas tax, IIBB |
-| [purchase-oc.md](purchase-oc.md) | Refresh OC, sanitize, dedupe, `purchase_line_id`, precio tras vínculo |
+| [purchase-oc.md](purchase-oc.md) | Refresh OC, sanitize, dedupe, `purchase_line_id`, precio tras vínculo; matching producto (OC / memoria / fuzzy) |
 | [api-publica.md](api-publica.md) | Símbolos exportados, quién importa qué, contrato de respuesta |
 | [testing.md](testing.md) | Tests, `mock.patch` por submódulo, comandos útiles |
 

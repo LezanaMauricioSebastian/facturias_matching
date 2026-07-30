@@ -106,9 +106,10 @@ class TestResolveProcessRow(unittest.TestCase):
 
 
 class TestSaveConversion(unittest.TestCase):
+    @patch("facturia_matching.persistence.product_label_memory.upsert_product_memory_choices")
     @patch("facturia_matching.persistence.process_conversions.ensure_export_template_exists")
     @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
-    def test_save_conversion_insert(self, mock_conn_fn, _mock_ensure):
+    def test_save_conversion_insert(self, mock_conn_fn, _mock_ensure, mock_upsert):
         conn = MagicMock()
         mock_conn_fn.return_value = conn
         cur = MagicMock()
@@ -124,9 +125,11 @@ class TestSaveConversion(unittest.TestCase):
         conn.commit.assert_called_once()
         insert_sql = cur.execute.call_args_list[-1][0][0]
         self.assertIn("INSERT INTO", insert_sql)
+        mock_upsert.assert_called_once()
 
+    @patch("facturia_matching.persistence.product_label_memory.upsert_product_memory_choices")
     @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
-    def test_save_conversion_update(self, mock_conn_fn):
+    def test_save_conversion_update(self, mock_conn_fn, mock_upsert):
         conn = MagicMock()
         mock_conn_fn.return_value = conn
         cur = MagicMock()
@@ -139,6 +142,7 @@ class TestSaveConversion(unittest.TestCase):
         update_sql = cur.execute.call_args_list[-1][0][0]
         self.assertIn("UPDATE", update_sql)
         conn.commit.assert_called_once()
+        mock_upsert.assert_called_once()
 
     @patch("facturia_matching.persistence.process_conversions.get_mysql_connection")
     def test_delete_conversion(self, mock_conn_fn):

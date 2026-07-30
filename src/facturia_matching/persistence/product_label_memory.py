@@ -1,13 +1,17 @@
 """Aprendizaje de producto: última elección confirmada por proveedor + etiqueta.
 
-Spike: lee conversiones recientes en `process_conversions` (sin tabla dedicada).
-Solo considera filas con `invoice_line_ids/product_id` y sin `__product_suggested`
+Tabla dedicada `product_label_memory` en `PROCESS_SCHEMA`
+(staging: sudataco_staging, prod: sudataco_facturia).
+
+Solo persiste filas con `invoice_line_ids/product_id` y sin `__product_suggested`
 (elecciones del operador / match OC, no fuzzy sin confirmar).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from facturia_matching.infra.config import PROCESS_SCHEMA, _mysql_table_ref, get_mysql_connection
@@ -19,17 +23,25 @@ from facturia_matching.persistence.process_conversions import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONVERSION_LIMIT = 40
+MEMORY_TABLE = "product_label_memory"
+DEFAULT_CONVERSION_LIMIT = 100
 _MIN_LABEL_LEN = 2
+_MAX_LABEL_LEN = 512
 
 # partner_id + label_key → product_id
 ProductMemoryIndex = Dict[Tuple[int, str], int]
+
+_table_ensured = False
+_table_lock = threading.Lock()
 
 
 def normalize_label_key(raw: Any) -> str:
     if raw is None:
         return ""
-    return " ".join(str(raw).strip().split()).upper()
+    key = " ".join(str(raw).strip().split()).upper()
+    if len(key) > _MAX_LABEL_LEN:
+        return key[:_MAX_LABEL_LEN]
+    return key
 
 
 def _normalize(raw: Any) -> str:
@@ -123,13 +135,164 @@ def lookup_in_index(
     return index.get((int(raw_partner), label_key))
 
 
+def _memory_table_ref() -> str:
+    return _mysql_table_ref(PROCESS_SCHEMA, MEMORY_TABLE)
+
+
+def ensure_product_label_memory_table() -> None:
+    """CREATE TABLE IF NOT EXISTS en el schema actual (staging o prod)."""
+    global _table_ensured
+    if _table_ensured:
+        return
+    with _table_lock:
+        if _table_ensured:
+            return
+        table_ref = _memory_table_ref()
+        conn = get_mysql_connection()
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table_ref} (
+                        id BIGINT NOT NULL AUTO_INCREMENT,
+                        company_id INT NOT NULL,
+                        template_id INT NOT NULL,
+                        partner_id INT NOT NULL,
+                        label_key VARCHAR({_MAX_LABEL_LEN}) NOT NULL,
+                        product_id INT NOT NULL,
+                        source_process_id INT NULL,
+                        source_conversion_id INT NULL,
+                        updated_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE KEY uq_product_label_memory
+                            (company_id, template_id, partner_id, label_key),
+                        KEY idx_product_label_memory_lookup
+                            (company_id, template_id, partner_id, label_key)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+                conn.commit()
+                _table_ensured = True
+                logger.info(
+                    "product_label_memory: tabla lista en schema=%s",
+                    PROCESS_SCHEMA,
+                )
+            finally:
+                cur.close()
+        finally:
+            conn.close()
+
+
+def fetch_memory_index_from_table(
+    company_id: int,
+    *,
+    template_id: Optional[int] = None,
+) -> ProductMemoryIndex:
+    """Lee el índice desde la tabla dedicada."""
+    ensure_product_label_memory_table()
+    tid = int(template_id) if template_id is not None else get_conversion_template_id()
+    table_ref = _memory_table_ref()
+    conn = get_mysql_connection()
+    index: ProductMemoryIndex = {}
+    try:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                f"""
+                SELECT partner_id, label_key, product_id
+                FROM {table_ref}
+                WHERE company_id = %s AND template_id = %s
+                """,
+                (int(company_id), tid),
+            )
+            for row in cur.fetchall() or []:
+                try:
+                    partner_id = int(row["partner_id"])
+                    product_id = int(row["product_id"])
+                    label_key = normalize_label_key(row.get("label_key"))
+                except (TypeError, ValueError, KeyError):
+                    continue
+                if partner_id <= 0 or product_id <= 0 or len(label_key) < _MIN_LABEL_LEN:
+                    continue
+                index[(partner_id, label_key)] = product_id
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+    return index
+
+
+def upsert_product_memory_choices(
+    company_id: int,
+    rows: List[Dict[str, Any]],
+    *,
+    template_id: Optional[int] = None,
+    source_process_id: Optional[int] = None,
+    source_conversion_id: Optional[int] = None,
+) -> int:
+    """Persiste elecciones confirmadas. Devuelve filas tocadas (insert/update)."""
+    if company_id is None or not rows:
+        return 0
+    choices = list(iter_confirmed_choices(rows))
+    if not choices:
+        return 0
+
+    ensure_product_label_memory_table()
+    tid = int(template_id) if template_id is not None else get_conversion_template_id()
+    now = datetime.now().replace(microsecond=0)
+    table_ref = _memory_table_ref()
+    # Última aparición de cada clave en este save gana.
+    by_key: Dict[Tuple[int, str], int] = {}
+    for partner_id, label_key, product_id in choices:
+        by_key[(partner_id, label_key)] = product_id
+
+    conn = get_mysql_connection()
+    touched = 0
+    try:
+        cur = conn.cursor()
+        try:
+            sql = f"""
+                INSERT INTO {table_ref}
+                    (company_id, template_id, partner_id, label_key, product_id,
+                     source_process_id, source_conversion_id, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    product_id = VALUES(product_id),
+                    source_process_id = VALUES(source_process_id),
+                    source_conversion_id = VALUES(source_conversion_id),
+                    updated_at = VALUES(updated_at)
+            """
+            for (partner_id, label_key), product_id in by_key.items():
+                cur.execute(
+                    sql,
+                    (
+                        int(company_id),
+                        tid,
+                        partner_id,
+                        label_key,
+                        product_id,
+                        source_process_id,
+                        source_conversion_id,
+                        now,
+                    ),
+                )
+                touched += 1
+            conn.commit()
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+    return touched
+
+
 def fetch_recent_conversion_row_lists(
     company_id: int,
     *,
     template_id: Optional[int] = None,
     limit: int = DEFAULT_CONVERSION_LIMIT,
 ) -> List[List[Dict[str, Any]]]:
-    """Trae filas de conversiones recientes (más nuevas primero) para una empresa/perfil."""
+    """Fallback / seed: conversiones recientes (más nuevas primero)."""
     if company_id is None:
         return []
     tid = int(template_id) if template_id is not None else get_conversion_template_id()
@@ -142,7 +305,7 @@ def fetch_recent_conversion_row_lists(
         try:
             cur.execute(
                 f"""
-                SELECT converted_data
+                SELECT id, process_id, converted_data
                 FROM {table_ref}
                 WHERE company_id = %s AND template_id = %s
                 ORDER BY updated_at DESC, id DESC
@@ -157,12 +320,49 @@ def fetch_recent_conversion_row_lists(
                     logger.debug("product_label_memory: skip bad conversion payload: %s", e)
                     continue
                 if rows:
-                    out.append(rows)
+                    # Attach source ids as private attrs via wrapper dicts? Keep plain rows;
+                    # seed upsert uses process_id from outer loop.
+                    out.append(
+                        {
+                            "process_id": row.get("process_id"),
+                            "conversion_id": row.get("id"),
+                            "rows": rows,
+                        }
+                    )
         finally:
             cur.close()
     finally:
         conn.close()
     return out
+
+
+def _seed_table_from_conversions(
+    company_id: int,
+    *,
+    template_id: Optional[int] = None,
+    limit: int = DEFAULT_CONVERSION_LIMIT,
+) -> ProductMemoryIndex:
+    """Rellena la tabla desde conversiones recientes (lazy, una vez si está vacía)."""
+    tid = int(template_id) if template_id is not None else get_conversion_template_id()
+    payloads = fetch_recent_conversion_row_lists(
+        int(company_id), template_id=tid, limit=limit
+    )
+    # payloads más recientes primero → iterar al revés para que lo nuevo pise.
+    for payload in reversed(payloads or []):
+        if isinstance(payload, dict):
+            rows = payload.get("rows") or []
+            upsert_product_memory_choices(
+                int(company_id),
+                rows,
+                template_id=tid,
+                source_process_id=payload.get("process_id"),
+                source_conversion_id=payload.get("conversion_id"),
+            )
+        elif isinstance(payload, list):
+            upsert_product_memory_choices(
+                int(company_id), payload, template_id=tid
+            )
+    return fetch_memory_index_from_table(int(company_id), template_id=tid)
 
 
 def build_memory_index_for_company(
@@ -171,14 +371,34 @@ def build_memory_index_for_company(
     template_id: Optional[int] = None,
     limit: int = DEFAULT_CONVERSION_LIMIT,
 ) -> ProductMemoryIndex:
-    """Carga conversiones recientes y arma el índice. Vacío si no hay company_id."""
+    """Carga memoria desde la tabla. Si está vacía, seed desde conversiones."""
     if company_id is None:
         return {}
     try:
-        payloads = fetch_recent_conversion_row_lists(
+        index = fetch_memory_index_from_table(
+            int(company_id), template_id=template_id
+        )
+        if index:
+            return index
+        return _seed_table_from_conversions(
             int(company_id), template_id=template_id, limit=limit
         )
     except Exception as e:
         logger.warning("product_label_memory: no se pudo leer historial: %s", e)
-        return {}
-    return build_product_memory_index(payloads)
+        # Último recurso: índice en memoria desde conversiones, sin persistir.
+        try:
+            raw = fetch_recent_conversion_row_lists(
+                int(company_id), template_id=template_id, limit=limit
+            )
+            row_lists: List[List[Dict[str, Any]]] = []
+            for payload in raw:
+                if isinstance(payload, dict):
+                    rows = payload.get("rows")
+                    if isinstance(rows, list):
+                        row_lists.append(rows)
+                elif isinstance(payload, list):
+                    row_lists.append(payload)
+            return build_product_memory_index(row_lists)
+        except Exception as e2:
+            logger.warning("product_label_memory: fallback conversiones falló: %s", e2)
+            return {}

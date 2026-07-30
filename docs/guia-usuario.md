@@ -110,6 +110,7 @@ No hace falta memorizarlos: la app los resuelve sola **si el perfil en la URL es
 | `ODOO_BASE_URL_ALIARE`, `ODOO_USER_ALIARE`, `ODOO_API_KEY_ALIARE` | Credenciales import Aliare |
 | `PADRON_TAX_SOURCE_PROFILE` | Tenant del que vienen los ids del padrón Postgres (default `default` = Dinner); se remapean al perfil activo |
 | `FACTURIA_ODOO_PROFILE` | Perfil por defecto en deploy si la URL no trae `odoo_profile_test` |
+| `PROCESS_SCHEMA` | Schema MySQL (`sudataco_staging` / `sudataco_facturia`) para process, conversiones y `product_label_memory` |
 
 Ver `.env.example` para la lista completa.
 

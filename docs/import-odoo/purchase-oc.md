@@ -45,6 +45,8 @@ Si el operador elige **«Sin OC»**, se limpian los vínculos de líneas y el ch
 
 ## Sugerencia de producto por fuzzy (sin vincular OC)
 
+Diagrama de decisión (OC → memoria → fuzzy): [docs/README.md § Matching de producto](../README.md#matching-de-producto-oc--memoria--fuzzy).
+
 No todas las líneas de factura terminan vinculadas a una línea de OC (proveedor sin OC seleccionada, o línea que no matchea la OC elegida). Para esos casos se **sugiere** el `invoice_line_ids/product_id` haciendo fuzzy de la etiqueta contra los **productos de las OC del proveedor** (`fetch_partner_po_lines`, ya en memoria: sin llamadas extra a Odoo).
 
 **Código:** `_suggest_product_from_pool` + rama "sin match OC" de `match_invoice_row(..., suggest_pool=po_lines)`; `_match_comprobante_rows` pasa las líneas de todo el proveedor como `suggest_pool`.
@@ -72,7 +74,7 @@ Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_mat
 
 Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (p. ej. `SPRITE` → `GASEOSAS`) en un proceso anterior del **mismo proveedor**, el matching vuelve a sugerir ese producto aunque no esté en las OCs recientes.
 
-**Código:** `persistence/product_label_memory.py` + `match_invoice_row(..., learned_product_id=…)` vía `_match_comprobante_rows` / `enrich_rows_with_purchase_data(..., company_id=…)`.
+**Código:** `persistence/product_label_memory.py` + `match_invoice_row(..., learned_product_id=…)` vía `_match_comprobante_rows` / `enrich_rows_with_purchase_data(..., company_id=…)`. Escritura en `save_conversion`.
 
 **Prioridad (sin producto previo en la fila):**
 
@@ -80,13 +82,26 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 2. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta normalizada (`invoice_line_ids/name`), scoped por `company_id` + `template_id` (perfil Odoo).
 3. Fuzzy contra productos de las OCs del proveedor.
 
-**Señales “confirmadas”:** filas de conversiones guardadas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy sin revisar).
+**Señales “confirmadas”:** filas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy/memoria sin revisar).
 
-**Spike actual:** lee las últimas ~40 filas de `process_conversions` (sin tabla dedicada). Setea `__product_suggested=memory` y nota `Producto aprendido (proceso pasado)`; misma UI naranja que fuzzy. No re-escala qty.
+**Tabla `product_label_memory`** (MySQL, schema = `PROCESS_SCHEMA`):
 
-**Limitaciones:** etiqueta exacta (tras normalizar mayúsculas/espacios); sin match fuzzy de labels (`SPRITE` ≠ `SPRITE 2L`); rematch bajo demanda sin `company_id` no consulta memoria todavía. Si una línea OC queda descartada por “ya asignada a otra fila”, se reintenta memoria/fuzzy (antes quedaba vacía y no aprendía).
+| Entorno | Schema |
+|---------|--------|
+| Staging / `odoo-dev` | `sudataco_staging` |
+| Prod / `matching-ui-odoo` | `sudataco_facturia` |
 
-Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_oc_beats_learned` en `tests/test_product_label_memory.py` / `tests/test_purchase_matching.py`.
+Clave única: `(company_id, template_id, partner_id, label_key)`. La app crea la tabla con `CREATE TABLE IF NOT EXISTS` al primer uso; SQL de referencia en `scripts/sql/product_label_memory.sql`. Staging y prod **no comparten** filas (schemas distintos).
+
+**Flujo:**
+
+1. Al **guardar** conversión → `upsert_product_memory_choices` (solo elecciones confirmadas).
+2. Al **cargar** proceso → `build_memory_index_for_company` lee la tabla. Si está vacía para esa empresa/perfil, hace seed lazy desde las últimas ~100 conversiones y persiste.
+3. Setea `__product_suggested=memory` y nota `Producto aprendido (proceso pasado)`; misma UI naranja que fuzzy. No re-escala qty.
+
+**Limitaciones:** etiqueta exacta (tras normalizar mayúsculas/espacios); sin match fuzzy de labels (`SPRITE` ≠ `SPRITE 2L`); rematch bajo demanda sin `company_id` no consulta memoria todavía. Si una línea OC queda descartada por “ya asignada a otra fila”, se reintenta memoria/fuzzy.
+
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_oc_beats_learned` en `tests/test_product_label_memory.py`.
 
 ### Unidad de medida — envase en descripción
 

@@ -275,6 +275,25 @@ def save_conversion(
                 )
                 conv_id = cur.lastrowid
             conn.commit()
+            try:
+                from facturia_matching.persistence.product_label_memory import (
+                    upsert_product_memory_choices,
+                )
+
+                upsert_product_memory_choices(
+                    company_id,
+                    rows,
+                    template_id=template_id,
+                    source_process_id=process_id,
+                    source_conversion_id=conv_id,
+                )
+            except Exception as mem_err:
+                logger.warning(
+                    "product_label_memory: no se pudo persistir aprendizaje "
+                    "process_id=%s: %s",
+                    process_id,
+                    mem_err,
+                )
             return {
                 "id": conv_id,
                 "process_id": process_id,
