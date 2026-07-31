@@ -10,7 +10,9 @@ Solo persiste filas con `invoice_line_ids/product_id` y sin `__product_suggested
 from __future__ import annotations
 
 import logging
+import re
 import threading
+import unicodedata
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -28,6 +30,14 @@ DEFAULT_CONVERSION_LIMIT = 100
 _MIN_LABEL_LEN = 2
 _MAX_LABEL_LEN = 512
 
+# Separadores frecuentes en etiquetas de factura (packs, OCR).
+_SEP_RE = re.compile(r"[*×·•_/\\|]+")
+# Puntuación restante (salvo punto decimal); se vuelve espacio.
+_PUNCT_RE = re.compile(r"[^\w.\s]+", re.UNICODE)
+# Ceros a la izquierda: 06 → 6, 06PET → 6PET (no toca 600 / 600PET).
+_LEADING_ZERO_RE = re.compile(r"\b0+(\d+)(?=[A-Z]|\b)")
+_WS_RE = re.compile(r"\s+")
+
 # partner_id + label_key → product_id
 ProductMemoryIndex = Dict[Tuple[int, str], int]
 
@@ -36,12 +46,32 @@ _table_lock = threading.Lock()
 
 
 def normalize_label_key(raw: Any) -> str:
+    """Clave estable para memoria: misma función al guardar y al buscar.
+
+    - Unicode NFKD sin acentos
+    - Mayúsculas
+    - `,` decimal → `.` (`0,5L` → `0.5L`)
+    - `*` / `×` / `/` etc. → espacio
+    - Resto de puntuación → espacio
+    - Ceros a la izquierda (`06` → `6`, `06PET` → `6PET`)
+    - Espacios colapsados; trunca a `_MAX_LABEL_LEN`
+    """
     if raw is None:
         return ""
-    key = " ".join(str(raw).strip().split()).upper()
-    if len(key) > _MAX_LABEL_LEN:
-        return key[:_MAX_LABEL_LEN]
-    return key
+    s = str(raw).strip()
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.upper()
+    s = s.replace(",", ".")
+    s = _SEP_RE.sub(" ", s)
+    s = _PUNCT_RE.sub(" ", s)
+    s = _LEADING_ZERO_RE.sub(r"\1", s)
+    s = _WS_RE.sub(" ", s).strip(" .")
+    if len(s) > _MAX_LABEL_LEN:
+        return s[:_MAX_LABEL_LEN]
+    return s
 
 
 def _normalize(raw: Any) -> str:

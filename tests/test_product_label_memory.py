@@ -15,6 +15,17 @@ from unittest.mock import MagicMock, patch
 class TestProductLabelMemory(unittest.TestCase):
     def test_normalize_label_key(self):
         self.assertEqual(normalize_label_key("  sprite  2L "), "SPRITE 2L")
+        self.assertEqual(normalize_label_key("Aquarius 0,5L*06PET"), "AQUARIUS 0.5L 6PET")
+        self.assertEqual(
+            normalize_label_key("BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA."),
+            normalize_label_key("benedictino sin gas 600×12 pet 5548 acuerdo gcia"),
+        )
+        self.assertEqual(normalize_label_key("TOMATE SECO"), normalize_label_key("Tomate Seco"))
+        # Contenido distinto sigue siendo distinto (no es fuzzy).
+        self.assertNotEqual(
+            normalize_label_key("SPRITE FX LS 500ML"),
+            normalize_label_key("SPRITE FV LS 500ML"),
+        )
 
     def test_skips_fuzzy_suggested_rows(self):
         row = {
@@ -204,7 +215,14 @@ class TestProductLabelMemory(unittest.TestCase):
                 "__comprobante_idx": 0,
             },
         ]
-        memory = {(1582, "BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA."): 620}
+        memory = {
+            (
+                1582,
+                normalize_label_key(
+                    "BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA."
+                ),
+            ): 620
+        }
         with patch(
             "facturia_matching.odoo.purchase_matching._line_match_score",
             return_value=90.0,
