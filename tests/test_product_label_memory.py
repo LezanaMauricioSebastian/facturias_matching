@@ -27,6 +27,37 @@ class TestProductLabelMemory(unittest.TestCase):
             normalize_label_key("SPRITE FV LS 500ML"),
         )
 
+    def test_lookup_fuzzy_matches_near_labels(self):
+        key = normalize_label_key(
+            "SPRITE FX LS 500ML NR 06PET 5548 ACUERDO GCIA."
+        )
+        index = {(1582, key): 620}
+        # Misma familia con formato distinto (6*6PET vs 06PET + cola).
+        self.assertEqual(
+            lookup_in_index(index, 1582, "SPRITE FX LS 500ML NR 6*6PET"),
+            620,
+        )
+
+    def test_lookup_fuzzy_rejects_sin_gas_vs_con_gas(self):
+        key = normalize_label_key(
+            "BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA."
+        )
+        index = {(1582, key): 620}
+        self.assertIsNone(
+            lookup_in_index(
+                index, 1582, "BENEDICTINO C/G 600*12 PET 5548 ACUERDO GCIA."
+            )
+        )
+
+    def test_lookup_fuzzy_rejects_zero_mismatch(self):
+        key = normalize_label_key("COCA-COLA 600*12 PET 5548 ACUERDO GCIA.")
+        index = {(1582, key): 620}
+        self.assertIsNone(
+            lookup_in_index(
+                index, 1582, "COCA-COLA ZERO 600*06 PET 5548 ACUERDO GCIA."
+            )
+        )
+
     def test_skips_fuzzy_suggested_rows(self):
         row = {
             "partner_id": "10",

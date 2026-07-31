@@ -107,7 +107,7 @@ flowchart TD
   start([Línea de factura]) --> hasPartner{¿Proveedor Odoo?}
   hasPartner -->|No| empty1[Producto vacío<br/>Sin proveedor Odoo]
   hasPartner -->|Sí| mem{¿Memoria<br/>partner + etiqueta exacta?}
-  mem -->|Sí| sugMem[Producto aprendido<br/>naranja]
+  mem -->|Sí| sugMem[Producto aprendido<br/>exacto o fuzzy ≥88<br/>naranja]
   sugMem --> sameOc{¿OC seleccionada con<br/>el mismo product_id?}
   sameOc -->|Sí| memPlusOc[Memoria + vínculo OC]
   sameOc -->|No| memOnly[Solo memoria<br/>sin vínculo OC]

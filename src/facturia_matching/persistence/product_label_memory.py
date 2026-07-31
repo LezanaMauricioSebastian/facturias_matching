@@ -38,8 +38,15 @@ _PUNCT_RE = re.compile(r"[^\w.\s]+", re.UNICODE)
 _LEADING_ZERO_RE = re.compile(r"\b0+(\d+)(?=[A-Z]|\b)")
 _WS_RE = re.compile(r"\s+")
 
+from rapidfuzz import fuzz
+
 # partner_id + label_key → product_id
 ProductMemoryIndex = Dict[Tuple[int, str], int]
+
+# Fuzzy sobre keys ya normalizadas (exacto siempre gana).
+# 88: une variantes OCR/formato (SPRITE …06PET vs …6 6PET) sin bajar tanto
+# como para confiar ciegamente en un solo token compartido.
+MEMORY_FUZZY_MIN_SCORE = 88.0
 
 _table_ensured = False
 _table_lock = threading.Lock()
@@ -151,18 +158,56 @@ def build_product_memory_index(
     return index
 
 
+def _memory_labels_conflict(a: str, b: str) -> bool:
+    """Rechaza pares que RapidFuzz acerca pero son variantes incompatibles."""
+    ta = set(a.split())
+    tb = set(b.split())
+    # Agua sin gas vs con gas (tras normalize: C/G → C G).
+    a_still = "SIN" in ta and "GAS" in ta
+    b_still = "SIN" in tb and "GAS" in tb
+    a_spark = (("CON" in ta and "GAS" in ta) or ({"C", "G"} <= ta)) and not a_still
+    b_spark = (("CON" in tb and "GAS" in tb) or ({"C", "G"} <= tb)) and not b_still
+    if (a_still and b_spark) or (b_still and a_spark):
+        return True
+    # ZERO solo de un lado (Coca vs Coca Zero).
+    if ("ZERO" in ta) != ("ZERO" in tb):
+        return True
+    return False
+
+
 def lookup_in_index(
     index: ProductMemoryIndex,
     partner_id: Any,
     label: Any,
+    *,
+    fuzzy_min_score: float = MEMORY_FUZZY_MIN_SCORE,
 ) -> Optional[int]:
+    """Busca product_id: exacto sobre label normalizada, luego fuzzy RapidFuzz."""
     raw_partner = _normalize(partner_id)
     if not raw_partner.isdigit():
         return None
     label_key = normalize_label_key(label)
     if len(label_key) < _MIN_LABEL_LEN:
         return None
-    return index.get((int(raw_partner), label_key))
+    partner = int(raw_partner)
+    exact = index.get((partner, label_key))
+    if exact is not None:
+        return exact
+
+    best_pid: Optional[int] = None
+    best_score = 0.0
+    for (pid, key), product_id in index.items():
+        if pid != partner or len(key) < _MIN_LABEL_LEN:
+            continue
+        if _memory_labels_conflict(label_key, key):
+            continue
+        score = float(fuzz.token_set_ratio(label_key, key))
+        if score > best_score:
+            best_score = score
+            best_pid = product_id
+    if best_pid is not None and best_score >= float(fuzzy_min_score):
+        return best_pid
+    return None
 
 
 def _memory_table_ref() -> str:

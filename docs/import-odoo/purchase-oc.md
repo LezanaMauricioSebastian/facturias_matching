@@ -78,7 +78,7 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 
 **Prioridad (sin producto previo en la fila):**
 
-1. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta normalizada (`invoice_line_ids/name`), scoped por `company_id` + `template_id` (perfil Odoo). Gana al match OC para respetar lo que el operador ya decidió.
+1. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta **normalizada** (exacta o fuzzy ≥ 88 sobre keys guardadas), scoped por `company_id` + `template_id`. Gana al match OC para respetar lo que el operador ya decidió.
 2. Match de línea OC (producto + vínculo). Si la memoria ya eligió el **mismo** `product_id`, también se vincula la línea OC.
 3. Fuzzy contra productos de las OCs del proveedor.
 
@@ -99,7 +99,7 @@ Clave única: `(company_id, template_id, partner_id, label_key)`. La app crea la
 2. Al **cargar** proceso → `build_memory_index_for_company` lee la tabla. Si está vacía para esa empresa/perfil, hace seed lazy desde las últimas ~100 conversiones y persiste.
 3. Setea `__product_suggested=memory` y nota `Producto aprendido (proceso pasado)`; misma UI naranja que fuzzy. No re-escala qty.
 
-**Limitaciones:** etiqueta **normalizada** (mayúsculas, acentos, `*`/`×`→espacio, `0,5`→`0.5`, ceros a la izquierda en números sueltos); no es fuzzy semántico (`SPRITE FX` ≠ `SPRITE FV`). Rematch bajo demanda sin `company_id` no consulta memoria todavía. Si una línea OC queda descartada por “ya asignada a otra fila”, se reintenta memoria/fuzzy.
+**Limitaciones:** etiqueta **normalizada** + fuzzy RapidFuzz (`token_set_ratio` ≥ 88) sobre keys del mismo proveedor; exacto gana primero. Rechaza conflictos obvios (sin gas vs con gas, ZERO vs no-ZERO). No busca en todo el catálogo Odoo. Rematch bajo demanda sin `company_id` no consulta memoria todavía.
 
 Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product` en `tests/test_product_label_memory.py`.
 
