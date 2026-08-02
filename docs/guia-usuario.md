@@ -21,7 +21,7 @@ https://odoo-dev-….run.app/?empresa=1&proceso=48&odoo_profile_test=aliare
 ## Flujo habitual
 
 1. Abrí la URL con empresa, proceso y perfil correctos.
-2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica).
+2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica). El **diario inicial** viene del padrón (puede no coincidir con Riccollini; ej. Salta Refrescos). Si lo corregís y esperás autosave, **F5 ya no lo revierte**.
 3. Editá lo necesario en la tabla o en el **pie del comprobante** (IVA, otros impuestos).
 4. Esperá el autosave (o guardá explícitamente si la UI lo indica).
 5. **Importar a Odoo** — crea o actualiza borradores y sincroniza impuestos + OC.
@@ -63,8 +63,13 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 
 - Solo deberías ver **una columna** “Otros impuestos” en la tabla (más slots extra solo si hay montos reales en `otros_impuestos_2`, `_3`, …).
 - Si ves muchas columnas vacías (legacy de versiones anteriores): **Restaurar original** y volver a guardar, o recargar el proceso tras un deploy nuevo.
-- El monto de **Otros impuestos** en el pie se consolida en la primera línea de producto al importar (junto con los `tax_ids` de IIBB del padrón).
-- El dropdown se arma **desde Odoo del perfil activo**: IIBB/percepciones conocidos + el resto de impuestos purchase del tenant (**incluidos los IVA**, p.ej. IVA 21 %, Perc Gananc). No es una lista fija incompleta.
+- El **pie** desglosa otros impuestos **como trae FacturIA** (labels provisionales: **IIBB** / **Percepción IVA** / **Otros tributos** + montos), **aunque todavía no hayas elegido impuesto en las líneas**.
+  - En las **líneas**, el usuario asigna los impuestos Odoo a mano (col 2/3 solo si esa línea tiene más de uno con el +).
+  - Si FacturIA trajo montos y en las líneas no cubrís todos (p.ej. falta Impuesto Interno ↔ Otros tributos), el pie muestra un **aviso**: «No asignaste en las líneas todos los impuestos de la factura…».
+  - Si elegís el impuesto Odoo en el mismo slot del monto FacturIA, el pie **sigue** mostrando el nombre FacturIA; la línea guarda el label Odoo para el import.
+- Al editar un monto del pie, se **reparte** entre las filas que tienen ese impuesto asignado (proporcional a cantidad × precio). Si nadie lo tiene, queda en la primera fila con contenido. Así la columna **Total** de cada línea no se infla con todos los “otros” acumulados en la 1ª fila.
+- Los montos (repartidos en las filas) al importar pisan las líneas tax de Odoo (junto con los `tax_ids` de IIBB del padrón).
+- El dropdown se arma **desde Odoo del perfil activo**: **todos** los impuestos del tenant (orden alfabético; p.ej. IVA 21 %, Impuestos internos, percepciones). No es una lista fija incompleta.
 
 ## Solo encabezado
 
@@ -167,7 +172,7 @@ Si elegís **Sin OC**, el selector no desaparece: queda **«OC: Sin OC ▾»** p
 
 ### La OC no aparece en el selector
 
-Solo se consideran órdenes de compra con **recepción iniciada** en Odoo (estado de entrega distinto de **No recibido**). Si la OC está confirmada pero aún no se registró ninguna recepción de mercadería, no aparecerá en el picker ni en el auto-match hasta que Odoo marque al menos una recepción parcial o total.
+Se listan **todas** las órdenes de compra **confirmadas** del proveedor (`purchase` / `done`), incluidas las ya recepcionadas y las aún sin recepción. El score solo ordena el listado; no oculta OCs. Si no ves la OC correcta: verificá que el proveedor de la factura sea el mismo partner comercial en Odoo y que la OC no esté en borrador o cancelada. Tras **Buscar OCs similares**, hay que **elegir** la OC en el modal (no se auto-selecciona).
 
 ### Proceso devuelve error 400 al cargar
 

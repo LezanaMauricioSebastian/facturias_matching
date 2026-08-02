@@ -39,7 +39,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `index.js` | Orquesta render + handlers de tabla. |
 | `columns.js` | Definición de columnas visibles (alineado con `core/constants.py`). |
 | `constants.js` | Keys readonly, clases CSS, índices. |
-| `render.js` | Pinta `<table>`: celdas editables, combobox attach, selector UM por producto, agrupación visual por comprobante. |
+| `render.js` | Pinta `<table>`: celdas editables, combobox attach, selector UM por producto (**prefetch** de opciones + fill in-place), agrupación visual por comprobante. |
 | `handlers.js` | Eventos input/blur/change en celdas; sincroniza `state.rows`; llama tax sync y autosave. |
 | `totals.js` | Fila de totales globales si aplica. |
 
@@ -50,8 +50,8 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | API pública del bloque comprobante (footer expandible). |
-| `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos. |
-| `footer.js` | Inputs del pie (IVA siempre editable); **`setFooterIvaAmount`** actualiza `__fac_iva_montos` vía `serializeFacIvaMontos` y marca `__fac_iva_monto_manual`. |
+| `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos nombrados. |
+| `footer.js` | Inputs del pie (IVA y otros por slot); **`setFooterIvaAmount`** / **`setOtrosFooterAmount`**; al elegir impuesto en columna **`syncOtrosFooterFromRowSelection`** agrega fila nombrada. |
 | `uiState.js` | Expandido/colapsado, clases CSS por modo. |
 
 ---
@@ -64,8 +64,9 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `totals.js` | **`classifyComprobanteTaxMode`**, **`computeComprobanteTotals`** — parity con Python. |
 | `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`; `lineIvaMonto` respeta `iva_monto` explícito. |
 | `ivaBreakdown.js` | Desglose por alícuota en el pie; en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
+| `otrosBreakdown.js` | Desglose nombrado; reclama provisionales FacturIA (`otros_tributos`↔Impuesto Interno, etc.); **`distributeOtrosFooterAmount`** / **`setOtrosFooterAmount`**; **`ensureOtrosLabelOnFirstRow`**, **`claimProvisionalOtrosFromLineLabels`**. |
 | `groups.js` | Agrupa `state.rows` por `__comprobante_idx`. |
-| `migration.js` | Normaliza filas viejas; **`propagateSingleFooterIvaToLines`**: un solo IVA en el pie → `iva_pct` en todas las líneas vacías. |
+| `migration.js` | Normaliza filas viejas; **`migrateLegacyComprobanteIva`** solo en saves legacy (no pisa Monto IVA multi-línea); **`propagateSingleFooterIvaToLines`**: un solo IVA en el pie → `iva_pct` en todas las líneas vacías. |
 
 Ver también [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
@@ -103,7 +104,7 @@ Selector de orden de compra cuando hay purchase matching. **UI: controles en el 
 |---------|-----|
 | `index.js` | **`wireOcPicker`**. |
 | `render.js` | **`renderOcHeaderControls`**: controles por comprobante en su header. Botón `secondary` **«Buscar OCs similares»** → «OC: {nombre} ▾» o «OC: Sin OC ▾»; `↻` re-busca. Tras reload, si hay `__selected_oc_*` / `selected_oc_by_comprobante`, prioriza la pastilla «OC: {nombre}» aunque no haya candidatos en memoria. Checkbox **«Sobreescribir precio de la OC»** (tilde + etiqueta en fila), deshabilitado sin OC; se oculta junto con el botón si el proveedor no tiene OCs. La barra global `#ocPickerBar` queda oculta (legacy). |
-| `wire.js` | Delegación de eventos en `#tableWrap`: buscar/abrir; si se intenta abrir sin candidatos, ejecuta `searchOc` primero; change del checkbox → `__overwrite_oc_price` + autosave; modal → `selectOc`. |
+| `wire.js` | Delegación de eventos en `#tableWrap`: buscar/abrir (ignora botones `disabled`); si se intenta abrir sin candidatos, ejecuta `searchOc` primero; change del checkbox → `__overwrite_oc_price` + autosave; modal → `selectOc`. `searchOc` pone el CTA/pastilla en **«Buscando…»** mientras dura la llamada. |
 
 API: `POST /api/proceso/{n}/search-oc` (candidatos bajo demanda), `POST .../select-oc` (`order_id=0` = Sin OC / deseleccionar) y `POST .../rematch-purchase` al cambiar proveedor. El rematch actualiza `oc_provider_has_ocs_by_comprobante` y hace aparecer/desaparecer el botón dinámicamente. Elegir Sin OC no elimina el acceso al selector.
 

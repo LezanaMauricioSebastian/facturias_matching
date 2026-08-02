@@ -72,8 +72,14 @@ function renderCandidateLines(lines) {
         ? `<span class="ocLineMatch">→ ${escapeHtml(match.invoice_desc)} (${Math.round(match.score)}%)</span>`
         : '<span class="ocLineMatch muted">Sin match factura</span>';
       const um = ln.product_uom_name ? escapeHtml(ln.product_uom_name) : "";
+      const notes = Array.isArray(ln.note_labels)
+        ? ln.note_labels.map((n) => String(n || "").trim()).filter(Boolean)
+        : [];
+      const noteHtml = notes.length
+        ? `<div class="ocLineNotes">${notes.map((n) => `<span class="ocLineNote">${escapeHtml(n)}</span>`).join(" ")}</div>`
+        : "";
       return `<tr>
-        <td>${escapeHtml(ln.line_name || "")}</td>
+        <td><div class="ocLineName">${escapeHtml(ln.line_name || "")}</div>${noteHtml}</td>
         <td class="num">${formatQty(ln.product_qty)}</td>
         <td class="num">${formatQty(ln.qty_received)}</td>
         <td class="num">${formatQty(ln.qty_invoiced)}</td>

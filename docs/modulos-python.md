@@ -34,7 +34,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
 | `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie; en `header` con una alícuota usa `__fac_iva_monto` aunque el precio de línea no cierre con el %); `sanitize_inflated_line_amounts`; **`propagate_single_footer_iva_to_lines`** (un solo IVA en el pie → `iva_pct` en líneas vacías); **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS** (`ivaBreakdown.js`, `rows/totals.js`, `migration.js`). |
 | `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); **`format_fac_amount_for_ui`** (coma decimal sin miles, evita que `15.175` se lea como 15175); `fac_header_amount_str`, percepciones, qty/price. |
-| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: labels canónicos que resuelven + extras dinámicos (purchase del tenant, **incl. IVA**). |
+| `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: **todos** los `account.tax` del tenant (orden alfabético; EN→ES para Internal/Other taxes). |
 | `constants.py` | `OUTPUT_HEADERS`, headers CSV, columnas purchase, `IVA_OPTIONS`, `append_purchase_columns`. |
 | `__init__.py` | Re-exports si aplica. |
 
@@ -72,7 +72,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
 | `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
-| `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod separados). **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada por `partner_id` + etiqueta. Seed lazy desde conversiones si la tabla está vacía. |
+| `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod). **`MemoryChoice`**, **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada de producto + UM por `partner_id` + etiqueta. Seed lazy si la tabla está vacía. |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
 | `__init__.py` | Marcador. |
 

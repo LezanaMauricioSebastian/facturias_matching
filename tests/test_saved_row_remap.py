@@ -148,6 +148,51 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
         out = remap_saved_rows_to_catalog(rows)
         self.assertEqual(out[0]["invoice_line_ids/product_id"], "50")
 
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
+    def test_keeps_valid_journal_rubro_account_despite_padron(self, mock_match, mock_catalog):
+        """Operador eligió IDs válidos; padrón distinto no debe pisarlos en reload."""
+        catalog = _aliare_catalog()
+        catalog["journals"] = [
+            {"id": 5, "name": "FP CUP NEA"},
+            {"id": 22, "name": "FP Resistencia Libertad"},
+        ]
+        catalog["rubros"] = [
+            {"id": 3, "name": "Rubro test"},
+            {"id": 9, "name": "Rubro operador"},
+        ]
+        catalog["cuentas"] = [
+            {"id": 100, "name": "Purchase of merchandise", "code": "5.1.1.01.030"},
+            {"id": 200, "name": "Cuenta operador", "code": "5.1.1.01.099"},
+        ]
+        catalog["maps"]["accounts"]["by_code"]["5.1.1.01.099"] = 200
+        catalog["maps"]["accounts"]["by_name"]["CUENTA OPERADOR"] = 200
+        mock_catalog.return_value = (catalog, True)
+        mock_match.return_value = (
+            "LA MADRID SRL",
+            "Rubro test",
+            "FP CUP NEA",
+            "5.1.1.01.030 Purchase of merchandise",
+            100.0,
+        )
+        rows = [
+            {
+                "__comprobante_idx": 1,
+                "partner_id": "22",
+                "Nombre de Proveedor": "LA MADRID",
+                "CUIT": "30710552602",
+                "journal_id": "22",
+                "x_studio_category": "9",
+                "invoice_line_ids/account_id": "200",
+                "invoice_line_ids/name": "Item",
+            }
+        ]
+        with odoo_profile_context("default"):
+            out = remap_saved_rows_to_catalog(rows)
+        self.assertEqual(out[0]["journal_id"], "22")
+        self.assertEqual(out[0]["x_studio_category"], "9")
+        self.assertEqual(out[0]["invoice_line_ids/account_id"], "200")
+
 
 if __name__ == "__main__":
     unittest.main()

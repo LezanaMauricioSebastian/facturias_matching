@@ -24,6 +24,7 @@ from facturia_matching.padron.taxes import (
 from facturia_matching.odoo.import_._utils import (
     _content_rows_from_group,
     _is_first_content_row,
+    _line_has_content,
     _m2o_id,
     _normalize,
     _parse_amount_loose,
@@ -76,6 +77,40 @@ def _padron_other_tax_ids_from_row(row: Dict[str, Any]) -> List[int]:
     return out
 
 
+def _header_only_non_iva_tax_ids(group: List[Dict[str, Any]]) -> List[int]:
+    """No-IVA solo de filas sin contenido (p. ej. `__solo_encabezado` con IIBB)."""
+    ids: List[int] = []
+    seen: set = set()
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        if _line_has_content(row):
+            continue
+        row_non_iva = [tid for tid in _tax_ids_from_row(row) if not is_iva_tax_id(tid)]
+        for tid in _padron_other_tax_ids_from_row(row):
+            if tid not in row_non_iva:
+                row_non_iva.append(tid)
+        other_idx = 0
+        for _n, label_key, monto_key in _iter_otros_impuesto_slots(row):
+            label = _normalize(row.get(label_key))
+            monto = _parse_amount_loose(row.get(monto_key))
+            if not label and (monto is None or monto <= 0):
+                continue
+            tid = resolve_tax_label_to_id(label) if label else None
+            if tid is None and monto is not None and monto > 0 and other_idx < len(row_non_iva):
+                tid = row_non_iva[other_idx]
+                other_idx += 1
+            if tid is None or is_iva_tax_id(tid) or tid in seen:
+                continue
+            seen.add(tid)
+            ids.append(int(tid))
+        for tid in row_non_iva:
+            if tid not in seen:
+                seen.add(tid)
+                ids.append(tid)
+    return ids
+
+
 def _comprobante_non_iva_tax_ids(group: List[Dict[str, Any]]) -> List[int]:
     """Impuestos no-IVA del comprobante (IIBB/percepciones), en cualquier fila del grupo."""
     ids: List[int] = []
@@ -108,22 +143,30 @@ def _comprobante_non_iva_tax_ids(group: List[Dict[str, Any]]) -> List[int]:
     return ids
 
 
+def _merge_header_only_non_iva_tax_ids(
+    tax_ids: List[int],
+    row: Dict[str, Any],
+    group: List[Dict[str, Any]],
+) -> List[int]:
+    """IIBB/otros de fila solo-encabezado → primera línea de producto (no pisa otros por línea)."""
+    if not _is_first_content_row(row, group):
+        return tax_ids
+    merged = list(tax_ids)
+    seen = set(merged)
+    for tid in _header_only_non_iva_tax_ids(group):
+        if tid not in seen:
+            seen.add(tid)
+            merged.append(tid)
+    return merged
+
+
 def _merge_comprobante_non_iva_tax_ids(
     tax_ids: List[int],
     row: Dict[str, Any],
     group: List[Dict[str, Any]],
 ) -> List[int]:
-    """En header/mixed, percepciones del comprobante van en la primera línea de producto."""
-    mode = classify_comprobante_tax_mode(group)
-    if mode not in ("header", "mixed") or not _is_first_content_row(row, group):
-        return tax_ids
-    merged = list(tax_ids)
-    seen = set(merged)
-    for tid in _comprobante_non_iva_tax_ids(group):
-        if tid not in seen:
-            seen.add(tid)
-            merged.append(tid)
-    return merged
+    """Alias retrocompatible → solo merge de filas header-only en la 1ª línea."""
+    return _merge_header_only_non_iva_tax_ids(tax_ids, row, group)
 
 
 def _filter_iva_tax_ids_for_row(
@@ -146,7 +189,8 @@ def _tax_ids_for_odoo_line(
     tax_ids de una línea de producto en Odoo según arquitectura FacturIA:
     - header: IVA numérico solo en el total de abajo; Exento/No Gravado sí en línea.
     - line / mixed: IVA en la línea si esa fila trae iva_pct > 0 o Exento/No Gravado.
-    - IIBB/percepciones a nivel comprobante se consolidan en la primera línea con contenido.
+    - Otros impuestos de **esta** fila (slots `otros_impuestos*`) se respetan por línea.
+    - IIBB/otros en fila solo encabezado se agregan a la primera línea con contenido.
     """
     tax_ids = _tax_ids_from_row(row)
     if not group:
@@ -154,8 +198,7 @@ def _tax_ids_for_odoo_line(
 
     mode = classify_comprobante_tax_mode(group)
     result = _filter_iva_tax_ids_for_row(row, tax_ids, mode)
-    return _merge_comprobante_non_iva_tax_ids(result, row, group)
-
+    return _merge_header_only_non_iva_tax_ids(result, row, group)
 
 def _tax_line_id_raw(line: Dict[str, Any]) -> Optional[int]:
     raw = line.get("tax_line_id")

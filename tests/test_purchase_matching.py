@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from facturia_matching.odoo.purchase_matching import (
+    _attach_dinner_po_note_labels,
     _canonical_um,
     _extract_qty_um_from_description,
     _line_match_score,
@@ -41,6 +42,129 @@ class TestPurchaseMatching(unittest.TestCase):
 
         self.assertEqual(_receipt_status_label("pending"), "No recepcionada")
         self.assertEqual(_receipt_status_label("full"), "Recepcionada")
+
+    def test_attach_dinner_po_note_labels_folds_zero_qty_under_bracket_parent(self):
+        """Dinner: qty 0 bajo '[B0003] BEB-GASEOSAS' → nota/etiqueta del padre."""
+        lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "line_name": "[B0003] BEB-GASEOSAS",
+                "product_id": 620,
+                "product_qty": 144,
+                "qty_received": 144,
+            },
+            {
+                "line_id": 2,
+                "order_id": 10,
+                "line_name": "coca",
+                "product_id": None,
+                "product_qty": 0,
+                "qty_received": 0,
+            },
+            {
+                "line_id": 3,
+                "order_id": 10,
+                "line_name": "[B0003] BEB-GASEOSAS",
+                "product_id": 620,
+                "product_qty": 96,
+                "qty_received": 96,
+            },
+            {
+                "line_id": 4,
+                "order_id": 10,
+                "line_name": "sprite",
+                "product_id": None,
+                "product_qty": 0,
+                "qty_received": 0,
+            },
+        ]
+        _attach_dinner_po_note_labels(lines)
+        self.assertFalse(lines[0]["is_note"])
+        self.assertEqual(lines[0]["note_labels"], ["coca"])
+        self.assertTrue(lines[1]["is_note"])
+        self.assertEqual(lines[1]["parent_line_id"], 1)
+        self.assertEqual(lines[2]["note_labels"], ["sprite"])
+        self.assertTrue(lines[3]["is_note"])
+
+    def test_line_match_score_uses_dinner_note_label(self):
+        """COCA-COLA… matchea la línea padre vía nota 'coca', no la nota sola."""
+        parent = {
+            "line_name": "[B0003] BEB-GASEOSAS",
+            "product_qty": 144,
+            "note_labels": ["coca"],
+            "is_note": False,
+        }
+        note = {
+            "line_name": "coca",
+            "product_qty": 0,
+            "is_note": True,
+            "note_labels": [],
+        }
+        sc_parent = _line_match_score(
+            codigo="",
+            descripcion="COCA-COLA 600*12 PET 5548 ACUERDO GCIA.",
+            qty=10,
+            po_line=parent,
+        )
+        sc_note = _line_match_score(
+            codigo="",
+            descripcion="COCA-COLA 600*12 PET 5548 ACUERDO GCIA.",
+            qty=10,
+            po_line=note,
+        )
+        self.assertGreaterEqual(sc_parent, 75)
+        self.assertEqual(sc_note, 0.0)
+
+    def test_score_oc_candidates_hides_note_rows_and_keeps_match_on_parent(self):
+        rows = [
+            {
+                "invoice_line_ids/name": "COCA-COLA 600*12 PET 5548 ACUERDO GCIA.",
+                "invoice_line_ids/quantity": "10",
+                "__comprobante_idx": 0,
+            }
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P1",
+                "partner_ref": "",
+                "date_order": "2026-05-05",
+                "line_name": "[B0003] BEB-GASEOSAS",
+                "product_id": 620,
+                "product_qty": 144,
+                "qty_received": 144,
+                "qty_invoiced": 0,
+                "price_unit": 824.07,
+                "product_uom_name": "Unidades",
+                "note_labels": [],
+                "is_note": False,
+            },
+            {
+                "line_id": 2,
+                "order_id": 10,
+                "order_name": "P1",
+                "partner_ref": "",
+                "date_order": "2026-05-05",
+                "line_name": "coca",
+                "product_id": None,
+                "product_qty": 0,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "price_unit": 0,
+                "product_uom_name": "",
+                "note_labels": [],
+                "is_note": False,
+            },
+        ]
+        _attach_dinner_po_note_labels(po_lines)
+        cands = score_oc_candidates(rows, po_lines)
+        self.assertEqual(len(cands), 1)
+        detail_names = [ln["line_name"] for ln in cands[0]["lines"]]
+        self.assertEqual(detail_names, ["[B0003] BEB-GASEOSAS"])
+        self.assertEqual(cands[0]["lines"][0]["note_labels"], ["coca"])
+        self.assertIsNotNone(cands[0]["lines"][0]["invoice_match"])
 
     @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
     @patch("facturia_matching.odoo.purchase_matching.odoo_search_read")
@@ -84,6 +208,8 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertEqual(po_call.args[0], "purchase.order")
         self.assertNotIn(("receipt_status", "!=", "pending"), po_call.args[1])
         self.assertIn("receipt_status", po_call.args[2])
+        # Sin tope artificial: listar todas las OCs del proveedor.
+        self.assertEqual(po_call.kwargs.get("limit"), False)
         self.assertEqual(lines[0]["receipt_status_label"], "No recepcionada")
         self.assertEqual(lines[0]["deliver_to"], "Depósito Central")
 
@@ -596,6 +722,81 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertEqual(out["__um_note"], "Re-escalado")
         self.assertEqual(out["__qty_escalada"], "2")
         self.assertEqual(row["invoice_line_ids/product_id"], "620")
+
+    def test_match_invoice_row_keeps_confirmed_product_and_saved_uom(self):
+        """Producto+UM ya en fila: no pisa con etiqueta OC de otro producto; no re-escala qty."""
+        from unittest.mock import patch
+
+        units = {
+            "id": 1,
+            "name": "Unidades",
+            "factor": 1.0,
+            "category_id": [1, "Unidad"],
+            "uom_type": "reference",
+        }
+        pack12 = {
+            "id": 100,
+            "name": "pack (12 unidades)",
+            "factor": 1.0 / 12.0,
+            "category_id": [1, "Unidad"],
+            "uom_type": "bigger",
+        }
+        catalog = {
+            "by_id": {1: units, 100: pack12},
+            "by_name": {
+                "UN": [units],
+                "UNIDADES": [units],
+                "PACK (12 UNIDADES)": [pack12],
+            },
+        }
+        row = {
+            "invoice_line_ids/name": "SPRITE FX LS 500*12 PET",
+            "__item_codigo": "B0099",
+            "invoice_line_ids/quantity": "5",
+            "invoice_line_ids/product_id": "620",
+            "__um_empresa": "pack (12 unidades)",
+            "__um_empresa_id": "100",
+            "__um_proveedor": "UN",
+        }
+        po_lines = [
+            {
+                "line_name": "[OTHER] OTRO PRODUCTO",
+                "product_qty": 10,
+                "product_id": 999,
+                "order_name": "P06041",
+                "order_id": 6041,
+                "line_id": 11,
+                "partner_ref": "",
+                "qty_received": 10,
+                "qty_invoiced": 0,
+                "product_uom_id": 1,
+                "product_uom_name": "Unidades",
+            },
+            {
+                "line_name": "[B0003] BEB-GASEOSAS",
+                "product_qty": 50,
+                "product_id": 620,
+                "order_name": "P06041",
+                "order_id": 6041,
+                "line_id": 22,
+                "partner_ref": "",
+                "qty_received": 50,
+                "qty_invoiced": 0,
+                "product_uom_id": 100,
+                "product_uom_name": "pack (12 unidades)",
+            },
+        ]
+        with patch(
+            "facturia_matching.odoo.purchase_matching._product_default_uom_id",
+            return_value=100,
+        ):
+            out = match_invoice_row(row, po_lines, catalog)
+        self.assertEqual(row["invoice_line_ids/product_id"], "620")
+        self.assertEqual(row["invoice_line_ids/quantity"], "5")
+        self.assertEqual(out["__um_empresa_id"], "100")
+        self.assertIn(out["__qty_escalada"], ("5", "5.0"))
+        self.assertEqual(out["__oc_line_id"], "22")
+        self.assertNotIn("Re-escalado", out.get("__um_note") or "")
 
     def test_apply_product_uom_to_row_sets_pack_from_product(self):
         from unittest.mock import patch
@@ -1318,6 +1519,75 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertEqual(summary["oc_candidates_by_comprobante"].get("0"), [])
         self.assertEqual(rows[0]["__oc_line_id"], "1")
         self.assertTrue(summary["show_purchase_columns"])
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    @patch("facturia_matching.odoo.purchase_matching._product_default_uom_id", return_value=100)
+    def test_enrich_preserves_saved_manual_uom_on_reload(
+        self, _mock_default_uom, mock_uom, mock_fetch, _mock_odoo
+    ):
+        """Reload de conversión: no pisar UM elegida a mano con el uom_po default."""
+        units = {
+            "id": 1,
+            "name": "Unidades",
+            "factor": 1.0,
+            "category_id": [1, "Unidad"],
+            "uom_type": "reference",
+        }
+        pack12 = {
+            "id": 100,
+            "name": "pack (12 unidades)",
+            "factor": 1.0 / 12.0,
+            "category_id": [1, "Unidad"],
+            "uom_type": "bigger",
+        }
+        mock_uom.return_value = {
+            "by_id": {1: units, 100: pack12},
+            "by_name": {"UN": [units], "UNIDADES": [units]},
+        }
+        mock_fetch.return_value = [
+            {
+                "line_id": 1,
+                "order_id": 6552,
+                "order_name": "P06552",
+                "partner_ref": "",
+                "line_name": "COCA-COLA",
+                "product_qty": 2,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_id": 620,
+                "product_uom_id": 100,
+                "product_uom_name": "pack (12 unidades)",
+            }
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "6552",
+                "__selected_oc_name": "P06552",
+                "invoice_line_ids/name": "COCA-COLA",
+                "invoice_line_ids/product_id": "620",
+                # Cantidad ya re-escalada a Unidades (elección manual).
+                "invoice_line_ids/quantity": "24",
+                "__um_proveedor": "UN",
+                "__qty_original": "24",
+                "__qty_escalada": "24",
+                "__um_empresa": "Unidades",
+                "__um_empresa_id": "1",
+                "__um_factor": "1",
+                "__um_note": "Misma UM",
+                "__overwrite_oc_price": "1",
+            }
+        ]
+        summary = enrich_rows_with_purchase_data(rows, fetch_candidates=False)
+        self.assertEqual(summary["selected_oc_by_comprobante"].get("0"), 6552)
+        self.assertEqual(rows[0]["__um_empresa_id"], "1")
+        self.assertEqual(rows[0]["__um_empresa"], "Unidades")
+        self.assertEqual(float(rows[0]["invoice_line_ids/quantity"]), 24.0)
+        self.assertEqual(rows[0]["__overwrite_oc_price"], "1")
+        # Sin conservar UM, el rematch pondría uom_po (pack 100) y re-escalaría qty.
 
     @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
     @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")

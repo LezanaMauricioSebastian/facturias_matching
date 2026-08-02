@@ -9,9 +9,11 @@ export function wireOcPicker(state, refs, handlers, setStatusFn) {
   const onOcAction = (e) => {
     const searchBtn = e.target.closest("[data-search-oc]");
     if (searchBtn) {
+      if (searchBtn.disabled) return;
       const compIdx = Number(searchBtn.getAttribute("data-search-oc"));
       if (!Number.isFinite(compIdx)) return;
-      searchOc(state, refs, setStatusFn, handlers, compIdx).then(() => {
+      searchOc(state, refs, setStatusFn, handlers, compIdx).then((ok) => {
+        if (!ok) return;
         handlers?.onRerender?.();
         openOcPicker(state, refs, handlers, setStatusFn, String(compIdx));
       });
@@ -20,13 +22,15 @@ export function wireOcPicker(state, refs, handlers, setStatusFn) {
 
     const openBtn = e.target.closest("[data-open-oc]");
     if (openBtn) {
+      if (openBtn.disabled) return;
       const compKey = openBtn.getAttribute("data-open-oc");
       const candidates = state.purchaseMatching?.oc_candidates_by_comprobante?.[compKey] || [];
       // Si el modal quedaría vacío, re-buscar en Odoo antes de abrir.
       if (!candidates.length) {
         const compIdx = Number(compKey);
         if (!Number.isFinite(compIdx)) return;
-        searchOc(state, refs, setStatusFn, handlers, compIdx).then(() => {
+        searchOc(state, refs, setStatusFn, handlers, compIdx).then((ok) => {
+          if (!ok) return;
           handlers?.onRerender?.();
           openOcPicker(state, refs, handlers, setStatusFn, String(compIdx));
         });

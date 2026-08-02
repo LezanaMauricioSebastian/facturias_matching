@@ -46,7 +46,7 @@ Lógica independiente de HTTP y de drivers concretos (salvo imports puntuales a 
 
 - **back_check.py**: leer fila de `process` en MySQL.
 - **process_conversions.py**: guardar/cargar JSON de filas en `process_conversions` (template por perfil).
-- **saved_row_remap.py**: al recargar conversión, re-mapear IDs de catálogo si cambiaron.
+- **saved_row_remap.py**: al recargar conversión, re-mapear IDs de catálogo **solo si** el ID guardado está vacío o no existe en el tenant activo (cross-tenant / stale). **No** re-aplica rubro/diario/cuenta del padrón sobre IDs válidos elegidos por el operador.
 
 ### `export/` — Salida
 
@@ -156,9 +156,13 @@ En desarrollo con `--reload`, los procesos hijos de uvicorn resetean caches al r
 
 `odoo/env.py` construye `build_odoo_main_config(profile)` y `build_odoo_import_config(profile)`:
 
-- **default**: `ODOO_BASE_URL`, `ODOO_USER`, `ODOO_PASSWORD` / `ODOO_API_KEY`
-- **aliare**: sufijo `_ALIARE`
-- **sudata**: sufijo `_SUDATA` o flag `odoo_cloud`
+1. **Preferido:** si el request trae `?empresa=N` (o `empresa` en body) y hay fila activa en MySQL `company_erp_credentials` + `company_erp_credential_configs` para ese `company_id` (schema `PROCESS_SCHEMA`), se usan `ODOO_BASE_URL`, `ODOO_USER_ID` / `ODOO_USER`, `ODOO_PASSWORD` y `ODOO_DB` (este último vía `resolve_odoo_db_name`: si está stale se descarta y se deduce por list/auth/hostname; necesario en hosts sin `db.list()`, p. ej. Aliare).
+2. **Fallback:** variables de entorno por perfil:
+   - **default**: `ODOO_BASE_URL`, `ODOO_USER`, `ODOO_PASSWORD` / `ODOO_API_KEY`
+   - **aliare**: sufijo `_ALIARE`
+   - **sudata**: sufijo `_SUDATA` o flag `odoo_cloud`
+
+Si el perfil activo **no coincide** con el mapeo `empresa→perfil` (override explícito), se ignora MySQL y se usa el `.env` del perfil pedido.
 
 `get_conversion_template_id()` asocia cada perfil a un `export_templates.id` en MySQL (99 default, ids Aliare/Sudata en env).
 

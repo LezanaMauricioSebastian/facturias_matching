@@ -45,13 +45,38 @@ export function sanitizeInflatedLineAmounts(rows) {
   return fixed;
 }
 
-/** Migra iva_monto legacy de fila 0 al metadata __fac_iva_monto. */
+/**
+ * True si el grupo ya es modo línea/mixed moderno (no migrar iva_monto → pie).
+ * Legacy: IVA de encabezado guardado en fila 0 sin alícuotas por línea.
+ */
+function isModernLineIvaGroup(slice) {
+  const content = (slice || []).filter(lineHasContent);
+  if (content.length >= 2) {
+    return content.some((r) => {
+      if (r?.__iva_monto_manual) return true;
+      const p = String(r?.iva_pct ?? "").trim();
+      return !!(p && p !== "0");
+    });
+  }
+  if (content.length === 1) {
+    const r = content[0];
+    const p = String(r?.iva_pct ?? "").trim();
+    if (r?.__iva_monto_manual && p && p !== "0") return true;
+  }
+  return false;
+}
+
+/**
+ * Migra iva_monto legacy de fila 0 al metadata __fac_iva_monto.
+ * No toca saves modernos (multi-línea con iva_pct / __iva_monto_manual).
+ */
 export function migrateLegacyComprobanteIva(rows) {
   if (!Array.isArray(rows)) return;
   for (const group of listComprobanteGroups(rows)) {
     const slice = group.rowIndices.map((i) => rows[i]);
     const first = slice[0];
     if (!first) continue;
+    if (isModernLineIvaGroup(slice)) continue;
     if (first.__iva_monto_manual && String(first.iva_monto ?? "").trim()) {
       if (!String(first.__fac_iva_monto ?? "").trim()) {
         first.__fac_iva_monto = first.iva_monto;

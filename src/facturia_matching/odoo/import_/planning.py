@@ -196,15 +196,23 @@ def _pair_product_line_for_row(
     product_lines: List[Dict[str, Any]],
     row: Dict[str, Any],
     fallback_index: int,
+    *,
+    used_line_ids: Optional[set] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Empareja fila UI con línea Odoo por purchase_line_id o por orden."""
+    """Empareja fila UI con línea Odoo por purchase_line_id (si libre) o por orden."""
+    used = used_line_ids if used_line_ids is not None else set()
     po_id = _purchase_line_id_from_row(row)
     if po_id:
         for line in product_lines:
-            if _purchase_line_id_raw(line) == po_id:
+            if _purchase_line_id_raw(line) == po_id and line["id"] not in used:
                 return line
     if 0 <= fallback_index < len(product_lines):
-        return product_lines[fallback_index]
+        cand = product_lines[fallback_index]
+        if cand["id"] not in used:
+            return cand
+    for line in product_lines:
+        if line["id"] not in used:
+            return line
     return None
 
 
@@ -232,13 +240,20 @@ def plan_product_price_quantity_reapply(
 
     used_line_ids: set = set()
     for i, row in enumerate(rows):
-        line = _pair_product_line_for_row(product_lines, row, i)
-        if not line or line["id"] in used_line_ids:
-            if line:
-                warnings.append(
-                    f"Línea UI {i + 1} ({row.get('invoice_line_ids/name') or '?'}): "
-                    "duplicada o sin par en Odoo; se omite re-aplicar precio"
-                )
+        line = _pair_product_line_for_row(
+            product_lines, row, i, used_line_ids=used_line_ids
+        )
+        if not line:
+            warnings.append(
+                f"Línea UI {i + 1} ({row.get('invoice_line_ids/name') or '?'}): "
+                "sin par en Odoo; se omite re-aplicar precio"
+            )
+            continue
+        if line["id"] in used_line_ids:
+            warnings.append(
+                f"Línea UI {i + 1} ({row.get('invoice_line_ids/name') or '?'}): "
+                "duplicada o sin par en Odoo; se omite re-aplicar precio"
+            )
             continue
         used_line_ids.add(line["id"])
         _cmd, _zero, expected = _build_line_command(

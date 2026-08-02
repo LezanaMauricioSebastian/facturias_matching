@@ -10,7 +10,7 @@ Vínculo entre filas UI y `purchase.order.line` en Odoo (`purchase_line_id`).
 
 ## Filtro de OCs en matching
 
-`fetch_partner_po_lines` (`purchase_matching.py`) trae órdenes de compra **confirmadas** del proveedor, **incluyendo recepcionadas y no recepcionadas**.
+`fetch_partner_po_lines` (`purchase_matching.py`) trae **todas** las órdenes de compra **confirmadas** del proveedor (`limit=False` en Odoo), **incluyendo recepcionadas y no recepcionadas**. Ya no hay tope de 12 OCs recientes (PDF Salta Refresco: la OC correcta quedaba fuera del listado).
 
 | Odoo (`purchase.order`) | UI (español) | ¿Se considera? |
 |-------------------------|--------------|----------------|
@@ -28,9 +28,11 @@ Dominio en `_partner_po_search_domain`:
 ]
 ```
 
+El modal lista **todas** las órdenes traídas (ordenadas por score de canasta); no se ocultan por score mínimo.
+
 **UI final (por comprobante):** los controles viven en una franja del **header de cada tarjeta de factura**, encima de la tabla.
 
-- A la izquierda se muestra un botón `secondary` **«Buscar OCs similares»**. Después de buscar pasa a **«OC: {nombre} ▾»**; si se elige no vincular, queda **«OC: Sin OC ▾»** (sin anteponer el número de factura). `↻` fuerza una búsqueda nueva.
+- A la izquierda se muestra un botón `secondary` **«Buscar OCs similares»**. Mientras corre `search-oc`, el botón (o la pastilla OC si se reabre/rebusca) pasa a **«Buscando…»** y queda deshabilitado. Después de buscar pasa a **«OC: {nombre} ▾»**; si se elige no vincular, queda **«OC: Sin OC ▾»** (sin anteponer el número de factura). `↻` fuerza una búsqueda nueva.
 - A la derecha está el checkbox **«Sobreescribir precio de la OC»**: el texto aparece arriba y la tilde debajo. Se muestra deshabilitado mientras no haya una OC seleccionada.
 - El botón y el checkbox aparecen juntos cuando el comprobante tiene proveedor y todavía no se confirmó que no tenga OCs. Tras `rematch-purchase`, se ocultan ambos si Odoo confirmó `oc_provider_has_ocs_by_comprobante[comp]=false`; si el nuevo proveedor tiene OCs, aparecen dinámicamente.
 - Al abrir el selector sin candidatos en memoria, el frontend vuelve a ejecutar `search-oc` antes de abrir el modal.
@@ -39,7 +41,23 @@ Si el operador elige **«Sin OC»**, se limpian los vínculos de líneas y el ch
 
 **Carga inicial:** `enrich_rows_with_purchase_data(..., fetch_candidates=False)` no lista candidatos ni auto-elige la mejor OC; solo re-aplica una OC guardada válida (`__selected_oc_order_id` / `__selected_oc_name` en las filas de la conversión). Si hay selección válida, también marca `oc_searched_by_comprobante` para que el header muestre **«OC: {nombre} ▾»** tras reload (no el CTA «Buscar OCs similares»). Mismo criterio en facturas **solo encabezado**. Las columnas UM/OC (`show_purchase_columns`) se muestran si hay candidatos **o** si las filas ya tienen match/UM guardados (`compute_show_purchase_columns`) — sin eso, tras F5 la pastilla OC volvía pero la columna **UM** desaparecía.
 
+**UM / overwrite / producto tras reload:** el rematch de líneas en carga (`_match_comprobante_rows`) limpia campos purchase y vuelve a inferir. Si la conversión ya trae `invoice_line_ids/product_id`, **no** se pisa con el producto del match por etiqueta OC: se vincula OC por el mismo `product_id` (como memoria). Si además hay `__um_empresa_id` guardado, se restaura antes del match y **no** se re-escala la cantidad. Tests: `test_enrich_preserves_saved_manual_uom_on_reload`, `test_match_invoice_row_keeps_confirmed_product_and_saved_uom`.
+
 **Efecto histórico (cambio):** antes se excluían OCs `receipt_status=pending`; ahora se listan con label para que el operador decida.
+
+### Notas Dinner bajo líneas `[CÓDIGO] PRODUCTO`
+
+En Dinner, las OC suelen intercalar **líneas de producto** (`[B0003] BEB-GASEOSAS`, qty > 0) con **notas** (`coca`, `sprite`, qty pedida=0 y recibida=0) que describen qué factura matchea ese producto genérico.
+
+Heurística (`_attach_dinner_po_note_labels`):
+
+- qty pedida **y** recibida = 0
+- la línea **anterior** de la misma OC tiene qty > 0 **y** nombre con `[…]`
+- la nota **no** tiene `[…]`
+
+→ se marca `is_note` y el texto se agrega a `note_labels` del padre. El matching **no** elige la nota sola; puntúa el padre también contra esas etiquetas (producto↔etiqueta). El modal OC muestra las notas como chips bajo el producto, sin filas a 0.
+
+Específico de Dinner (no todos los tenants usan ese patrón). Tests: `test_attach_dinner_po_note_labels_*`, `test_line_match_score_uses_dinner_note_label`, `test_score_oc_candidates_hides_note_rows_and_keeps_match_on_parent`.
 
 ---
 
@@ -78,9 +96,9 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 
 **Prioridad (sin producto previo en la fila):**
 
-1. **Memoria** — último `invoice_line_ids/product_id` confirmado para el mismo `partner_id` + etiqueta **normalizada** (exacta o fuzzy ≥ 88 sobre keys guardadas), scoped por `company_id` + `template_id`. Gana al match OC para respetar lo que el operador ya decidió.
-2. Match de línea OC (producto + vínculo). Si la memoria ya eligió el **mismo** `product_id`, también se vincula la línea OC.
-3. Fuzzy contra productos de las OCs del proveedor.
+1. **Memoria** — último `invoice_line_ids/product_id` (+ `__um_empresa_id` si había) confirmado para el mismo `partner_id` + etiqueta **normalizada** (exacta o fuzzy ≥ 88), scoped por `company_id` + `template_id`. Gana al match OC. Aplica también la UM aprendida (sin re-escalar qty en sugerencia).
+2. **Vínculo OC producto↔producto** — entre líneas de la OC seleccionada con el **mismo** `product_id` que la memoria, elige la mejor por etiqueta/qty **sin** exigir umbral de score (ej. etiqueta `SPRITE…` → producto `BEB-GASEOSAS` en la OC). Si hay varias líneas con ese producto, gana la de mejor etiqueta. Si no hay ninguna con ese `product_id`, intenta match por etiqueta clásico (solo vincula si el producto coincide; si no, queda solo memoria).
+3. Fuzzy contra productos de las OCs del proveedor (sin vínculo OC).
 
 **Señales “confirmadas”:** filas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy/memoria sin revisar).
 
@@ -91,17 +109,17 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 | Staging / `odoo-dev` | `sudataco_staging` |
 | Prod / `matching-ui-odoo` | `sudataco_facturia` |
 
-Clave única: `(company_id, template_id, partner_id, label_key)`. La app crea la tabla con `CREATE TABLE IF NOT EXISTS` al primer uso; SQL de referencia en `scripts/sql/product_label_memory.sql`. Staging y prod **no comparten** filas (schemas distintos).
+Clave única: `(company_id, template_id, partner_id, label_key)`. Guarda `product_id` y opcionalmente `uom_id` (`__um_empresa_id`). La app crea la tabla con `CREATE TABLE IF NOT EXISTS` y agrega `uom_id` con `ALTER` si falta; SQL en `scripts/sql/product_label_memory.sql`. Staging y prod **no comparten** filas.
 
 **Flujo:**
 
 1. Al **guardar** conversión → `upsert_product_memory_choices` (solo elecciones confirmadas).
 2. Al **cargar** proceso → `build_memory_index_for_company` lee la tabla. Si está vacía para esa empresa/perfil, hace seed lazy desde las últimas ~100 conversiones y persiste.
-3. Setea `__product_suggested=memory` y nota `Producto aprendido (proceso pasado)`; misma UI naranja que fuzzy. No re-escala qty.
+3. Setea `__product_suggested=memory`, `__um_empresa*` desde `uom_id` aprendido si existe, y nota `Producto aprendido…`; misma UI naranja. No re-escala qty.
 
 **Limitaciones:** etiqueta **normalizada** + fuzzy RapidFuzz (`token_set_ratio` ≥ 88) sobre keys del mismo proveedor; exacto gana primero. Rechaza conflictos obvios (sin gas vs con gas, ZERO vs no-ZERO). No busca en todo el catálogo Odoo. Rematch bajo demanda sin `company_id` no consulta memoria todavía.
 
-Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product` en `tests/test_product_label_memory.py`.
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_picks_best_label_among_same_product`, `test_match_invoice_row_learned_applies_uom`, `test_match_invoice_row_learned_no_oc_when_product_absent` en `tests/test_product_label_memory.py`.
 
 ### Unidad de medida — envase en descripción
 
@@ -154,7 +172,7 @@ Flujo:
 3. Si hace falta, re-escalar `invoice_line_ids/quantity` a la UM destino y guardar `__um_empresa_id`.
 4. Al importar, `_build_line_command` / sync escriben `product_uom_id` en `account.move.line` (create, contenido, vínculo OC y reapply final). El vínculo OC (`purchase_line_id`) es independiente de la UM elegida.
 
-**UI — selector de UM:** la columna **UM** es un `<select>` por fila. Opciones = `list_uoms_for_product` (misma categoría). Sin producto, el select queda vacío y deshabilitado. Al cambiar producto, `POST .../rematch-uom` infiere el default y cachea las opciones (`state.uomOptionsByProductId`). Al elegir otra UM, el mismo endpoint con `uom_id` re-escala desde `__qty_original` / `__um_proveedor`. Si la fila ya tenía producto guardado, al enfocar el select se llama `GET .../product-uoms` (solo lista, sin mutar).
+**UI — selector de UM:** la columna **UM** es un `<select>` por fila. Opciones = `list_uoms_for_product` (misma categoría). Sin producto, el select queda vacío y deshabilitado. Al cambiar producto, `POST .../rematch-uom` infiere el default y cachea las opciones (`state.uomOptionsByProductId`). Al elegir otra UM, el mismo endpoint con `uom_id` re-escala desde `__qty_original` / `__um_proveedor` y el autosave persiste `__um_empresa_id` en la conversión. Tras pintar la tabla, se **precargan** las UMs de cada `product_id` visible (`GET .../product-uoms`) para que el primer click del select ya liste todas las opciones (antes solo se veía la UM guardada y hacía falta un segundo click). Si aún no hay cache al hacer click, se bloquea la apertura nativa, se completa el `<select>` in-place y se puede abrir de nuevo. Tras F5, la UM guardada se conserva (ver [carga inicial](#filtro-de-ocs-en-matching)).
 
 **Resolve category-aware:** `_apply_uom_scaling` matchea la UM de FacturIA (`KG`, `LT`, …) **dentro de la categoría del destino** (`_find_uom_in_category`), no solo por `by_name` global. El catálogo indexa colisiones de nombre como listas (`by_name[key] = […]`): en Dinner hay dos `kg` (Peso vs Conversión Crema) y dos `L` (Volumen vs LITROS); sin filtro por categoría el alias global elegía la categoría equivocada y fallaba con `Categoría UM distinta`.
 
@@ -247,6 +265,7 @@ Si hubo sanitize → **segundo** refresh + re-agrupación.
 2. `apply_purchase_order_price_overwrites` — **opcional** (`__overwrite_oc_price`): pisa `price_unit` en la OC original
 3. `_apply_tax_line_amount_overwrites` — **último paso** sobre la factura: pisa montos IVA / IIBB del pie de FacturIA
 
+Entre el reapply de precio y los montos, el sync **re-aplica `tax_ids`** (no-IVA solo en 1ª línea) porque Odoo suele pisarlos al vincular OC.
 **Regresión corregida (IIBB CABA):** si los montos tax se aplicaban antes del reapply de precio, Odoo recalculaba la percepción y el primer import quedaba mal; el segundo clic “arreglaba” porque el precio ya no cambiaba.
 
 ---

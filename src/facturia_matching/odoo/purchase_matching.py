@@ -652,7 +652,16 @@ def _order_deliver_to_label(po: Dict[str, Any]) -> str:
     return ""
 
 
-def fetch_partner_po_lines(partner_id: int, *, limit_orders: int = 12) -> List[Dict[str, Any]]:
+def fetch_partner_po_lines(
+    partner_id: int,
+    *,
+    limit_orders: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Líneas de OC confirmadas del proveedor.
+
+    Por defecto trae **todas** las órdenes (`limit_orders=None` → Odoo `limit=False`).
+    Pasar un entero solo en tests o diagnósticos.
+    """
     tenant_cache = _po_cache.setdefault(_tenant_cache_key(), {})
     if partner_id in tenant_cache:
         return tenant_cache[partner_id]["lines"]
@@ -676,7 +685,7 @@ def fetch_partner_po_lines(partner_id: int, *, limit_orders: int = 12) -> List[D
             "picking_type_id",
             "dest_address_id",
         ],
-        limit=limit_orders,
+        limit=False if limit_orders is None else limit_orders,
         order="date_order desc, id desc",
         config=cfg,
     )
@@ -733,13 +742,100 @@ def fetch_partner_po_lines(partner_id: int, *, limit_orders: int = 12) -> List[D
                 "price_unit": float(ln.get("price_unit") or 0),
                 "product_uom_id": int(uom[0]) if isinstance(uom, (list, tuple)) and uom else None,
                 "product_uom_name": uom[1] if isinstance(uom, (list, tuple)) and len(uom) > 1 else "",
+                "note_labels": [],
+                "is_note": False,
             }
         )
+    _attach_dinner_po_note_labels(enriched)
     tenant_cache[partner_id] = {"lines": enriched}
     return enriched
 
 
+# Dinner: líneas de producto en OC suelen verse como "[B0003] BEB-GASEOSAS".
+_PO_BRACKET_CODE_RE = re.compile(r"^\[([^\]]+)\]")
+
+
+def _po_line_has_bracket_code(name: Any) -> bool:
+    return bool(_PO_BRACKET_CODE_RE.match(_normalize(name) or ""))
+
+
+def _po_line_qty_zero(po: Dict[str, Any]) -> bool:
+    return float(po.get("product_qty") or 0) <= 0 and float(po.get("qty_received") or 0) <= 0
+
+
+def _attach_dinner_po_note_labels(po_lines: List[Dict[str, Any]]) -> None:
+    """Heurística Dinner: qty pedida+recibida 0 bajo un padre con [CÓDIGO] = nota/etiqueta.
+
+    La nota no se matchea sola: su texto se agrega a ``note_labels`` del padre
+    (producto↔etiqueta). Escala mal en tenants sin ese patrón; en Dinner sí.
+    """
+    last_parent_by_order: Dict[int, Dict[str, Any]] = {}
+    for ln in po_lines:
+        if not isinstance(ln, dict):
+            continue
+        ln.setdefault("note_labels", [])
+        ln["is_note"] = False
+        oid = int(ln.get("order_id") or 0)
+        parent = last_parent_by_order.get(oid)
+        name = ln.get("line_name")
+        if (
+            parent is not None
+            and _po_line_qty_zero(ln)
+            and not _po_line_qty_zero(parent)
+            and _po_line_has_bracket_code(parent.get("line_name"))
+            and not _po_line_has_bracket_code(name)
+        ):
+            note = _normalize(name)
+            if note:
+                labels = parent.setdefault("note_labels", [])
+                if note not in labels:
+                    labels.append(note)
+            ln["is_note"] = True
+            ln["parent_line_id"] = parent.get("line_id")
+            continue
+        if not _po_line_qty_zero(ln):
+            last_parent_by_order[oid] = ln
+
+
+def _matchable_po_lines(po_lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [p for p in po_lines if isinstance(p, dict) and not p.get("is_note")]
+
+
 def _line_match_score(
+    *,
+    codigo: str,
+    descripcion: str,
+    qty: Optional[float],
+    po_line: Dict[str, Any],
+) -> float:
+    if po_line.get("is_note"):
+        return 0.0
+    # Probar también etiquetas/notas Dinner colgadas del padre.
+    notes = [
+        _normalize(n)
+        for n in (po_line.get("note_labels") or [])
+        if _normalize(n)
+    ]
+    if notes:
+        base = {**po_line, "note_labels": []}
+        best = _line_match_score_against_name(
+            codigo=codigo, descripcion=descripcion, qty=qty, po_line=base
+        )
+        for note in notes:
+            probe = {**base, "line_name": note}
+            best = max(
+                best,
+                _line_match_score_against_name(
+                    codigo=codigo, descripcion=descripcion, qty=qty, po_line=probe
+                ),
+            )
+        return best
+    return _line_match_score_against_name(
+        codigo=codigo, descripcion=descripcion, qty=qty, po_line=po_line
+    )
+
+
+def _line_match_score_against_name(
     *,
     codigo: str,
     descripcion: str,
@@ -812,7 +908,6 @@ def _line_match_score(
             partial_best = max(partial_best, float(fuzz.partial_ratio(desc_variant, po_name.upper())))
         return partial_best
     return 0.0
-
 
 def _compose_match_note(*parts: str) -> str:
     out: List[str] = []
@@ -932,6 +1027,45 @@ def _empty_purchase_fields() -> Dict[str, str]:
     }
 
 
+# Campos UM (+ qty visible) que el operador puede haber fijado a mano y que
+# `_match_comprobante_rows` no debe pisar al rematchear en reload de conversión.
+_SAVED_UOM_KEYS = (
+    "__um_proveedor",
+    "__um_empresa",
+    "__um_empresa_id",
+    "__qty_original",
+    "__qty_escalada",
+    "__um_factor",
+    "__um_note",
+    "invoice_line_ids/quantity",
+)
+
+
+def _snapshot_saved_uom(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Snapshot de UM guardada si la fila ya tiene `__um_empresa_id` (autosave)."""
+    if not isinstance(row, dict):
+        return None
+    if not _normalize(row.get("__um_empresa_id")):
+        return None
+    return {k: row.get(k, "") for k in _SAVED_UOM_KEYS}
+
+
+def _restore_saved_uom(
+    row: Dict[str, Any],
+    saved_uom: Optional[Dict[str, Any]],
+    saved_product_id: str,
+) -> None:
+    """Restaura UM/qty elegida si el producto de la fila no cambió tras el rematch."""
+    if not saved_uom or not isinstance(row, dict):
+        return
+    if _normalize(row.get("invoice_line_ids/product_id")) != _normalize(saved_product_id):
+        return
+    if not _normalize(saved_product_id):
+        return
+    for key, value in saved_uom.items():
+        row[key] = value
+
+
 def _min_match_score(codigo: str) -> float:
     return 70.0 if _normalize_key(codigo) not in {"", "1", "NO DISPONIBLE"} else 75.0
 
@@ -981,7 +1115,7 @@ def score_oc_candidates(
             min_score = _min_match_score(ctx["codigo"])
             best_sc = 0.0
             best_po: Optional[Dict[str, Any]] = None
-            for po in oc_lines:
+            for po in _matchable_po_lines(oc_lines):
                 sc = _line_match_score(
                     codigo=ctx["codigo"],
                     descripcion=ctx["descripcion"],
@@ -1002,13 +1136,14 @@ def score_oc_candidates(
                         "score": best_sc,
                     }
 
-        for po in oc_lines:
+        for po in _matchable_po_lines(oc_lines):
             lid = int(po["line_id"])
             inv_match = best_invoice_by_line.get(lid)
             po_line_details.append(
                 {
                     "line_id": lid,
                     "line_name": po.get("line_name") or "",
+                    "note_labels": list(po.get("note_labels") or []),
                     "product_qty": po.get("product_qty", 0),
                     "qty_received": po.get("qty_received", 0),
                     "qty_invoiced": po.get("qty_invoiced", 0),
@@ -1093,7 +1228,7 @@ def _match_comprobante_rows(
     uom_catalog: Dict[str, Dict[str, Any]],
     selected_order_id: Optional[int],
     *,
-    product_memory: Optional[Dict[Tuple[int, str], int]] = None,
+    product_memory: Optional[Dict[Tuple[int, str], Any]] = None,
 ) -> int:
     """Matchea líneas del comprobante contra la OC elegida. Devuelve filas matcheadas."""
     scoped = (
@@ -1114,27 +1249,52 @@ def _match_comprobante_rows(
             "__selected_oc_order_id": row.get("__selected_oc_order_id", ""),
             "__selected_oc_name": row.get("__selected_oc_name", ""),
         }
+        # Conservar UM elegida a mano / ya guardada y el tilde de precio OC:
+        # `_empty_purchase_fields` los limpia y el rematch volvería al uom_po default.
+        saved_product_id = _normalize(row.get("invoice_line_ids/product_id"))
+        saved_uom = _snapshot_saved_uom(row)
+        saved_overwrite = row.get("__overwrite_oc_price", "")
         if not _is_content_row(row):
             row.update(_empty_purchase_fields())
             row.update(saved_sel)
+            if saved_overwrite:
+                row["__overwrite_oc_price"] = saved_overwrite
             continue
         row.update(_empty_purchase_fields())
         row.update(saved_sel)
+        # Restaurar UM guardada antes del match para no re-escalar qty ni perder target.
+        if saved_uom:
+            for key in (
+                "__um_empresa",
+                "__um_empresa_id",
+                "__um_proveedor",
+                "__qty_original",
+                "__qty_escalada",
+                "__um_factor",
+                "__um_note",
+            ):
+                if key in saved_uom:
+                    row[key] = saved_uom[key]
         learned_id: Optional[int] = None
+        learned_uom_id: Optional[int] = None
         if product_memory and partner_raw.isdigit():
             from facturia_matching.persistence.product_label_memory import lookup_in_index
 
-            learned_id = lookup_in_index(
+            learned = lookup_in_index(
                 product_memory,
                 partner_raw,
                 row.get("invoice_line_ids/name") or row.get("Nombre de producto"),
             )
+            if learned is not None:
+                learned_id = int(learned.product_id)
+                learned_uom_id = learned.uom_id
         match_fields = match_invoice_row(
             row,
             scoped,
             uom_catalog,
             suggest_pool=po_lines,
             learned_product_id=learned_id,
+            learned_uom_id=learned_uom_id,
         )
         po_line_raw = match_fields.get("__oc_line_id")
         if po_line_raw and str(po_line_raw).isdigit():
@@ -1149,6 +1309,7 @@ def _match_comprobante_rows(
                     uom_catalog,
                     suggest_pool=po_lines,
                     learned_product_id=learned_id,
+                    learned_uom_id=learned_uom_id,
                 )
                 match_fields["__oc_match_note"] = _compose_match_note(
                     match_fields.get("__oc_match_note") or "",
@@ -1171,6 +1332,9 @@ def _match_comprobante_rows(
             )
         row.update(match_fields)
         row.update(saved_sel)
+        if saved_overwrite:
+            row["__overwrite_oc_price"] = saved_overwrite
+        _restore_saved_uom(row, saved_uom, saved_product_id)
         if match_fields.get("__oc_line_id"):
             matched += 1
     return matched
@@ -1197,7 +1361,7 @@ def _suggest_product_from_pool(
     """
     best: Optional[Dict[str, Any]] = None
     best_score = 0.0
-    for po in pool:
+    for po in _matchable_po_lines(pool):
         product_id = po.get("product_id")
         if not product_id:
             continue
@@ -1214,6 +1378,65 @@ def _suggest_product_from_pool(
     }
 
 
+def _best_po_line_by_score(
+    po_lines: List[Dict[str, Any]],
+    *,
+    codigo: str,
+    descripcion: str,
+    qty: Optional[float],
+) -> Tuple[Optional[Dict[str, Any]], float]:
+    best: Optional[Dict[str, Any]] = None
+    best_score = 0.0
+    for po in _matchable_po_lines(po_lines):
+        sc = _line_match_score(codigo=codigo, descripcion=descripcion, qty=qty, po_line=po)
+        if sc > best_score:
+            best_score = sc
+            best = {**po, "score": sc}
+    return best, best_score
+
+
+def _best_po_line_for_product(
+    po_lines: List[Dict[str, Any]],
+    product_id: int,
+    *,
+    codigo: str,
+    descripcion: str,
+    qty: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """Mejor línea OC con el mismo product_id (producto↔producto), sin umbral de etiqueta."""
+    same = [
+        p
+        for p in _matchable_po_lines(po_lines)
+        if int(p.get("product_id") or 0) == int(product_id)
+    ]
+    if not same:
+        return None
+    best: Optional[Dict[str, Any]] = None
+    best_score = -1.0
+    for po in same:
+        sc = _line_match_score(codigo=codigo, descripcion=descripcion, qty=qty, po_line=po)
+        if sc > best_score:
+            best_score = sc
+            best = {**po, "score": sc}
+    return best
+
+
+def _apply_oc_link_fields(result: Dict[str, Any], po: Dict[str, Any]) -> None:
+    result.update(
+        {
+            "__oc_name": po.get("order_name") or "",
+            "__oc_partner_ref": po.get("partner_ref") or "",
+            "__oc_line_name": po.get("line_name") or "",
+            "__oc_match_score": f"{float(po.get('score') or 0):.0f}",
+            "__qty_pedido": f"{po.get('product_qty', 0):g}",
+            "__qty_recibido": f"{po.get('qty_received', 0):g}",
+            "__qty_facturado_po": f"{po.get('qty_invoiced', 0):g}",
+            "__oc_order_id": str(po.get("order_id") or ""),
+            "__oc_line_id": str(po.get("line_id") or ""),
+        }
+    )
+
+
 def match_invoice_row(
     row: Dict[str, Any],
     po_lines: List[Dict[str, Any]],
@@ -1221,18 +1444,15 @@ def match_invoice_row(
     *,
     suggest_pool: Optional[List[Dict[str, Any]]] = None,
     learned_product_id: Optional[int] = None,
+    learned_uom_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     codigo = _normalize(row.get("__item_codigo") or row.get("invoice_line_ids/name"))
     desc = _normalize(row.get("invoice_line_ids/name") or row.get("Nombre de producto"))
     qty, um_raw = _resolve_invoice_qty_um(row, desc, repair_row=True)
 
-    best: Optional[Dict[str, Any]] = None
-    best_score = 0.0
-    for po in po_lines:
-        sc = _line_match_score(codigo=codigo, descripcion=desc, qty=qty, po_line=po)
-        if sc > best_score:
-            best_score = sc
-            best = {**po, "score": sc}
+    best, best_score = _best_po_line_by_score(
+        po_lines, codigo=codigo, descripcion=desc, qty=qty
+    )
 
     result: Dict[str, Any] = _empty_purchase_fields()
     result["__um_proveedor"] = um_raw
@@ -1243,68 +1463,104 @@ def match_invoice_row(
     product_raw = _normalize(row.get("invoice_line_ids/product_id"))
     # Prioridad: producto ya en fila > memoria (elección confirmada) > match OC > fuzzy.
     # Memoria gana al match OC para no pisar lo que el operador ya decidió.
+
+    def _link_oc_keep_product(
+        *,
+        product_id: int,
+        oc_note: str,
+        target_uom_id: Optional[int],
+        keep_qty: bool,
+        product_suggested: str = "",
+    ) -> Dict[str, Any]:
+        uom_info = _apply_uom_scaling_for_product(
+            row,
+            invoice_qty=qty,
+            invoice_um_raw=um_raw,
+            product_id=product_id,
+            uom_catalog=uom_catalog,
+            target_uom_id=target_uom_id,
+        )
+        if keep_qty and uom_info.get("um_note") == "Re-escalado":
+            if product_suggested == "memory" and target_uom_id:
+                keep_note = "UM aprendida sin re-escalar qty"
+            elif target_uom_id:
+                keep_note = "UM guardada sin re-escalar qty"
+            else:
+                keep_note = "UM sugerida sin re-escalar qty"
+            uom_info = {
+                **uom_info,
+                "qty_escalada": result["__qty_original"],
+                "um_factor": "",
+                "um_note": keep_note,
+            }
+        note = oc_note
+        if target_uom_id and (uom_info.get("um_empresa") or ""):
+            note = _compose_match_note(note, f"UM {uom_info.get('um_empresa')}")
+        out = {
+            "__um_proveedor": uom_info.get("um_proveedor") or um_raw,
+            "__um_empresa": uom_info.get("um_empresa") or "",
+            "__um_empresa_id": uom_info.get("um_empresa_id") or "",
+            "__qty_original": uom_info.get("qty_original") or result["__qty_original"],
+            "__qty_escalada": uom_info.get("qty_escalada") or result["__qty_escalada"],
+            "__um_factor": uom_info.get("um_factor") or "",
+            "__um_note": uom_info.get("um_note") or "",
+            "__product_suggested": product_suggested,
+        }
+        result.update(out)
+        oc_link = _best_po_line_for_product(
+            po_lines,
+            product_id,
+            codigo=codigo,
+            descripcion=desc,
+            qty=qty,
+        )
+        if not oc_link and best and best_score >= min_score:
+            oc_link = best
+            if int(oc_link.get("product_id") or 0) != product_id:
+                oc_link = None
+        if oc_link:
+            _apply_oc_link_fields(result, oc_link)
+            note = _compose_match_note(
+                note,
+                f"OC {oc_link.get('order_name') or ''} · {oc_link.get('line_name') or ''}".strip(
+                    " ·"
+                ),
+            )
+        result["__oc_match_note"] = _compose_match_note(note, result.get("__um_note") or "")
+        return result
+
+    # Producto ya en fila (operador / autosave): no pisar con match por etiqueta OC.
+    if product_raw.isdigit():
+        confirmed_id = int(product_raw)
+        saved_uom_raw = _normalize(row.get("__um_empresa_id"))
+        target_uom = int(saved_uom_raw) if saved_uom_raw.isdigit() else None
+        return _link_oc_keep_product(
+            product_id=confirmed_id,
+            oc_note="Producto confirmado en fila",
+            target_uom_id=target_uom,
+            keep_qty=bool(target_uom),
+            product_suggested="",
+        )
+
     if (
-        not product_raw.isdigit()
-        and learned_product_id is not None
+        learned_product_id is not None
         and int(learned_product_id) > 0
     ):
         learned_id = int(learned_product_id)
         product_raw = str(learned_id)
         row["invoice_line_ids/product_id"] = product_raw
-        uom_info = _apply_uom_scaling_for_product(
-            row,
-            invoice_qty=qty,
-            invoice_um_raw=um_raw,
+        target_uom = (
+            int(learned_uom_id)
+            if learned_uom_id is not None and int(learned_uom_id) > 0
+            else None
+        )
+        return _link_oc_keep_product(
             product_id=learned_id,
-            uom_catalog=uom_catalog,
+            oc_note="Producto aprendido (proceso pasado)",
+            target_uom_id=target_uom,
+            keep_qty=True,
+            product_suggested="memory",
         )
-        if uom_info.get("um_note") == "Re-escalado":
-            uom_info = {
-                **uom_info,
-                "qty_escalada": result["__qty_original"],
-                "um_factor": "",
-                "um_note": "UM sugerida sin re-escalar qty",
-            }
-        result.update(
-            {
-                "__um_proveedor": uom_info.get("um_proveedor") or um_raw,
-                "__um_empresa": uom_info.get("um_empresa") or "",
-                "__um_empresa_id": uom_info.get("um_empresa_id") or "",
-                "__qty_original": uom_info.get("qty_original") or result["__qty_original"],
-                "__qty_escalada": uom_info.get("qty_escalada") or result["__qty_escalada"],
-                "__um_factor": uom_info.get("um_factor") or "",
-                "__um_note": uom_info.get("um_note") or "",
-                "__product_suggested": "memory",
-            }
-        )
-        # Si la OC coincide en el mismo producto, también vincular la línea.
-        oc_note = "Producto aprendido (proceso pasado)"
-        if (
-            best
-            and best_score >= min_score
-            and int(best.get("product_id") or 0) == learned_id
-        ):
-            result.update(
-                {
-                    "__oc_name": best.get("order_name") or "",
-                    "__oc_partner_ref": best.get("partner_ref") or "",
-                    "__oc_line_name": best.get("line_name") or "",
-                    "__oc_match_score": f"{best_score:.0f}",
-                    "__qty_pedido": f"{best.get('product_qty', 0):g}",
-                    "__qty_recibido": f"{best.get('qty_received', 0):g}",
-                    "__qty_facturado_po": f"{best.get('qty_invoiced', 0):g}",
-                    "__oc_order_id": str(best.get("order_id") or ""),
-                    "__oc_line_id": str(best.get("line_id") or ""),
-                }
-            )
-            oc_note = _compose_match_note(
-                oc_note,
-                f"OC {best.get('order_name') or ''} · {best.get('line_name') or ''}".strip(" ·"),
-            )
-        result["__oc_match_note"] = _compose_match_note(
-            oc_note, result.get("__um_note") or ""
-        )
-        return result
 
     if not best or best_score < min_score:
         suggested: Optional[Dict[str, Any]] = None
@@ -1383,17 +1639,9 @@ def match_invoice_row(
         )
 
     oc_note = f"OC {best.get('order_name') or ''} · {best.get('line_name') or ''}".strip(" ·")
+    _apply_oc_link_fields(result, best)
     result.update(
         {
-            "__oc_name": best.get("order_name") or "",
-            "__oc_partner_ref": best.get("partner_ref") or "",
-            "__oc_line_name": best.get("line_name") or "",
-            "__oc_match_score": f"{best_score:.0f}",
-            "__qty_pedido": f"{best.get('product_qty', 0):g}",
-            "__qty_recibido": f"{best.get('qty_received', 0):g}",
-            "__qty_facturado_po": f"{best.get('qty_invoiced', 0):g}",
-            "__oc_order_id": str(best.get("order_id") or ""),
-            "__oc_line_id": str(best.get("line_id") or ""),
             "__um_proveedor": uom_info.get("um_proveedor") or um_raw,
             "__um_empresa": uom_info.get("um_empresa") or "",
             "__um_empresa_id": uom_info.get("um_empresa_id") or "",
@@ -1459,7 +1707,7 @@ def enrich_rows_with_purchase_data(
     *,
     fetch_candidates: bool = True,
     company_id: Optional[int] = None,
-    product_memory: Optional[Dict[Tuple[int, str], int]] = None,
+    product_memory: Optional[Dict[Tuple[int, str], Any]] = None,
 ) -> Dict[str, Any]:
     """
     Enriquece filas UI con OC, comparación pedido/recibido/facturado y re-escalado UM.
@@ -1548,8 +1796,14 @@ def enrich_rows_with_purchase_data(
 
         if not partner_raw.isdigit():
             for row in content_rows:
+                saved_product_id = _normalize(row.get("invoice_line_ids/product_id"))
+                saved_uom = _snapshot_saved_uom(row)
+                saved_overwrite = row.get("__overwrite_oc_price", "")
                 row.update(_empty_purchase_fields())
                 row["__oc_match_note"] = "Sin proveedor Odoo"
+                if saved_overwrite:
+                    row["__overwrite_oc_price"] = saved_overwrite
+                _restore_saved_uom(row, saved_uom, saved_product_id)
             continue
 
         partner_id = int(partner_raw)

@@ -66,7 +66,12 @@ export function hasOtrosImpuestosSelection(groupRows) {
 }
 
 export function shouldShowOtrosFooter(groupRows, totals) {
-  return hasOtrosImpuestosSelection(groupRows) || (totals?.otros || 0) > 0;
+  if (hasOtrosImpuestosSelection(groupRows) || (totals?.otros || 0) > 0) return true;
+  // Montos FacturIA sin label todavía (IIBB / percepciones).
+  const first = groupRows?.[0];
+  const percs = first?.__fac_percepciones;
+  if (Array.isArray(percs) && percs.some((p) => toNumberLoose(p?.monto) > 0)) return true;
+  return false;
 }
 
 export function shouldHideIvaFooter(groupRows) {

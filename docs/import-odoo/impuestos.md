@@ -29,23 +29,26 @@ Función central en `taxes.py`. Usada en:
 
 ### Reglas (resumen)
 
-| Modo comprobante | IVA numérico en línea | Exento / No Gravado | IIBB comprobante |
-|------------------|----------------------|---------------------|------------------|
-| `header` | No en `tax_ids` | Sí en línea | Primera línea con contenido |
-| `line` | Sí si `iva_pct` lo requiere | Sí | Primera línea (si header/mixed merge) |
-| `mixed` | Por fila según `iva_pct` | Sí | Primera línea con contenido |
+| Modo comprobante | IVA numérico en línea | Exento / No Gravado | Otros (IIBB, interno, …) |
+|------------------|----------------------|---------------------|---------------------------|
+| `header` | No en `tax_ids` | Sí en línea | Los de **esa** fila; header-only → 1ª contenido |
+| `line` | Sí si `iva_pct` lo requiere | Sí | Los de **esa** fila |
+| `mixed` | Por fila según `iva_pct` | Sí | Los de **esa** fila |
 
 Implementación:
 
 - `_filter_iva_tax_ids_for_row` + `iva_pct_requires_line_tax` (`padron/taxes.py`)
-- `_merge_comprobante_non_iva_tax_ids` + `_comprobante_non_iva_tax_ids`
+- `_merge_header_only_non_iva_tax_ids` + `_header_only_non_iva_tax_ids` (solo filas sin producto)
 
-### IIBB en primera línea
+### Otros impuestos por línea
 
-Percepciones a nivel comprobante (incluso en fila solo encabezado `__solo_encabezado`) se consolidan con `_comprobante_non_iva_tax_ids` y se añaden a la **primera fila con contenido** en modos header/mixed.
+Cada fila de producto lleva a Odoo los `otros_impuestos` / slots de **esa** fila. Si querés todo en una sola línea, usá «agregar más» en la UI sobre esa fila.
 
-Tests: `test_plan_line_tax_updates_puts_iibb_on_first_content_line`, `test_collect_expected_iibb_from_header_only_row`.
+Excepción: IIBB/otros en fila **solo encabezado** (`__solo_encabezado`) se agregan a la **primera línea con contenido**.
 
+Tests: `test_plan_line_tax_updates_puts_iibb_on_first_content_line`, `test_collect_expected_iibb_from_header_only_row`, `test_tax_ids_otros_respected_per_line`, `test_plan_line_tax_updates_salta_stomped_restores_otros_per_line`.
+
+**Importante:** el sync escribe `tax_ids` otra vez **después** de OC/precio (ver [pipeline.md](pipeline.md#paso-7--re-aplicar-tax_ids-post-oc--precio)); si no, Dinner puede pisar los impuestos de cada línea.
 ---
 
 ## `collect_expected_tax_amounts_from_group`
@@ -144,12 +147,15 @@ flowchart LR
   C --> D[batch write OC]
   D --> E[plan_product_price_quantity_reapply]
   E --> F[batch write precio]
-  F --> G[_apply_tax_line_amount_overwrites]
-  G --> H[ensure_missing_tax_lines]
-  H --> I[plan_tax_line_amount_overwrites]
-  I --> J[batch write montos tax]
+  F --> G[plan_line_tax_updates reapply]
+  G --> H[batch write tax_ids]
+  H --> I[_apply_tax_line_amount_overwrites]
+  I --> J[ensure_missing_tax_lines]
+  J --> K[plan_tax_line_amount_overwrites]
+  K --> L[batch write montos tax]
 ```
 
+Si el padrón o la UI asignan `otros_impuestos` distintos por fila, `_tax_ids_for_odoo_line` respeta **cada** fila; el **reapply** (G→H) corrige el stomp de Odoo tras OC/precio. IIBB en solo-encabezado se agrega a la 1ª línea de contenido.
 ---
 
 ## Tests relacionados

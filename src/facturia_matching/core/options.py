@@ -87,50 +87,33 @@ def strings_to_legacy_options(names: List[str]) -> List[Dict[str, Any]]:
 
 def otros_impuestos_options_from_odoo() -> Optional[List[str]]:
     """
-    Opciones de Otros impuestos desde el catálogo Odoo del perfil activo.
+    Todas las account.tax del tenant activo en el dropdown Otros impuestos.
 
-    1. Labels de OTROS_IMPUESTOS_OPTIONS que resuelven a un account.tax purchase
-       (un label por tax id; prefiere *Sufrida* si Sufrida/Aplicada comparten id).
-    2. Dinámico: cualquier otro impuesto purchase del tenant no cubierto arriba
-       (nombre Odoo), **incluidos los IVA** (p.ej. IVA 21%, Perc Gananc, Internal taxes).
+    Sin filtrar por lista canónica: un label por tax id (nombre Odoo, con
+    traducción ES para nombres EN tipo Internal taxes → Impuestos internos).
+    Orden alfabético.
     """
     from facturia_matching.padron.taxes import (
         display_otros_impuesto_label,
         get_tax_name_by_id,
-        resolve_tax_label_to_id,
     )
 
     name_by_id = get_tax_name_by_id()
     if not name_by_id:
         return None
 
-    by_tax_id: Dict[int, str] = {}
-    for label in OTROS_IMPUESTOS_OPTIONS:
-        tid = resolve_tax_label_to_id(label)
-        if tid is None:
-            continue
-        if tid not in by_tax_id or "Sufrida" in label:
-            by_tax_id[tid] = label
-
-    extras: List[str] = []
-    for tid, raw_name in sorted(
-        name_by_id.items(),
-        key=lambda item: display_otros_impuesto_label(item[1]).upper(),
-    ):
-        if tid in by_tax_id:
-            continue
+    by_label: Dict[str, str] = {}
+    for _tid, raw_name in name_by_id.items():
         name = display_otros_impuesto_label(raw_name)
         if not name:
             continue
-        by_tax_id[tid] = name
-        extras.append(name)
+        key = name.casefold()
+        if key not in by_label:
+            by_label[key] = name
 
-    if not by_tax_id:
+    if not by_label:
         return None
-
-    known = {label for label in by_tax_id.values() if label in OTROS_IMPUESTOS_OPTIONS}
-    ordered = [label for label in OTROS_IMPUESTOS_OPTIONS if label in known]
-    return ordered + extras
+    return sorted(by_label.values(), key=lambda s: s.casefold())
 
 
 def options_base_payload() -> Dict[str, Any]:

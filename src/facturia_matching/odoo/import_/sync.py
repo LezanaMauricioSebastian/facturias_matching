@@ -48,7 +48,8 @@ def sync_move_taxes_from_group(
     3. tax_ids en líneas de producto.
     4. Vínculos OC (purchase_line_id + product_id).
     5. Re-aplicar price_unit / quantity / product_uom_id (Odoo puede pisar precio/UM al vincular OC).
-    6. Montos en líneas display_type=tax — último paso (IVA / IIBB del pie de FacturIA).
+    6. Re-aplicar tax_ids (Odoo puede pisar impuestos al vincular OC / tocar precio).
+    7. Montos en líneas display_type=tax — último paso (IVA / IIBB del pie de FacturIA).
     """
     move_rows = odoo_execute_kw_with_config(
         config,
@@ -213,6 +214,27 @@ def sync_move_taxes_from_group(
         )
         warnings.extend(warnings_po_price)
 
+    # Odoo suele recalcular tax_ids al vincular OC o al re-aplicar precio; volver a
+    # concentrar no-IVA (IIBB / interno / perc) solo en la 1ª línea de producto.
+    tax_ids_reapply_updates: List[Dict[str, Any]] = []
+    product_lines = _get_move_product_lines(config, move_id)
+    planned_tax_reapply, warnings_tax_reapply = plan_line_tax_updates(product_lines, group)
+    warnings.extend(warnings_tax_reapply)
+    if planned_tax_reapply:
+        tax_reapply_batch = [
+            {
+                "line_id": item["line_id"],
+                "line_name": item.get("line_name"),
+                "write_vals": {"tax_ids": [(6, 0, item["new_tax_ids"])]},
+            }
+            for item in planned_tax_reapply
+        ]
+        tax_ids_reapply_updates = _batch_write_move_lines(
+            config, move_id, tax_reapply_batch, warnings, context="tax_ids"
+        )
+        # Mantener product_updates alineado al último estado de tax_ids.
+        product_updates = list(planned_tax_reapply)
+
     # Último paso: pisar montos IVA / IIBB tras cualquier recálculo de Odoo (OC, precio, tax_ids).
     tax_line_updates, warnings_amt, expected_amounts = _apply_tax_line_amount_overwrites(
         config,
@@ -232,6 +254,7 @@ def sync_move_taxes_from_group(
         "purchase_lines_updated": len(purchase_line_updates),
         "price_qty_reapply_updates": price_qty_reapply_updates,
         "po_price_overwrite_updates": po_price_overwrite_updates,
+        "tax_ids_reapply_updates": tax_ids_reapply_updates,
         "tax_lines_updated": len(tax_line_updates),
         "lines_updated": len(tax_line_updates),
         "product_updates": product_updates,

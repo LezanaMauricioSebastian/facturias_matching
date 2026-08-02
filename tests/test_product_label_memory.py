@@ -4,6 +4,7 @@ import unittest
 
 from facturia_matching.odoo.purchase_matching import match_invoice_row
 from facturia_matching.persistence.product_label_memory import (
+    MemoryChoice,
     build_product_memory_index,
     is_confirmed_product_choice,
     lookup_in_index,
@@ -35,7 +36,7 @@ class TestProductLabelMemory(unittest.TestCase):
         # Misma familia con formato distinto (6*6PET vs 06PET + cola).
         self.assertEqual(
             lookup_in_index(index, 1582, "SPRITE FX LS 500ML NR 6*6PET"),
-            620,
+            MemoryChoice(product_id=620),
         )
 
     def test_lookup_fuzzy_rejects_sin_gas_vs_con_gas(self):
@@ -91,7 +92,7 @@ class TestProductLabelMemory(unittest.TestCase):
         ]
         # conversion_row_lists: newest first
         index = build_product_memory_index([newer, older])
-        self.assertEqual(lookup_in_index(index, 42, "SPRITE"), 777)
+        self.assertEqual(lookup_in_index(index, 42, "SPRITE"), MemoryChoice(777))
 
     def test_propagates_partner_from_comprobante_header(self):
         rows = [
@@ -110,7 +111,57 @@ class TestProductLabelMemory(unittest.TestCase):
             },
         ]
         index = build_product_memory_index([rows])
-        self.assertEqual(lookup_in_index(index, "42", "SPRITE"), 555)
+        self.assertEqual(lookup_in_index(index, "42", "SPRITE"), MemoryChoice(555))
+
+    def test_match_invoice_row_learned_applies_uom(self):
+        """Memoria con uom_id stampa esa UM (sin re-escalar qty)."""
+        row = {
+            "invoice_line_ids/name": "SPRITE",
+            "invoice_line_ids/quantity": "10",
+            "__um_proveedor": "Units",
+        }
+        pack = {
+            "id": 99,
+            "name": "pack (12 unidades)",
+            "category_id": [1, "Unidad"],
+            "factor": 12.0,
+        }
+        units = {"id": 1, "name": "Units", "category_id": [1, "Unidad"], "factor": 1.0}
+        catalog = {
+            "by_id": {1: units, 99: pack},
+            "by_name": {"UNITS": [units], "PACK (12 UNIDADES)": [pack]},
+        }
+        with patch(
+            "facturia_matching.odoo.purchase_matching._product_default_uom_id",
+            return_value=1,
+        ):
+            out = match_invoice_row(
+                row,
+                [],
+                catalog,
+                learned_product_id=620,
+                learned_uom_id=99,
+            )
+        self.assertEqual(row.get("invoice_line_ids/product_id"), "620")
+        self.assertEqual(out.get("__um_empresa_id"), "99")
+        self.assertEqual(out.get("__um_empresa"), "pack (12 unidades)")
+        self.assertEqual(row.get("invoice_line_ids/quantity"), "10")
+        self.assertEqual(out.get("__product_suggested"), "memory")
+
+    def test_index_stores_uom_from_confirmed_row(self):
+        rows = [
+            {
+                "partner_id": "42",
+                "invoice_line_ids/name": "SPRITE",
+                "invoice_line_ids/product_id": "620",
+                "__um_empresa_id": "99",
+                "__product_suggested": "",
+                "__comprobante_idx": 0,
+            }
+        ]
+        index = build_product_memory_index([rows])
+        choice = lookup_in_index(index, 42, "SPRITE")
+        self.assertEqual(choice, MemoryChoice(product_id=620, uom_id=99))
 
     def test_match_invoice_row_prefers_learned_over_fuzzy(self):
         row = {
@@ -213,6 +264,113 @@ class TestProductLabelMemory(unittest.TestCase):
         self.assertEqual(out.get("__product_suggested"), "memory")
         self.assertEqual(out.get("__oc_line_id"), "1")
 
+    def test_match_invoice_row_learned_links_oc_by_product_despite_label(self):
+        """Memoria + mismo product_id en OC vincula aunque la etiqueta no matchee."""
+        row = {
+            "invoice_line_ids/name": "SPRITE FX LS 500ML NR 06PET",
+            "__item_codigo": "",
+            "invoice_line_ids/quantity": "10",
+            "__um_proveedor": "UN",
+        }
+        po_lines = [
+            {
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 10,
+                "product_id": 620,
+                "order_name": "P05000",
+                "order_id": 50,
+                "line_id": 501,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 1,
+                "product_uom_name": "Units",
+            }
+        ]
+        out = match_invoice_row(
+            row,
+            po_lines,
+            {"by_name": {}, "by_id": {}},
+            learned_product_id=620,
+        )
+        self.assertEqual(row.get("invoice_line_ids/product_id"), "620")
+        self.assertEqual(out.get("__product_suggested"), "memory")
+        self.assertEqual(out.get("__oc_line_id"), "501")
+        self.assertEqual(out.get("__oc_order_id"), "50")
+
+    def test_match_invoice_row_learned_picks_best_label_among_same_product(self):
+        """Varias líneas OC con el mismo producto: gana la de mejor etiqueta."""
+        row = {
+            "invoice_line_ids/name": "SPRITE FX LS 500ML",
+            "invoice_line_ids/quantity": "5",
+        }
+        po_lines = [
+            {
+                "line_name": "COCA COLA 600ML",
+                "product_qty": 5,
+                "product_id": 620,
+                "order_name": "P1",
+                "order_id": 1,
+                "line_id": 10,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 1,
+                "product_uom_name": "Units",
+            },
+            {
+                "line_name": "SPRITE FX LS 500ML NR",
+                "product_qty": 5,
+                "product_id": 620,
+                "order_name": "P1",
+                "order_id": 1,
+                "line_id": 11,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 1,
+                "product_uom_name": "Units",
+            },
+        ]
+        out = match_invoice_row(
+            row,
+            po_lines,
+            {"by_name": {}, "by_id": {}},
+            learned_product_id=620,
+        )
+        self.assertEqual(out.get("__oc_line_id"), "11")
+
+    def test_match_invoice_row_learned_no_oc_when_product_absent(self):
+        """Sin línea OC con el product_id aprendido: solo memoria, sin vínculo."""
+        row = {
+            "invoice_line_ids/name": "HONGOS SECOS X KG",
+            "invoice_line_ids/quantity": "1",
+        }
+        po_lines = [
+            {
+                "line_name": "TOMATE TRITURADO",
+                "product_qty": 1,
+                "product_id": 818,
+                "order_name": "P2",
+                "order_id": 2,
+                "line_id": 20,
+                "partner_ref": "",
+                "qty_received": 0,
+                "qty_invoiced": 0,
+                "product_uom_id": 1,
+                "product_uom_name": "Units",
+            }
+        ]
+        out = match_invoice_row(
+            row,
+            po_lines,
+            {"by_name": {}, "by_id": {}},
+            learned_product_id=999,
+        )
+        self.assertEqual(row.get("invoice_line_ids/product_id"), "999")
+        self.assertEqual(out.get("__product_suggested"), "memory")
+        self.assertFalse(out.get("__oc_line_id"))
+
     def test_duplicate_oc_line_falls_back_to_memory(self):
         """Si la línea OC ya está usada, no dejar vacío: aplicar memoria."""
         from facturia_matching.odoo.purchase_matching import _match_comprobante_rows
@@ -286,6 +444,7 @@ class TestProductLabelMemory(unittest.TestCase):
                 "partner_id": "1582",
                 "invoice_line_ids/name": "SPRITE",
                 "invoice_line_ids/product_id": "620",
+                "__um_empresa_id": "12",
                 "__product_suggested": "",
                 "__comprobante_idx": 0,
             },
@@ -304,12 +463,14 @@ class TestProductLabelMemory(unittest.TestCase):
         self.assertEqual(cur.execute.call_count, 1)
         sql = cur.execute.call_args[0][0]
         self.assertIn("ON DUPLICATE KEY UPDATE", sql)
+        self.assertIn("uom_id", sql)
         args = cur.execute.call_args[0][1]
         self.assertEqual(args[0], 1)
         self.assertEqual(args[1], 99)
         self.assertEqual(args[2], 1582)
         self.assertEqual(args[3], "SPRITE")
         self.assertEqual(args[4], 620)
+        self.assertEqual(args[5], 12)
 
     @patch("facturia_matching.persistence.product_label_memory._seed_table_from_conversions")
     @patch("facturia_matching.persistence.product_label_memory.fetch_memory_index_from_table")
@@ -317,9 +478,9 @@ class TestProductLabelMemory(unittest.TestCase):
         from facturia_matching.persistence import product_label_memory as mem
 
         mock_fetch.return_value = {}
-        mock_seed.return_value = {(1582, "SPRITE"): 620}
+        mock_seed.return_value = {(1582, "SPRITE"): MemoryChoice(620)}
         index = mem.build_memory_index_for_company(1, template_id=99)
-        self.assertEqual(index[(1582, "SPRITE")], 620)
+        self.assertEqual(index[(1582, "SPRITE")].product_id, 620)
         mock_seed.assert_called_once()
 
 

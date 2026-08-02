@@ -33,7 +33,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
 | `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados |
-| `test_purchase_matching.py` | Candidatos OC bajo demanda, factura sin líneas, conservar OC ante fetch vacío / tras reload (pastilla searched), solo encabezado con OC guardada, Sin OC sin perder selector, rematch dinámico por proveedor |
+| `test_purchase_matching.py` | Candidatos OC bajo demanda (**todas** las OC del partner, sin tope 12), notas Dinner qty=0 bajo `[CÓDIGO]`, factura sin líneas, conservar OC ante fetch vacío / tras reload (pastilla searched), solo encabezado con OC guardada, Sin OC sin perder selector, rematch dinámico por proveedor |
 | `test_comprobante_tax.py` | `collect_expected_*`, `_tax_ids_for_odoo_line` con modos IVA |
 | `test_iva_tax_resolve.py` | Resolución tax id Dinner vs Aliare |
 | `test_tax_pipeline.py` | Pipeline fiscal → montos esperados |
@@ -114,11 +114,15 @@ assert updates[0]["new_tax_ids"] == [63, 27]
 | IIBB en fila encabezado | `test_collect_expected_iibb_from_header_only_row` | [impuestos.md](impuestos.md) |
 | Precio tras OC | `test_plan_product_price_quantity_reapply_po_price_differs` | [purchase-oc.md](purchase-oc.md) |
 | UM tras match | `test_build_line_command_includes_matched_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_apply_uom_scaling_kg_collision_uses_target_category`, `test_apply_uom_scaling_oc_custom_pack_from_kg_invoice`, `test_match_invoice_row_oc_uses_product_purchase_uom_not_po_line` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
-| UM elegida a mano | `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
+| UM elegida a mano | `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom`, `test_enrich_preserves_saved_manual_uom_on_reload`, `test_match_invoice_row_keeps_confirmed_product_and_saved_uom` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
+| Remap no pisa diario/rubro/cuenta válidos | `test_keeps_valid_journal_rubro_account_despite_padron` | [arquitectura.md](../arquitectura.md) |
+| Reapply precio UI ≠ PO (packs) | `test_plan_product_price_quantity_reapply_salta_pack_lines_ui_vs_po`, `test_plan_product_price_quantity_reapply_shared_oc_line_falls_back_to_index` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | Sugerencia fuzzy sin rescale / sin falso positivo | `test_suggest_product_does_not_rescale_pack_qty_as_kg`, `test_line_match_score_rejects_tomate_seco_vs_triturado` | [purchase-oc.md](purchase-oc.md#sugerencia-de-producto-por-fuzzy-sin-vincular-oc) |
-| Aprendizaje producto (tabla `product_label_memory`) | `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_upsert_*` | [purchase-oc.md](purchase-oc.md#aprendizaje-de-producto-procesos-pasados) |
+| Aprendizaje producto + UM (`product_label_memory`) | `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_applies_uom`, `test_upsert_*` | [purchase-oc.md](purchase-oc.md#aprendizaje-de-producto-procesos-pasados) |
 | Ref domain sin latam stored | `test_find_existing_move_uses_ref_domain_not_latam_field` | [pipeline.md](pipeline.md) |
 | Reconcile preserva pie mixed | `test_reconcile_preserves_footer_iva_montos_in_mixed_mode` | [impuestos.md](impuestos.md) |
+| Monto IVA sobrevive F5 (no migración legacy) | `migrateLegacyComprobanteIva keeps modern line Monto IVA (PDF Salta reload)` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
+| Otros del pie repartidos por fila asignada | `distributes footer amount proportional…` / `puts full amount on the only row…` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 
 ---
 

@@ -23,7 +23,18 @@ import {
   clearFacIvaFooter,
   allContentLinesExplicitZeroIva,
 } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
+import {
+  computeOtrosBreakdown,
+  ensureOtrosLabelOnFirstRow,
+  setOtrosFooterAmount,
+  missingFacOtrosAssignments,
+} from "../../src/facturia_matching/static/js/comprobanteTax/otrosBreakdown.js";
 import { migrateLegacyComprobanteIva, migrateFacIvaMontos, propagateSingleFooterIvaToLines } from "../../src/facturia_matching/static/js/comprobanteTax/migration.js";
+import {
+  computeRowTotal,
+  clearStickyLineIvaOnPriceQtyEdit,
+} from "../../src/facturia_matching/static/js/rows/totals.js";
+import { toNumberLoose } from "../../src/facturia_matching/static/js/utils/index.js";
 
 describe("classifyComprobanteTaxMode (fixtures)", () => {
   for (const scenario of loadTaxScenarios()) {
@@ -55,8 +66,8 @@ describe("editability matrix", () => {
     assert.equal(footerIvaEditable("header"), true);
   });
 
-  it("mixed mode: column hidden, footer editable", () => {
-    assert.equal(showIvaMontoColumn("mixed"), false);
+  it("mixed mode: column visible, footer editable", () => {
+    assert.equal(showIvaMontoColumn("mixed"), true);
     assert.equal(footerIvaEditable("mixed"), true);
   });
 });
@@ -127,6 +138,37 @@ describe("migrations", () => {
     assert.equal(rows[0].iva_monto, "");
     assert.equal(rows[0].__iva_monto_manual, undefined);
     assert.equal(rows[1].iva_monto, "");
+  });
+
+  it("migrateLegacyComprobanteIva keeps modern line Monto IVA (PDF Salta reload)", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "COCA",
+        "invoice_line_ids/quantity": "10",
+        "invoice_line_ids/price_unit": "11658.03",
+        iva_pct: "21",
+        iva_monto: "24481.86",
+        __iva_monto_manual: true,
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "SPRITE",
+        "invoice_line_ids/quantity": "4",
+        "invoice_line_ids/price_unit": "5033.29",
+        iva_pct: "21",
+        iva_monto: "4227.96",
+        __iva_monto_manual: true,
+      },
+    ];
+    migrateLegacyComprobanteIva(rows);
+    assert.equal(rows[0].iva_monto, "24481.86");
+    assert.equal(rows[0].__iva_monto_manual, true);
+    assert.equal(rows[1].iva_monto, "4227.96");
+    assert.equal(rows[1].__iva_monto_manual, true);
+    const mode = classifyComprobanteTaxMode(rows);
+    assert.ok(mode === "line" || mode === "mixed", `mode=${mode}`);
+    assert.equal(showIvaMontoColumn(mode, false), true);
   });
 
   it("migrateFacIvaMontos infers multi-rate from lines", () => {
@@ -462,5 +504,375 @@ describe("otros impuestos footer visibility", () => {
   it("visible when amount is positive even without selection label", () => {
     const rows = [{ otros_impuestos: "", otros_impuestos_monto: "150" }];
     assert.equal(shouldShowOtrosFooter(rows, { otros: 150 }), true);
+  });
+
+  it("visible with FacturIA percepciones meta even if slots empty in totals", () => {
+    const rows = [
+      {
+        otros_impuestos: "",
+        otros_impuestos_monto: "",
+        __fac_percepciones: [{ amount_key: "percepcion_iibb", monto: "33447.37", ui_monto_key: "otros_impuestos_monto" }],
+      },
+    ];
+    assert.equal(shouldShowOtrosFooter(rows, { otros: 0 }), true);
+  });
+});
+
+describe("otros impuestos named footer breakdown", () => {
+  it("shows provisional IIBB label from FacturIA when slot has amount without label", () => {
+    const rows = [
+      {
+        otros_impuestos: "",
+        otros_impuestos_monto: "33447,37",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "33447,37", ui_monto_key: "otros_impuestos_monto" },
+        ],
+      },
+    ];
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 1);
+    assert.equal(breakdown[0].label, "IIBB");
+    assert.ok(Math.abs(breakdown[0].amount - 33447.37) <= 0.02);
+    assert.equal(breakdown[0].slotN, 1);
+  });
+
+  it("shows all FacturIA otros in footer with no line tax selected", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "COCA",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "",
+        __fac_subtotal: "250545.47",
+        __fac_iva_monto: "52614.54",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "7791.70", ui_monto_key: "otros_impuestos_monto" },
+          { amount_key: "percepcion_iva", monto: "7516.36", ui_monto_key: "otros_impuestos_2_monto" },
+          { amount_key: "otros_tributos", monto: "18139.31", ui_monto_key: "otros_impuestos_3_monto" },
+        ],
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "SPRITE",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "50",
+        otros_impuestos: "",
+      },
+    ];
+    assert.equal(shouldShowOtrosFooter(rows, { otros: 0 }), true);
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 3);
+    assert.equal(breakdown[0].label, "IIBB");
+    assert.equal(breakdown[1].label, "Percepción IVA");
+    assert.equal(breakdown[2].label, "Otros tributos");
+    assert.ok(Math.abs(breakdown[0].amount - 7791.7) <= 0.02);
+    assert.ok(Math.abs(breakdown[1].amount - 7516.36) <= 0.02);
+    assert.ok(Math.abs(breakdown[2].amount - 18139.31) <= 0.02);
+    const totals = computeComprobanteTotals(rows);
+    assert.ok(Math.abs(totals.otros - (7791.7 + 7516.36 + 18139.31)) <= 0.05);
+  });
+
+  it("does not add empty pie row for unrelated tax without editing first line", () => {
+    const rows = [
+      {
+        otros_impuestos: "",
+        otros_impuestos_monto: "33447,37",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "33447,37", ui_monto_key: "otros_impuestos_monto" },
+        ],
+      },
+    ];
+    assert.equal(ensureOtrosLabelOnFirstRow(rows, "Impuesto Interno"), null);
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 1);
+    assert.equal(breakdown[0].label, "IIBB");
+  });
+
+  it("fills slot 2 on first line only when that line gets a second tax", () => {
+    const rows = [
+      {
+        otros_impuestos: "Percepción IIBB Chaco Sufrida",
+        otros_impuestos_monto: "100",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "100", ui_monto_key: "otros_impuestos_monto" },
+        ],
+      },
+    ];
+    const slotN = ensureOtrosLabelOnFirstRow(rows, "Impuesto Interno", {
+      selectedRow: rows[0],
+    });
+    assert.equal(slotN, 2);
+    assert.equal(rows[0].otros_impuestos_2, "Impuesto Interno");
+    assert.equal(String(rows[0].otros_impuestos), "Percepción IIBB Chaco Sufrida");
+  });
+
+  it("claims otros_tributos FacturIA when selecting Impuesto Interno (no empty duplicate)", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "COCA",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "",
+        otros_impuestos_monto: "7791.70",
+        otros_impuestos_2_monto: "7516.36",
+        otros_impuestos_3_monto: "18139.31",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "7791.70", ui_monto_key: "otros_impuestos_monto" },
+          { amount_key: "percepcion_iva", monto: "7516.36", ui_monto_key: "otros_impuestos_2_monto" },
+          { amount_key: "otros_tributos", monto: "18139.31", ui_monto_key: "otros_impuestos_3_monto" },
+        ],
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "AGUA",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "50",
+        otros_impuestos: "Impuesto Interno",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "SPRITE",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "40",
+        otros_impuestos: "Percepción IVA Sufrida",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "FANTA",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "30",
+        otros_impuestos: "Percepción IIBB Chaco Sufrida",
+      },
+    ];
+    rows[0].otros_impuestos_4 = "Impuesto Interno";
+    rows[0].__otros_pie_mirror_4 = true;
+
+    const breakdown = computeOtrosBreakdown(rows);
+    // Pie = FacturIA (provisional), no renombra a labels Odoo
+    assert.equal(breakdown[0].label, "IIBB");
+    assert.equal(breakdown[1].label, "Percepción IVA");
+    assert.equal(breakdown[2].label, "Otros tributos");
+    assert.equal(String(rows[0].otros_impuestos_4 ?? "").trim(), "");
+    assert.equal(missingFacOtrosAssignments(rows).length, 0);
+  });
+
+  it("warns when FacturIA taxes are not assigned on lines", () => {
+    const rows = [
+      {
+        otros_impuestos: "",
+        otros_impuestos_monto: "10",
+        otros_impuestos_2_monto: "20",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "10", ui_monto_key: "otros_impuestos_monto" },
+          { amount_key: "otros_tributos", monto: "20", ui_monto_key: "otros_impuestos_2_monto" },
+        ],
+      },
+      { otros_impuestos: "Percepción IIBB Chaco Sufrida" },
+    ];
+    const missing = missingFacOtrosAssignments(rows);
+    assert.deepEqual(missing, ["Otros tributos"]);
+  });
+
+  it("keeps FacturIA pie label when line has Odoo tax (pie ≠ líneas)", () => {
+    const rows = [
+      {
+        otros_impuestos: "Percepción IIBB Chaco Sufrida",
+        otros_impuestos_monto: "100",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "100", ui_monto_key: "otros_impuestos_monto" },
+        ],
+      },
+    ];
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 1);
+    assert.equal(breakdown[0].label, "IIBB");
+    assert.ok(Math.abs(breakdown[0].amount - 100) <= 0.02);
+    assert.equal(missingFacOtrosAssignments(rows).length, 0);
+  });
+
+  it("setOtrosFooterAmount writes one slot without wiping others", () => {
+    const rows = [
+      {
+        otros_impuestos: "IIBB",
+        otros_impuestos_monto: "100",
+        otros_impuestos_2: "Impuesto Interno",
+        otros_impuestos_2_monto: "50",
+      },
+    ];
+    setOtrosFooterAmount(rows, 2, "75,5");
+    assert.equal(rows[0].otros_impuestos_monto, "100");
+    assert.equal(rows[0].otros_impuestos_2_monto, "75,5");
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 2);
+    assert.ok(Math.abs(breakdown[1].amount - 75.5) <= 0.02);
+  });
+
+  it("distributes footer amount proportional to base among assigned rows", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "A",
+        "invoice_line_ids/quantity": "3",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "IIBB",
+        otros_impuestos_monto: "",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "B",
+        "invoice_line_ids/quantity": "2",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "IIBB",
+        otros_impuestos_monto: "",
+      },
+    ];
+    setOtrosFooterAmount(rows, 1, "100");
+    assert.ok(Math.abs(toNumberLoose(rows[0].otros_impuestos_monto) - 60) <= 0.02);
+    assert.ok(Math.abs(toNumberLoose(rows[1].otros_impuestos_monto) - 40) <= 0.02);
+    const breakdown = computeOtrosBreakdown(rows);
+    assert.equal(breakdown.length, 1);
+    assert.ok(Math.abs(breakdown[0].amount - 100) <= 0.02);
+    assert.ok(Math.abs(computeRowTotal(rows[0], "header") - (300 + 60)) <= 0.02);
+    assert.ok(Math.abs(computeRowTotal(rows[1], "header") - (200 + 40)) <= 0.02);
+  });
+
+  it("puts full amount on the only row that has the tax assigned", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "A",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "IVA No Gravado",
+        otros_impuestos_monto: "",
+        otros_impuestos_3_monto: "18139.31",
+        __fac_percepciones: [
+          { amount_key: "otros_tributos", monto: "18139.31", ui_monto_key: "otros_impuestos_3_monto" },
+        ],
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "B",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "Percepción IVA Sufrida",
+        otros_impuestos_monto: "",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "C",
+        "invoice_line_ids/quantity": "5",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "Impuesto Interno",
+        otros_impuestos_monto: "",
+      },
+    ];
+    // Slot FacturIA 3 = Otros tributos → se reparte a líneas con Impuesto Interno
+    setOtrosFooterAmount(rows, 3, "18139.31");
+    assert.ok(Math.abs(toNumberLoose(rows[2].otros_impuestos_monto) - 18139.31) <= 0.02);
+    const breakdown = computeOtrosBreakdown(rows);
+    const tributos = breakdown.find((b) => b.label === "Otros tributos");
+    assert.ok(tributos);
+    assert.ok(Math.abs(tributos.amount - 18139.31) <= 0.02);
+    assert.equal(missingFacOtrosAssignments(rows).length, 0);
+  });
+
+  it("does not fill first-row cols 2/3 from other lines' taxes", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "A",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "Percepción IIBB Chaco Sufrida",
+        otros_impuestos_monto: "10",
+        otros_impuestos_2_monto: "20",
+        otros_impuestos_3_monto: "30",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "10", ui_monto_key: "otros_impuestos_monto" },
+          { amount_key: "percepcion_iva", monto: "20", ui_monto_key: "otros_impuestos_2_monto" },
+          { amount_key: "otros_tributos", monto: "30", ui_monto_key: "otros_impuestos_3_monto" },
+        ],
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "B",
+        otros_impuestos: "Percepción IVA Sufrida",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "C",
+        otros_impuestos: "Impuesto Interno",
+      },
+    ];
+    computeOtrosBreakdown(rows);
+    assert.equal(String(rows[0].otros_impuestos_2 ?? "").trim(), "");
+    assert.equal(String(rows[0].otros_impuestos_3 ?? "").trim(), "");
+    assert.equal(rows[0].otros_impuestos, "Percepción IIBB Chaco Sufrida");
+    const labels = computeOtrosBreakdown(rows).map((b) => b.label);
+    assert.deepEqual(labels, ["IIBB", "Percepción IVA", "Otros tributos"]);
+  });
+
+  it("falls back to first content row when no line has the tax assigned", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "A",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "100",
+        otros_impuestos: "",
+        otros_impuestos_monto: "",
+        __fac_percepciones: [
+          { amount_key: "percepcion_iibb", monto: "50", ui_monto_key: "otros_impuestos_monto" },
+        ],
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/name": "B",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "200",
+        otros_impuestos: "",
+        otros_impuestos_monto: "",
+      },
+    ];
+    // Slot 1 provisional IIBB sin label en líneas → 1ª contenido
+    setOtrosFooterAmount(rows, 1, "7791.70");
+    assert.ok(Math.abs(toNumberLoose(rows[0].otros_impuestos_monto) - 7791.7) <= 0.02);
+    assert.equal(String(rows[1].otros_impuestos_monto ?? "").trim(), "");
+  });
+});
+
+describe("sticky iva_monto on price edit (PDF Salta)", () => {
+  it("after clearSticky + price change, iva follows suggested %", () => {
+    const row = {
+      iva_pct: "21%",
+      "invoice_line_ids/quantity": "5",
+      "invoice_line_ids/price_unit": "8628,49",
+      iva_monto: "9059,91",
+    };
+    computeRowTotal(row, "line");
+    assert.ok(Math.abs(toNumberLoose(row.iva_monto) - 9059.91) <= 0.05);
+
+    row["invoice_line_ids/price_unit"] = "10799,93";
+    clearStickyLineIvaOnPriceQtyEdit(row);
+    computeRowTotal(row, "line");
+    const expected = Math.round(5 * 10799.93 * 0.21 * 100) / 100;
+    assert.ok(Math.abs(toNumberLoose(row.iva_monto) - expected) <= 0.05);
+  });
+
+  it("keeps manual iva_monto after price change", () => {
+    const row = {
+      iva_pct: "21%",
+      "invoice_line_ids/quantity": "5",
+      "invoice_line_ids/price_unit": "8628,49",
+      iva_monto: "1000",
+      __iva_monto_manual: true,
+    };
+    row["invoice_line_ids/price_unit"] = "10799,93";
+    clearStickyLineIvaOnPriceQtyEdit(row);
+    computeRowTotal(row, "line");
+    assert.ok(Math.abs(toNumberLoose(row.iva_monto) - 1000) <= 0.02);
   });
 });

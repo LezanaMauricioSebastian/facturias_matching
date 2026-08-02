@@ -388,7 +388,7 @@ def odoo_search_read(
     model: str,
     domain: Optional[List[Any]] = None,
     fields: Optional[List[str]] = None,
-    limit: int = 500,
+    limit: Any = 500,
     order: Optional[str] = None,
     *,
     config: Optional[Dict[str, Any]] = None,
@@ -396,6 +396,7 @@ def odoo_search_read(
 ) -> List[Dict[str, Any]]:
     cfg = config or get_active_odoo_config()
     domain = domain if domain is not None else []
+    # limit=False → sin tope en Odoo (p.ej. todas las OC del proveedor).
     kwargs: Dict[str, Any] = {"fields": fields or ["id", "name"], "limit": limit}
     if order:
         kwargs["order"] = order

@@ -106,11 +106,11 @@ Por cada línea de factura, el matching **no** busca en todo el catálogo de Odo
 flowchart TD
   start([Línea de factura]) --> hasPartner{¿Proveedor Odoo?}
   hasPartner -->|No| empty1[Producto vacío<br/>Sin proveedor Odoo]
-  hasPartner -->|Sí| mem{¿Memoria<br/>partner + etiqueta exacta?}
-  mem -->|Sí| sugMem[Producto aprendido<br/>exacto o fuzzy ≥88<br/>naranja]
-  sugMem --> sameOc{¿OC seleccionada con<br/>el mismo product_id?}
-  sameOc -->|Sí| memPlusOc[Memoria + vínculo OC]
-  sameOc -->|No| memOnly[Solo memoria<br/>sin vínculo OC]
+  hasPartner -->|Sí| mem{¿Memoria<br/>partner + etiqueta?}
+  mem -->|Sí| sugMem[Producto + UM aprendidos<br/>exacto o fuzzy ≥88<br/>naranja]
+  sugMem --> samePid{¿OC seleccionada con<br/>línea del mismo product_id?}
+  samePid -->|Sí| memPlusOc[Memoria + vínculo OC<br/>producto↔producto]
+  samePid -->|No| memOnly[Solo memoria<br/>sin vínculo OC]
   mem -->|No| fetchOC[Cargar líneas OC del proveedor]
   fetchOC --> hasOCs{¿El proveedor tiene OCs?}
   hasOCs -->|No| empty2[Producto vacío]
@@ -124,7 +124,7 @@ flowchart TD
   fuzzy -->|No| empty3[Producto vacío]
 ```
 
-Orden corto: **memoria (elección confirmada) → OC vinculada → fuzzy de OCs del proveedor → vacío**.
+Orden corto: **memoria → vínculo OC por mismo product_id (si no, etiqueta) → fuzzy de OCs del proveedor → vacío**.
 
 ## Índice de documentos
 

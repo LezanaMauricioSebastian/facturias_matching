@@ -9,7 +9,10 @@ from urllib.parse import urlparse
 import requests
 
 from facturia_matching.infra.env import env_strip as _env_strip
-from facturia_matching.odoo.request_context import get_request_odoo_profile
+from facturia_matching.odoo.request_context import (
+    get_request_empresa,
+    get_request_odoo_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,15 +284,94 @@ def _sudata_secret() -> Tuple[str, str]:
     return "", "none"
 
 
+def _normalize_endpoint(raw: str) -> str:
+    ep = (raw or "").strip() or "/jsonrpc"
+    if "xmlrpc" in ep.lower():
+        return "jsonrpc"
+    return ep.lstrip("/") or "jsonrpc"
+
+
+def _config_from_credential_map(kv: Dict[str, str], *, company_id: Any) -> Dict[str, Any]:
+    """Arma el dict de config Odoo desde keys estilo ODOO_* de company_erp_credential_configs.
+
+    `ODOO_DB` de MySQL se pasa a `resolve_odoo_db_name`: si existe en el host se usa;
+    si está stale (típico Odoo.sh) se descarta y se deduce por list / auth / hostname.
+    En hosts sin `db.list()` (p. ej. Aliare/CloudPepper) el valor de la tabla es necesario.
+    """
+    base_url = (kv.get("ODOO_BASE_URL") or "").rstrip("/")
+    password = (kv.get("ODOO_PASSWORD") or kv.get("ODOO_API_KEY") or "").strip()
+    uid_raw = (kv.get("ODOO_USER_ID") or "").strip()
+    uid = _parse_odoo_uid(uid_raw)
+    login = (kv.get("ODOO_USER") or "").strip()
+    if not login and "@" in uid_raw:
+        login = uid_raw
+    endpoint = _normalize_endpoint(kv.get("ODOO_ENDPOINT") or "/jsonrpc")
+    return {
+        "base_url": base_url,
+        "endpoint": endpoint,
+        "db": resolve_odoo_db_name(
+            base_url,
+            (kv.get("ODOO_DB") or "").strip(),
+            login=login,
+            password=password,
+        ),
+        "uid": uid,
+        "login": login,
+        "password": password,
+        "credential_source": "company_erp_credentials",
+        "company_id": int(company_id) if str(company_id).strip().isdigit() else company_id,
+    }
+
+
+def _try_mysql_odoo_config(
+    company_id: Any,
+    profile: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Preferir MySQL si hay credencial para la empresa y no choca con un perfil
+    explícito distinto al mapeado (ej. empresa=1 Dinner + perfil=aliare → .env Aliare).
+    """
+    if company_id is None or str(company_id).strip() == "":
+        return None
+
+    from facturia_matching.odoo.empresa_profile import resolve_odoo_profile_from_empresa
+    from facturia_matching.persistence.company_erp_credentials import (
+        fetch_company_odoo_credential_map,
+    )
+
+    mapped = resolve_odoo_profile_from_empresa(company_id)
+    if mapped is not None and mapped != profile:
+        logger.debug(
+            "Skip MySQL Odoo creds company_id=%s mapped=%s active_profile=%s",
+            company_id,
+            mapped,
+            profile,
+        )
+        return None
+    kv = fetch_company_odoo_credential_map(company_id)
+    if not kv:
+        return None
+    cfg = _config_from_credential_map(kv, company_id=company_id)
+    if not (cfg.get("base_url") and cfg.get("password") and (cfg.get("uid") is not None or cfg.get("login"))):
+        logger.warning(
+            "company_erp_credentials incompletas para company_id=%s (falta url/password/login)",
+            company_id,
+        )
+        return None
+    return cfg
+
+
 def _build_dinner_config() -> Dict[str, Any]:
     uid_raw = _env_strip("ODOO_USER_ID")
     uid = _parse_odoo_uid(uid_raw)
     password = _env_strip("ODOO_PASSWORD") or _env_strip("ODOO_API_KEY")
     base_url = _env_strip("ODOO_BASE_URL", "https://dinner.odoo.com").rstrip("/")
     login = _env_strip("ODOO_USER")
+    if not login and "@" in uid_raw:
+        login = uid_raw
     return {
         "base_url": base_url,
-        "endpoint": (_env_strip("ODOO_ENDPOINT", "/jsonrpc").lstrip("/") or "jsonrpc"),
+        "endpoint": _normalize_endpoint(_env_strip("ODOO_ENDPOINT", "/jsonrpc")),
         "db": resolve_odoo_db_name(
             base_url,
             _env_strip("ODOO_DB"),
@@ -299,6 +381,7 @@ def _build_dinner_config() -> Dict[str, Any]:
         "uid": uid,
         "login": login,
         "password": password,
+        "credential_source": "env",
     }
 
 
@@ -319,6 +402,7 @@ def _build_aliare_config() -> Dict[str, Any]:
         "uid": uid,
         "login": login,
         "password": secret,
+        "credential_source": "env",
     }
 
 
@@ -339,11 +423,20 @@ def _build_sudata_config() -> Dict[str, Any]:
         "uid": uid,
         "login": login,
         "password": secret,
+        "credential_source": "env",
     }
 
 
-def build_odoo_main_config(profile: Optional[str] = None) -> Dict[str, Any]:
+def build_odoo_main_config(
+    profile: Optional[str] = None,
+    company_id: Optional[Any] = None,
+) -> Dict[str, Any]:
     profile = profile or resolve_odoo_profile()
+    if company_id is None:
+        company_id = get_request_empresa()
+    mysql_cfg = _try_mysql_odoo_config(company_id, profile)
+    if mysql_cfg:
+        return mysql_cfg
     if profile == "aliare":
         return _build_aliare_config()
     if profile == "sudata":
@@ -351,9 +444,16 @@ def build_odoo_main_config(profile: Optional[str] = None) -> Dict[str, Any]:
     return _build_dinner_config()
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=32)
+def _cached_odoo_main_config(profile: str, company_key: str) -> Dict[str, Any]:
+    company_id: Optional[str] = company_key or None
+    return build_odoo_main_config(profile, company_id=company_id)
+
+
 def get_odoo_main_config(profile: str) -> Dict[str, Any]:
-    return build_odoo_main_config(profile)
+    empresa = get_request_empresa()
+    company_key = str(empresa).strip() if empresa is not None else ""
+    return _cached_odoo_main_config(profile, company_key)
 
 
 def build_odoo_import_config(profile: Optional[str] = None) -> Dict[str, Any]:

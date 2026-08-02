@@ -72,8 +72,9 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
     """
     Ajusta partner_id y otros IDs Odoo de filas persistidas al catálogo del tenant actual.
 
-    Usa CUIT / nombre de proveedor y padrón para rubro, diario y cuenta cuando el ID
-  guardado no existe en el catálogo activo (cambio de empresa / perfil Odoo).
+    Remapea rubro / diario / cuenta solo cuando el ID guardado está vacío o no existe
+    en el catálogo activo (cambio de empresa / perfil). No re-aplica el padrón sobre
+    IDs válidos elegidos por el operador.
     """
     if not rows:
         return rows
@@ -130,7 +131,7 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
         )
 
         old_journal = _str_id(header.get("journal_id"))
-        if matched_diario or (old_journal and old_journal not in valid_journals):
+        if not old_journal or old_journal not in valid_journals:
             new_journal = resolve_id_fuzzy(
                 matched_diario,
                 journals_odoo,
@@ -142,7 +143,7 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
 
         if supports_rubro_field():
             old_rubro = _str_id(header.get("x_studio_category"))
-            if matched_rubro or (old_rubro and old_rubro not in valid_rubros):
+            if not old_rubro or old_rubro not in valid_rubros:
                 new_rubro = resolve_id_fuzzy(
                     matched_rubro,
                     rubros_odoo,
@@ -156,7 +157,7 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
                 row["x_studio_category"] = ""
 
         old_account = _str_id(header.get("invoice_line_ids/account_id"))
-        if matched_cuenta or (old_account and old_account not in valid_accounts):
+        if not old_account or old_account not in valid_accounts:
             new_account = resolve_account_id(
                 matched_cuenta,
                 cuentas_odoo,

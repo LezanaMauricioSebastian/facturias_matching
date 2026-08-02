@@ -36,7 +36,7 @@ Utilidades compartidas sin dependencias internas del paquete.
 | `_date_ddmm_to_iso` | `DD/MM/YYYY` o ISO → `YYYY-MM-DD` |
 | `_line_has_content` | ¿La fila tiene línea de producto importable? |
 | `_content_rows_from_group` | Filtra filas con contenido en un grupo |
-| `_first_content_row_index` / `_is_first_content_row` | Primera línea con producto (IIBB consolidado) |
+| `_first_content_row_index` / `_is_first_content_row` | Primera línea con producto (IIBB de solo-encabezado) |
 
 **Depende de:** `odoo.api.odoo_execute_kw_with_config` (solo para `fields_get`).
 
@@ -93,8 +93,9 @@ Resolución de `tax_ids`, montos esperados y escritura en líneas `display_type=
 | `_tax_ids_from_row` | Parse `build_csv_tax_ids_dot_id` → lista de ids |
 | `_otros_impuesto_slot_keys` / `_iter_otros_impuesto_slots` | Slots 1..20 otros impuestos |
 | `_padron_other_tax_ids_from_row` | `_padron_other_tax_ids` sin IVA |
-| `_comprobante_non_iva_tax_ids` | IIBB/percepciones en cualquier fila del grupo |
-| `_merge_comprobante_non_iva_tax_ids` | En header/mixed, merge en primera línea con contenido |
+| `_comprobante_non_iva_tax_ids` | Todos los no-IVA del grupo (montos / legacy) |
+| `_header_only_non_iva_tax_ids` | No-IVA solo de filas sin contenido |
+| `_merge_header_only_non_iva_tax_ids` / `_merge_comprobante_non_iva_tax_ids` | Header-only → 1ª línea de contenido |
 | `_filter_iva_tax_ids_for_row` | Quita IVA numérico de línea en modo header |
 | `_tax_ids_for_odoo_line` | **API clave:** tax_ids para una línea de producto |
 | `_tax_line_id_raw` / `_line_amount_abs` | Lectura línea tax Odoo |
@@ -155,7 +156,7 @@ Sincroniza una factura en borrador ya existente con las filas UI del comprobante
 | `sync_move_taxes_from_group` | Pipeline completo post-create (ver [pipeline.md](pipeline.md)) |
 | `update_move_taxes_from_group` | Alias retrocompatible |
 
-**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → vínculo OC → re-aplicar price/qty en factura → sobreescribir precio de OC si opt-in → montos tax.
+**Orden interno:** encabezado → maturity → contenido + tax_ids (batch) → maturity → vínculo OC → re-aplicar price/qty en factura → sobreescribir precio de OC si opt-in → **re-aplicar tax_ids** → montos tax.
 
 ---
 

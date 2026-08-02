@@ -298,6 +298,7 @@ _UI_TAX_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     "IVA ADICIONAL 20%": ("IVA ADIC 20%", "IVA ADICIONAL 20%"),
     # Nombres EN sin traducción en Odoo Aliare → etiqueta ES en UI.
     "IMPUESTOS INTERNOS": ("INTERNAL TAXES",),
+    "IMPUESTO INTERNO": ("INTERNAL TAXES", "IMPUESTOS INTERNOS"),
     "OTROS IMPUESTOS": ("OTHER TAXES",),
 }
 
@@ -707,6 +708,7 @@ def _remap_legacy_padron_iva_tax_id(tax_id: int) -> Optional[int]:
 
 
 def get_tax_name_by_id() -> Dict[int, str]:
+    """Mapa id → nombre de account.tax del tenant (todos los type_tax_use)."""
     global _TAX_NAME_BY_ID
     if _TAX_NAME_BY_ID is not None:
         return _TAX_NAME_BY_ID
@@ -719,9 +721,9 @@ def get_tax_name_by_id() -> Dict[int, str]:
             if is_odoo_configured() and get_odoo_uid():
                 rows = odoo_search_read(
                     "account.tax",
-                    [("type_tax_use", "=", "purchase")],
+                    [],
                     ["id", "name"],
-                    limit=500,
+                    limit=2000,
                 )
                 for r in rows or []:
                     if r.get("id"):
@@ -737,9 +739,9 @@ def get_tax_name_by_id() -> Dict[int, str]:
             return _TAX_NAME_BY_ID
         rows = odoo_search_read(
             "account.tax",
-            [("type_tax_use", "=", "purchase")],
+            [],
             ["id", "name"],
-            limit=500,
+            limit=2000,
         )
         _TAX_NAME_BY_ID = {int(r["id"]): _normalize(r.get("name")) for r in rows if r.get("id")}
     except Exception:

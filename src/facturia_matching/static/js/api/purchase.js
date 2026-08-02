@@ -93,10 +93,35 @@ export async function rematchPurchase(state, refs, setStatusFn, handlers, rowIdx
   }
 }
 
+function setOcSearchButtonLoading(comprobanteIdx, loading) {
+  const key = String(comprobanteIdx);
+  const root = document;
+  for (const btn of root.querySelectorAll(`[data-search-oc="${key}"], [data-open-oc="${key}"]`)) {
+    btn.disabled = !!loading;
+    if (btn.classList.contains("ocResearchBtn")) {
+      btn.title = loading ? "Buscando…" : "Buscar de nuevo";
+      continue;
+    }
+    if (loading) {
+      if (!btn.dataset.labelBefore) btn.dataset.labelBefore = (btn.textContent || "").trim();
+      btn.textContent = "Buscando…";
+    } else if (btn.dataset.labelBefore) {
+      btn.textContent = btn.dataset.labelBefore;
+      delete btn.dataset.labelBefore;
+    }
+  }
+}
+
 export async function searchOc(state, refs, setStatusFn, handlers, comprobanteIdx) {
   const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
-  if (!pn) return;
+  if (!pn) return false;
 
+  const compKey = String(comprobanteIdx);
+  if (!state._ocSearching) state._ocSearching = {};
+  if (state._ocSearching[compKey]) return false;
+  state._ocSearching[compKey] = true;
+
+  setOcSearchButtonLoading(comprobanteIdx, true);
   setStatusFn("Buscando OCs similares…");
   state.skipAutoSave = true;
   try {
@@ -113,10 +138,13 @@ export async function searchOc(state, refs, setStatusFn, handlers, comprobanteId
     if (handlers?.onRerender) handlers.onRerender();
     const pmPart = purchaseStatusPart(data.purchase_matching || {});
     setStatusFn(`OCs encontradas.${pmPart}`, "ok");
+    return true;
   } catch (e) {
     setStatusFn(e?.message || String(e), "bad");
     handlers?.onRerender?.();
+    return false;
   } finally {
+    delete state._ocSearching[compKey];
     state.skipAutoSave = false;
   }
 }

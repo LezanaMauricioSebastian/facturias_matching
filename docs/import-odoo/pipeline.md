@@ -165,7 +165,15 @@ Solo si purchase soportado **y** el comprobante tiene `__overwrite_oc_price`:
 - `apply_purchase_order_price_overwrites` escribe `price_unit` en cada `purchase.order.line` vinculada con el precio de la tabla UI.
 - Solo escribe diferencias > 0.001; no modifica `account.move`; errores de permisos/estado de PO → warnings sin abortar el import.
 
-### Paso 7 — Montos en líneas tax (último paso)
+### Paso 7 — Re-aplicar tax_ids (post OC / precio)
+
+Odoo puede volver a pisar `tax_ids` al vincular `purchase_line_id` o al tocar precio. Tras el reapply de precio:
+
+1. Releer líneas de producto
+2. `plan_line_tax_updates` otra vez (`_tax_ids_for_odoo_line`: otros **por línea**; header-only → 1ª)
+3. Batch write `tax_ids` (`context=tax_ids`)
+
+### Paso 8 — Montos en líneas tax (último paso)
 
 `_apply_tax_line_amount_overwrites`:
 
@@ -214,9 +222,10 @@ No filtra por `l10n_latam_document_number` en domain (campo computed sin store e
 | 1 | Contenido + tax_ids en producto | Base antes de tax lines |
 | 2 | Vínculo OC | Odoo recalcula taxes y precio |
 | 3 | Price/qty reapply | Pisa precio PO post-OC |
-| 4 | Montos líneas tax | Pisa recálculo de Odoo (IVA + IIBB); **último paso** |
+| 4 | Re-aplicar tax_ids | Pisa stomp de impuestos post-OC/precio (otros **por línea** + header-only → 1ª) |
+| 5 | Montos líneas tax | Pisa recálculo de Odoo (IVA + IIBB); **último paso** |
 
-Tests de regresión: `test_plan_product_price_quantity_reapply_*` en `tests/test_odoo_import.py`.
+Tests de regresión: `test_plan_product_price_quantity_reapply_*`, `test_tax_ids_otros_respected_per_line`, `test_plan_line_tax_updates_salta_stomped_restores_otros_per_line`, `test_sync_applies_tax_amounts_after_all_line_writes` en `tests/test_odoo_import.py`.
 
 ---
 
@@ -228,6 +237,7 @@ Tests de regresión: `test_plan_product_price_quantity_reapply_*` en `tests/test
 | "falta proveedor / diario" | `validate_rows_for_import` |
 | OC no vincula | `__oc_line_id`, `sanitize_*`, Sudata sin purchase |
 | IVA distinto al pie | `collect_expected_*`, [impuestos.md](impuestos.md) |
-| IIBB / CABA no se sobreescribe al primer import | Orden sync: montos tax deben ir **después** de re-aplicar precio; ver paso 7 |
+| IIBB / CABA no se sobreescribe al primer import | Orden sync: montos tax deben ir **después** de re-aplicar precio; ver paso 8 |
 | Precio = precio PO | Falta paso 6 o `plan_product_price_quantity_reapply` |
+| Otros impuestos mal en Odoo (stomp post-OC o no respetan fila) | Paso 7 (reapply tax_ids); otros van **por línea** |
 | Fecha límite AP/AR | `_ensure_move_line_maturity`, [impuestos.md](impuestos.md#fecha-límite-date_maturity) |

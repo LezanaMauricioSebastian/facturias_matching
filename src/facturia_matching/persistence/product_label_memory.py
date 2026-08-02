@@ -38,10 +38,12 @@ _PUNCT_RE = re.compile(r"[^\w.\s]+", re.UNICODE)
 _LEADING_ZERO_RE = re.compile(r"\b0+(\d+)(?=[A-Z]|\b)")
 _WS_RE = re.compile(r"\s+")
 
+from dataclasses import dataclass
+
 from rapidfuzz import fuzz
 
-# partner_id + label_key → product_id
-ProductMemoryIndex = Dict[Tuple[int, str], int]
+# partner_id + label_key → MemoryChoice
+ProductMemoryIndex = Dict[Tuple[int, str], "MemoryChoice"]
 
 # Fuzzy sobre keys ya normalizadas (exacto siempre gana).
 # 88: une variantes OCR/formato (SPRITE …06PET vs …6 6PET) sin bajar tanto
@@ -50,6 +52,18 @@ MEMORY_FUZZY_MIN_SCORE = 88.0
 
 _table_ensured = False
 _table_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class MemoryChoice:
+    """Última elección confirmada: producto Odoo + UM opcional."""
+
+    product_id: int
+    uom_id: Optional[int] = None
+
+    def __int__(self) -> int:
+        """Compat: tratar como product_id en contextos legacy."""
+        return int(self.product_id)
 
 
 def normalize_label_key(raw: Any) -> str:
@@ -125,8 +139,8 @@ def _group_by_comprobante(rows: List[Dict[str, Any]]) -> List[List[Dict[str, Any
 
 def iter_confirmed_choices(
     rows: List[Dict[str, Any]],
-) -> Iterable[Tuple[int, str, int]]:
-    """Yield (partner_id, label_key, product_id) from confirmed row choices."""
+) -> Iterable[Tuple[int, str, int, Optional[int]]]:
+    """Yield (partner_id, label_key, product_id, uom_id) from confirmed row choices."""
     for comp_rows in _group_by_comprobante(rows):
         partner_id = _partner_id_from_rows(comp_rows)
         if partner_id is None:
@@ -140,21 +154,23 @@ def iter_confirmed_choices(
             if len(label) < _MIN_LABEL_LEN:
                 continue
             product_id = int(_normalize(row.get("invoice_line_ids/product_id")))
-            yield partner_id, label, product_id
+            uom_raw = _normalize(row.get("__um_empresa_id"))
+            uom_id = int(uom_raw) if uom_raw.isdigit() and int(uom_raw) > 0 else None
+            yield partner_id, label, product_id, uom_id
 
 
 def build_product_memory_index(
     conversion_row_lists: List[List[Dict[str, Any]]],
 ) -> ProductMemoryIndex:
-    """Índice partner+label → product_id. La primera aparición gana (más reciente)."""
+    """Índice partner+label → MemoryChoice. La primera aparición gana (más reciente)."""
     index: ProductMemoryIndex = {}
     for rows in conversion_row_lists or []:
         if not isinstance(rows, list):
             continue
-        for partner_id, label_key, product_id in iter_confirmed_choices(rows):
+        for partner_id, label_key, product_id, uom_id in iter_confirmed_choices(rows):
             key = (partner_id, label_key)
             if key not in index:
-                index[key] = product_id
+                index[key] = MemoryChoice(product_id=product_id, uom_id=uom_id)
     return index
 
 
@@ -175,14 +191,27 @@ def _memory_labels_conflict(a: str, b: str) -> bool:
     return False
 
 
+def _coerce_memory_choice(value: Any) -> Optional[MemoryChoice]:
+    """Acepta MemoryChoice o product_id int (tests / índices viejos)."""
+    if value is None:
+        return None
+    if isinstance(value, MemoryChoice):
+        return value if value.product_id > 0 else None
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return MemoryChoice(product_id=pid) if pid > 0 else None
+
+
 def lookup_in_index(
     index: ProductMemoryIndex,
     partner_id: Any,
     label: Any,
     *,
     fuzzy_min_score: float = MEMORY_FUZZY_MIN_SCORE,
-) -> Optional[int]:
-    """Busca product_id: exacto sobre label normalizada, luego fuzzy RapidFuzz."""
+) -> Optional[MemoryChoice]:
+    """Busca elección: exacto sobre label normalizada, luego fuzzy RapidFuzz."""
     raw_partner = _normalize(partner_id)
     if not raw_partner.isdigit():
         return None
@@ -190,23 +219,26 @@ def lookup_in_index(
     if len(label_key) < _MIN_LABEL_LEN:
         return None
     partner = int(raw_partner)
-    exact = index.get((partner, label_key))
+    exact = _coerce_memory_choice(index.get((partner, label_key)))
     if exact is not None:
         return exact
 
-    best_pid: Optional[int] = None
+    best: Optional[MemoryChoice] = None
     best_score = 0.0
-    for (pid, key), product_id in index.items():
+    for (pid, key), raw_choice in index.items():
         if pid != partner or len(key) < _MIN_LABEL_LEN:
             continue
         if _memory_labels_conflict(label_key, key):
             continue
+        choice = _coerce_memory_choice(raw_choice)
+        if choice is None:
+            continue
         score = float(fuzz.token_set_ratio(label_key, key))
         if score > best_score:
             best_score = score
-            best_pid = product_id
-    if best_pid is not None and best_score >= float(fuzzy_min_score):
-        return best_pid
+            best = choice
+    if best is not None and best_score >= float(fuzzy_min_score):
+        return best
     return None
 
 
@@ -215,7 +247,7 @@ def _memory_table_ref() -> str:
 
 
 def ensure_product_label_memory_table() -> None:
-    """CREATE TABLE IF NOT EXISTS en el schema actual (staging o prod)."""
+    """CREATE TABLE IF NOT EXISTS (+ columna uom_id si falta) en el schema actual."""
     global _table_ensured
     if _table_ensured:
         return
@@ -236,6 +268,7 @@ def ensure_product_label_memory_table() -> None:
                         partner_id INT NOT NULL,
                         label_key VARCHAR({_MAX_LABEL_LEN}) NOT NULL,
                         product_id INT NOT NULL,
+                        uom_id INT NULL,
                         source_process_id INT NULL,
                         source_conversion_id INT NULL,
                         updated_at DATETIME NOT NULL,
@@ -247,6 +280,12 @@ def ensure_product_label_memory_table() -> None:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
+                # Tablas creadas antes de aprender UM.
+                cur.execute(f"SHOW COLUMNS FROM {table_ref} LIKE 'uom_id'")
+                if not cur.fetchone():
+                    cur.execute(
+                        f"ALTER TABLE {table_ref} ADD COLUMN uom_id INT NULL AFTER product_id"
+                    )
                 conn.commit()
                 _table_ensured = True
                 logger.info(
@@ -275,7 +314,7 @@ def fetch_memory_index_from_table(
         try:
             cur.execute(
                 f"""
-                SELECT partner_id, label_key, product_id
+                SELECT partner_id, label_key, product_id, uom_id
                 FROM {table_ref}
                 WHERE company_id = %s AND template_id = %s
                 """,
@@ -286,11 +325,20 @@ def fetch_memory_index_from_table(
                     partner_id = int(row["partner_id"])
                     product_id = int(row["product_id"])
                     label_key = normalize_label_key(row.get("label_key"))
+                    uom_raw = row.get("uom_id")
+                    uom_id = (
+                        int(uom_raw)
+                        if uom_raw is not None and str(uom_raw).strip().isdigit()
+                        and int(uom_raw) > 0
+                        else None
+                    )
                 except (TypeError, ValueError, KeyError):
                     continue
                 if partner_id <= 0 or product_id <= 0 or len(label_key) < _MIN_LABEL_LEN:
                     continue
-                index[(partner_id, label_key)] = product_id
+                index[(partner_id, label_key)] = MemoryChoice(
+                    product_id=product_id, uom_id=uom_id
+                )
         finally:
             cur.close()
     finally:
@@ -306,7 +354,7 @@ def upsert_product_memory_choices(
     source_process_id: Optional[int] = None,
     source_conversion_id: Optional[int] = None,
 ) -> int:
-    """Persiste elecciones confirmadas. Devuelve filas tocadas (insert/update)."""
+    """Persiste elecciones confirmadas (producto + UM). Devuelve filas tocadas."""
     if company_id is None or not rows:
         return 0
     choices = list(iter_confirmed_choices(rows))
@@ -318,9 +366,11 @@ def upsert_product_memory_choices(
     now = datetime.now().replace(microsecond=0)
     table_ref = _memory_table_ref()
     # Última aparición de cada clave en este save gana.
-    by_key: Dict[Tuple[int, str], int] = {}
-    for partner_id, label_key, product_id in choices:
-        by_key[(partner_id, label_key)] = product_id
+    by_key: Dict[Tuple[int, str], MemoryChoice] = {}
+    for partner_id, label_key, product_id, uom_id in choices:
+        by_key[(partner_id, label_key)] = MemoryChoice(
+            product_id=product_id, uom_id=uom_id
+        )
 
     conn = get_mysql_connection()
     touched = 0
@@ -329,16 +379,17 @@ def upsert_product_memory_choices(
         try:
             sql = f"""
                 INSERT INTO {table_ref}
-                    (company_id, template_id, partner_id, label_key, product_id,
+                    (company_id, template_id, partner_id, label_key, product_id, uom_id,
                      source_process_id, source_conversion_id, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     product_id = VALUES(product_id),
+                    uom_id = VALUES(uom_id),
                     source_process_id = VALUES(source_process_id),
                     source_conversion_id = VALUES(source_conversion_id),
                     updated_at = VALUES(updated_at)
             """
-            for (partner_id, label_key), product_id in by_key.items():
+            for (partner_id, label_key), choice in by_key.items():
                 cur.execute(
                     sql,
                     (
@@ -346,7 +397,8 @@ def upsert_product_memory_choices(
                         tid,
                         partner_id,
                         label_key,
-                        product_id,
+                        choice.product_id,
+                        choice.uom_id,
                         source_process_id,
                         source_conversion_id,
                         now,

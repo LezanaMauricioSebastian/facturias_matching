@@ -4,6 +4,7 @@ import {
   classifyComprobanteTaxMode,
   clearFacIvaFooter,
 } from "../comprobanteTax/index.js";
+import { syncOtrosFooterFromRowSelection } from "../comprobanteView/footer.js";
 import {
   isFacturaCTypeId,
   findOptionLabel,
@@ -129,6 +130,7 @@ export function handleSelectionChange(state, r, k, ctx) {
     return;
   }
   if (k === "otros_impuestos" || /^otros_impuestos_\d+$/.test(k)) {
+    syncOtrosFooterFromRowSelection(state, r);
     updateRowTotals(state, refs, r);
     handlers.onUpdateComprobanteFooters?.();
     return;

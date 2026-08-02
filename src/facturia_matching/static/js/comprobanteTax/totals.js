@@ -12,6 +12,7 @@ import {
   ivaPctToRate,
 } from "./lineCalc.js";
 import { computeIvaBreakdown } from "./ivaBreakdown.js";
+import { hydrateOtrosSlotsFromFacPercepciones } from "./otrosBreakdown.js";
 
 const TOLERANCE = 0.02;
 
@@ -67,9 +68,9 @@ export function classifyComprobanteTaxMode(groupRows) {
   return "header";
 }
 
-/** Monto IVA por línea cuando el impuesto se detecta en particular (modo line o Solo encabezado). */
+/** Monto IVA por línea cuando el impuesto se detecta en particular (modo line/mixed o Solo encabezado). */
 export function showIvaMontoColumn(mode, soloEncabezado = false) {
-  return mode === "line" || soloEncabezado;
+  return mode === "line" || mode === "mixed" || soloEncabezado;
 }
 
 /** IVA del pie: siempre editable (en modo line el override marca `__fac_iva_monto_manual`). */
@@ -87,6 +88,8 @@ export function footerIvaDisplayValue(groupRows, totals) {
 }
 
 export function computeComprobanteTotals(groupRows, mode) {
+  // Montos FacturIA (__fac_percepciones) → slots aunque no haya label en líneas.
+  hydrateOtrosSlotsFromFacPercepciones(groupRows);
   const taxMode = mode || classifyComprobanteTaxMode(groupRows);
   const baseLines = sumLineBases(groupRows);
   const baseFac = facSubtotal(groupRows);

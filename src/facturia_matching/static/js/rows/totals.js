@@ -13,7 +13,7 @@ export function computeRowTotal(row, taxMode = "header") {
     const explicit = toNumberLoose(row?.iva_monto);
     const fromFac = toNumberLoose(row?.__fac_iva_monto);
     ivaMonto = explicit > 0 ? explicit : fromFac;
-  } else if (taxMode === "line") {
+  } else if (taxMode === "line" || taxMode === "mixed") {
     const explicit = toNumberLoose(row?.iva_monto);
     const suggested = lineIvaSuggested(row);
     if (row?.__iva_monto_manual) {
@@ -23,6 +23,8 @@ export function computeRowTotal(row, taxMode = "header") {
       suggested > 0 &&
       Math.abs(explicit - suggested) > Math.max(0.02, suggested * 0.001)
     ) {
+      // Monto fijo (FacturIA ≠ sugerido). Tras editar precio/qty la UI limpia
+      // iva_monto si no hay __iva_monto_manual para que siga al %.
       ivaMonto = explicit;
     } else {
       ivaMonto = suggested;
@@ -37,4 +39,13 @@ export function computeRowTotal(row, taxMode = "header") {
   }
 
   return base + ivaMonto + otrosMonto;
+}
+
+/**
+ * Tras editar precio/cantidad: si el IVA de línea no es manual, limpia el monto
+ * sticky para que computeRowTotal use el sugerido (qty × precio × %).
+ */
+export function clearStickyLineIvaOnPriceQtyEdit(row) {
+  if (!row || row.__iva_monto_manual) return;
+  row.iva_monto = "";
 }

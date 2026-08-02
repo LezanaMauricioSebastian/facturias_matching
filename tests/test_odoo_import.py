@@ -228,6 +228,111 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(line_a, [63, 27])
         self.assertEqual(line_b, [])
 
+    def test_tax_ids_otros_respected_per_line(self):
+        """Cada fila conserva su propio otros_impuestos al armar tax_ids Odoo."""
+        group = [
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Percepción IIBB Chaco Sufrida",
+                "invoice_line_ids/name": "COCA-COLA",
+                "invoice_line_ids/price_unit": "100",
+                "invoice_line_ids/quantity": "1",
+            },
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Impuesto Interno",
+                "invoice_line_ids/name": "SPRITE",
+                "invoice_line_ids/price_unit": "50",
+                "invoice_line_ids/quantity": "1",
+            },
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Percepción IVA Sufrida",
+                "invoice_line_ids/name": "FANTA",
+                "invoice_line_ids/price_unit": "40",
+                "invoice_line_ids/quantity": "1",
+            },
+        ]
+
+        def _resolve(label):
+            return {
+                "Percepción IIBB Chaco Sufrida": 101,
+                "Impuesto Interno": 102,
+                "Percepción IVA Sufrida": 103,
+            }.get(label)
+
+        with patch("facturia_matching.padron.taxes.resolve_tax_label_to_id", side_effect=_resolve):
+            first = _tax_ids_for_odoo_line(group[0], group)
+            second = _tax_ids_for_odoo_line(group[1], group)
+            third = _tax_ids_for_odoo_line(group[2], group)
+
+        self.assertIn(101, first)
+        self.assertNotIn(102, first)
+        self.assertNotIn(103, first)
+        self.assertIn(102, second)
+        self.assertNotIn(101, second)
+        self.assertIn(103, third)
+        self.assertNotIn(101, third)
+
+    def test_plan_line_tax_updates_salta_stomped_restores_otros_per_line(self):
+        """Tras OC Odoo deja todos los tax_ids en cada línea; el plan restaura otros por fila."""
+        group = [
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Percepción IIBB Chaco Sufrida",
+                "invoice_line_ids/name": "COCA-COLA",
+                "invoice_line_ids/price_unit": "11658,03",
+                "invoice_line_ids/quantity": "5",
+            },
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Impuesto Interno",
+                "invoice_line_ids/name": "SPRITE",
+                "invoice_line_ids/price_unit": "5033,29",
+                "invoice_line_ids/quantity": "4",
+            },
+            {
+                "iva_pct": "21",
+                "otros_impuestos": "Percepción IVA Sufrida",
+                "invoice_line_ids/name": "FANTA",
+                "invoice_line_ids/price_unit": "4857,51",
+                "invoice_line_ids/quantity": "5",
+            },
+        ]
+        product_lines = [
+            {"id": 101, "name": "COCA", "tax_ids": [63, 101, 102, 103]},
+            {"id": 102, "name": "SPRITE", "tax_ids": [63, 101, 102, 103]},
+            {"id": 103, "name": "FANTA", "tax_ids": [63, 101, 102, 103]},
+        ]
+
+        def _resolve(label):
+            return {
+                "Percepción IIBB Chaco Sufrida": 101,
+                "Impuesto Interno": 102,
+                "Percepción IVA Sufrida": 103,
+            }.get(label)
+
+        def _is_iva(tid):
+            return int(tid) == 63
+
+        with patch("facturia_matching.padron.taxes.resolve_tax_label_to_id", side_effect=_resolve), patch(
+            "facturia_matching.odoo.import_.taxes.is_iva_tax_id",
+            side_effect=_is_iva,
+        ), patch(
+            "facturia_matching.padron.taxes.is_iva_tax_id",
+            side_effect=_is_iva,
+        ), patch(
+            "facturia_matching.padron.taxes.tax_id_for_csv_export",
+            return_value="63",
+        ):
+            updates, warnings = plan_line_tax_updates(product_lines, group)
+
+        self.assertEqual(warnings, [])
+        by_id = {u["line_id"]: set(u["new_tax_ids"]) for u in updates}
+        self.assertEqual(by_id[101], {63, 101})
+        self.assertEqual(by_id[102], {63, 102})
+        self.assertEqual(by_id[103], {63, 103})
+
     def test_tax_ids_for_odoo_line_mixed_exento_only_on_exento_line(self):
         group = [
             {
@@ -1037,6 +1142,117 @@ class TestOdooImport(unittest.TestCase):
         updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
         self.assertEqual(updates, [])
 
+    def test_plan_product_price_quantity_reapply_salta_pack_lines_ui_vs_po(self):
+        """Salta-like: 3 packs con precio UI ≠ PO; reapply escribe los 3 price_unit UI."""
+        product_lines = [
+            {
+                "id": 101,
+                "name": "COCA",
+                "quantity": 5.0,
+                "price_unit": 11058.03,
+                "purchase_line_id": [501, "PO/coca"],
+            },
+            {
+                "id": 102,
+                "name": "BENEDICTINO",
+                "quantity": 5.0,
+                "price_unit": 8628.49,
+                "purchase_line_id": [502, "PO/ben1"],
+            },
+            {
+                "id": 103,
+                "name": "BENEDICTINO 2",
+                "quantity": 5.0,
+                "price_unit": 8628.49,
+                "purchase_line_id": [503, "PO/ben2"],
+            },
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "COCA-COLA 600*12 PET",
+                "invoice_line_ids/quantity": "5",
+                "invoice_line_ids/price_unit": "11658,03",
+                "invoice_line_ids/product_id": "620",
+                "__um_empresa_id": "100",
+                "__oc_line_id": "501",
+            },
+            {
+                "invoice_line_ids/name": "BENEDICTINO S/GAS",
+                "invoice_line_ids/quantity": "5",
+                "invoice_line_ids/price_unit": "10799,93",
+                "invoice_line_ids/product_id": "621",
+                "__um_empresa_id": "100",
+                "__oc_line_id": "502",
+            },
+            {
+                "invoice_line_ids/name": "BENEDICTINO C/GAS",
+                "invoice_line_ids/quantity": "5",
+                "invoice_line_ids/price_unit": "10799,93",
+                "invoice_line_ids/product_id": "622",
+                "__um_empresa_id": "100",
+                "__oc_line_id": "503",
+            },
+        ]
+        updates, warnings = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 3)
+        by_id = {u["line_id"]: u["write_vals"]["price_unit"] for u in updates}
+        self.assertAlmostEqual(by_id[101], 11658.03, places=2)
+        self.assertAlmostEqual(by_id[102], 10799.93, places=2)
+        self.assertAlmostEqual(by_id[103], 10799.93, places=2)
+
+    def test_plan_product_price_quantity_reapply_shared_oc_line_falls_back_to_index(self):
+        """Si varias filas UI comparten el mismo __oc_line_id, no omitir reapply: usar índice."""
+        product_lines = [
+            {
+                "id": 101,
+                "name": "A",
+                "quantity": 1.0,
+                "price_unit": 10.0,
+                "purchase_line_id": [999, "shared"],
+            },
+            {
+                "id": 102,
+                "name": "B",
+                "quantity": 1.0,
+                "price_unit": 20.0,
+                "purchase_line_id": [999, "shared"],
+            },
+            {
+                "id": 103,
+                "name": "C",
+                "quantity": 1.0,
+                "price_unit": 30.0,
+                "purchase_line_id": [999, "shared"],
+            },
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "100",
+                "__oc_line_id": "999",
+            },
+            {
+                "invoice_line_ids/name": "B",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "200",
+                "__oc_line_id": "999",
+            },
+            {
+                "invoice_line_ids/name": "C",
+                "invoice_line_ids/quantity": "1",
+                "invoice_line_ids/price_unit": "300",
+                "__oc_line_id": "999",
+            },
+        ]
+        updates, _ = plan_product_price_quantity_reapply(product_lines, rows)
+        self.assertEqual(len(updates), 3)
+        by_id = {u["line_id"]: u["write_vals"]["price_unit"] for u in updates}
+        self.assertEqual(by_id[101], 100.0)
+        self.assertEqual(by_id[102], 200.0)
+        self.assertEqual(by_id[103], 300.0)
+
     def test_group_wants_overwrite_oc_price(self):
         self.assertFalse(group_wants_overwrite_oc_price([{"invoice_line_ids/name": "A"}]))
         self.assertTrue(
@@ -1212,11 +1428,12 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(plan["new_invoice_origin"], "PNEW")
         self.assertIsNone(plan_invoice_origin_update("PNEW", group))
 
+    @patch("facturia_matching.odoo.import_.sync.apply_purchase_order_price_overwrites", return_value=([], []))
     @patch("facturia_matching.odoo.import_.sync._apply_tax_line_amount_overwrites")
     @patch("facturia_matching.odoo.import_.sync._batch_write_move_lines")
     @patch("facturia_matching.odoo.import_.sync.plan_product_price_quantity_reapply")
     @patch("facturia_matching.odoo.import_.sync.plan_purchase_line_updates", return_value=([], []))
-    @patch("facturia_matching.odoo.import_.sync.plan_line_tax_updates", return_value=([], []))
+    @patch("facturia_matching.odoo.import_.sync.plan_line_tax_updates")
     @patch("facturia_matching.odoo.import_.sync.plan_product_line_content_updates", return_value=([], []))
     @patch("facturia_matching.odoo.import_.sync._get_move_product_lines")
     @patch("facturia_matching.odoo.import_.sync._ensure_move_line_maturity")
@@ -1229,11 +1446,12 @@ class TestOdooImport(unittest.TestCase):
         _maturity,
         mock_product_lines,
         _content_plan,
-        _tax_plan,
+        mock_tax_plan,
         _po_plan,
         mock_price_reapply,
         mock_batch_write,
         mock_apply_tax,
+        _po_price,
     ):
         from facturia_matching.odoo.import_.sync import sync_move_taxes_from_group
 
@@ -1248,7 +1466,21 @@ class TestOdooImport(unittest.TestCase):
                 "invoice_date_due": "2026-04-16",
             }
         ]
-        mock_product_lines.return_value = [{"id": 10, "name": "Item", "tax_ids": [63]}]
+        mock_product_lines.return_value = [{"id": 10, "name": "Item", "tax_ids": [63, 101, 102]}]
+        mock_tax_plan.side_effect = [
+            ([], []),  # primer paso (contenido+tax)
+            (
+                [
+                    {
+                        "line_id": 10,
+                        "line_name": "Item",
+                        "old_tax_ids": [63, 101, 102],
+                        "new_tax_ids": [63, 101],
+                    }
+                ],
+                [],
+            ),  # reapply post-OC/precio
+        ]
         mock_price_reapply.return_value = (
             [{"line_id": 10, "line_name": "Item", "write_vals": {"price_unit": 100.0}}],
             [],
@@ -1268,10 +1500,11 @@ class TestOdooImport(unittest.TestCase):
         ]
         sync_move_taxes_from_group({}, 1, group)
 
+        self.assertEqual(mock_tax_plan.call_count, 2)
         self.assertEqual(mock_apply_tax.call_count, 1)
-        mock_batch_write.assert_called_once()
-        # Montos tax deben aplicarse después del batch de precio.
-        self.assertEqual(mock_batch_write.call_args.kwargs.get("context"), "precio")
+        contexts = [c.kwargs.get("context") for c in mock_batch_write.call_args_list]
+        self.assertIn("precio", contexts)
+        self.assertEqual(contexts[-1], "tax_ids")
 
     @patch("facturia_matching.odoo.import_.taxes._trigger_product_line_tax_recompute")
     @patch("facturia_matching.odoo.import_.taxes.odoo_execute_kw_with_config")

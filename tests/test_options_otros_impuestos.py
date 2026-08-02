@@ -1,4 +1,4 @@
-"""Tests: otros_impuestos_options filtradas/extendidas por catálogo Odoo."""
+"""Tests: otros_impuestos_options = todos los account.tax del tenant."""
 import unittest
 from unittest.mock import patch
 
@@ -11,79 +11,43 @@ class TestOtrosImpuestosOptionsFromOdoo(unittest.TestCase):
         with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value={}):
             self.assertIsNone(otros_impuestos_options_from_odoo())
 
-    def test_filters_and_dedupes_by_tax_id_prefers_sufrida(self):
-        def fake_resolve(label: str):
-            mapping = {
-                "Percepción IIBB CABA Sufrida": 1,
-                "Percepción IIBB CABA Aplicada": 1,
-                "Percepción IIBB ARBA Sufrida": 2,
-                "Percepción IIBB Santa Fe Sufrida": None,
-            }
-            return mapping.get(label)
-
-        with patch(
-            "facturia_matching.padron.taxes.get_tax_name_by_id",
-            return_value={1: "P. IIBB CABA", 2: "P. IIBB BA"},
-        ):
-            with patch(
-                "facturia_matching.padron.taxes.resolve_tax_label_to_id",
-                side_effect=fake_resolve,
-            ):
-                out = otros_impuestos_options_from_odoo()
-        self.assertEqual(
-            out,
-            ["Percepción IIBB CABA Sufrida", "Percepción IIBB ARBA Sufrida"],
-        )
-
-    def test_appends_odoo_taxes_including_iva_not_in_constant(self):
-        """Impuestos purchase del tenant (incl. IVA) se agregan dinámicamente."""
-
-        def fake_resolve(label: str):
-            mapping = {
-                "Percepción IIBB CABA Sufrida": 1,
-                "Percepción IIBB CABA Aplicada": 1,
-            }
-            return mapping.get(label)
-
+    def test_lists_all_taxes_alphabetically_with_es_display(self):
         name_by_id = {
             1: "P. IIBB CABA",
             29: "Perc Gananc",
             72: "Perc IVA",
             25: "Other taxes",
+            26: "Internal taxes",
             65: "IVA 21%",
+            55: "IVA No Gravado",
         }
 
         with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value=name_by_id):
-            with patch(
-                "facturia_matching.padron.taxes.resolve_tax_label_to_id",
-                side_effect=fake_resolve,
-            ):
-                out = otros_impuestos_options_from_odoo()
+            out = otros_impuestos_options_from_odoo()
 
-        self.assertEqual(out[0], "Percepción IIBB CABA Sufrida")
-        self.assertIn("Otros impuestos", out)
-        self.assertNotIn("Other taxes", out)
-        self.assertIn("Perc Gananc", out)
-        self.assertIn("Perc IVA", out)
-        self.assertIn("IVA 21%", out)
-        extras = out[1:]
-        self.assertEqual(extras, sorted(extras, key=str.upper))
-
-    def test_internal_taxes_shown_in_spanish(self):
-        def fake_resolve(label: str):
-            return {"Percepción IIBB CABA Sufrida": 1}.get(label)
-
-        name_by_id = {1: "P. IIBB CABA", 26: "Internal taxes"}
-
-        with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value=name_by_id):
-            with patch(
-                "facturia_matching.padron.taxes.resolve_tax_label_to_id",
-                side_effect=fake_resolve,
-            ):
-                out = otros_impuestos_options_from_odoo()
-
-        self.assertIn("Impuestos internos", out)
+        self.assertEqual(
+            out,
+            sorted(
+                [
+                    "Impuestos internos",
+                    "IVA 21%",
+                    "IVA No Gravado",
+                    "Otros impuestos",
+                    "P. IIBB CABA",
+                    "Perc Gananc",
+                    "Perc IVA",
+                ],
+                key=str.casefold,
+            ),
+        )
         self.assertNotIn("Internal taxes", out)
+        self.assertNotIn("Other taxes", out)
+
+    def test_dedupes_same_display_label(self):
+        name_by_id = {1: "IVA 21%", 2: "iva 21%"}
+        with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value=name_by_id):
+            out = otros_impuestos_options_from_odoo()
+        self.assertEqual(len(out), 1)
 
 
 class TestResolveTaxLabelAliases(unittest.TestCase):
@@ -107,6 +71,7 @@ class TestResolveTaxLabelAliases(unittest.TestCase):
         by_id = {25: "Other taxes", 26: "Internal taxes"}
         with patch("facturia_matching.padron.taxes.get_tax_name_by_id", return_value=by_id):
             clear_odoo_tax_catalog_cache()
+            self.assertEqual(resolve_tax_label_to_id("Impuesto Interno"), 26)
             self.assertEqual(resolve_tax_label_to_id("Impuestos internos"), 26)
             self.assertEqual(resolve_tax_label_to_id("Otros impuestos"), 25)
             self.assertEqual(resolve_tax_label_to_id("Internal taxes"), 26)

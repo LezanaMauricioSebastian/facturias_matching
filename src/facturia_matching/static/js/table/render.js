@@ -1,4 +1,4 @@
-import { computeRowTotal, ADD_OTRO_IMPUESTO_KEY } from "../rows/index.js";
+import { computeRowTotal, clearStickyLineIvaOnPriceQtyEdit, ADD_OTRO_IMPUESTO_KEY } from "../rows/index.js";
 import { showIvaMontoColumn, classifyComprobanteTaxMode, syncFacIvaMontosFromLines, lineBase } from "../comprobanteTax/index.js";
 import {
   formatMoney,
@@ -53,11 +53,55 @@ function escapeAttr(s) {
   return String(s ?? "").replaceAll('"', "&quot;");
 }
 
+function umOptionsForProduct(state, productId) {
+  const pid = String(productId || "").trim();
+  if (!pid) return [];
+  return state.uomOptionsByProductId?.[pid] || [];
+}
+
+/** Rellena un `<select class="umSelect">` con las UMs cacheadas (in-place, sin rerender). */
+export function fillUmSelectElement(sel, state, row) {
+  if (!(sel instanceof HTMLSelectElement) || !row) return;
+  const productId = String(row["invoice_line_ids/product_id"] || "").trim();
+  const selectedId = String(row.__um_empresa_id || "").trim();
+  const selectedName = String(row.__um_empresa || "").trim();
+  const opts = umOptionsForProduct(state, productId);
+  const prev = sel.value;
+  sel.disabled = !productId;
+  sel.innerHTML = "";
+  const empty = document.createElement("option");
+  empty.value = "";
+  sel.appendChild(empty);
+  const values = new Set();
+  for (const o of opts) {
+    const ov = optionValue(o);
+    if (!ov || values.has(ov)) continue;
+    values.add(ov);
+    const opt = document.createElement("option");
+    opt.value = ov;
+    opt.textContent = o.name || o.label || ov;
+    if (ov === selectedId) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (selectedId && !values.has(selectedId)) {
+    const opt = document.createElement("option");
+    opt.value = selectedId;
+    opt.textContent = selectedName || selectedId;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (prev && [...sel.options].some((o) => o.value === prev)) {
+    sel.value = prev;
+  } else if (selectedId) {
+    sel.value = selectedId;
+  }
+}
+
 function renderUmSelectHtml(state, r, rIdx, tdStyle) {
   const productId = String(r["invoice_line_ids/product_id"] || "").trim();
   const selectedId = String(r.__um_empresa_id || "").trim();
   const selectedName = String(r.__um_empresa || "").trim();
-  const opts = productId ? state.uomOptionsByProductId?.[productId] || [] : [];
+  const opts = umOptionsForProduct(state, productId);
   const disabled = !productId ? " disabled" : "";
   const parts = [
     `<td${tdStyle}><select class="umSelect" data-r="${rIdx}" data-k="__um_empresa"${disabled}>`,
@@ -78,6 +122,35 @@ function renderUmSelectHtml(state, r, rIdx, tdStyle) {
   }
   parts.push(`</select></td>`);
   return parts.join("");
+}
+
+/** Precarga UMs de productos visibles para que el primer click del select ya liste opciones. */
+function prefetchUmOptionsForRows(state, rowIndices, handlers) {
+  const missing = [];
+  for (const rIdx of rowIndices) {
+    const pid = String(state.rows[rIdx]?.["invoice_line_ids/product_id"] || "").trim();
+    if (!pid) continue;
+    const cached = state.uomOptionsByProductId?.[pid];
+    if (Array.isArray(cached) && cached.length) continue;
+    if (!missing.includes(pid)) missing.push(pid);
+  }
+  if (!missing.length) return;
+  if (!state._uomPrefetchInflight) state._uomPrefetchInflight = new Set();
+  const toFetch = missing.filter((pid) => !state._uomPrefetchInflight.has(pid));
+  if (!toFetch.length) return;
+  for (const pid of toFetch) state._uomPrefetchInflight.add(pid);
+  Promise.all(
+    toFetch.map((pid) =>
+      fetchProductUoms(state, pid)
+        .catch(() => [])
+        .finally(() => state._uomPrefetchInflight?.delete(pid))
+    )
+  ).then(() => {
+    // Solo rerender si alguna quedó cacheada (evita loop vacío).
+    if (toFetch.some((pid) => (state.uomOptionsByProductId?.[pid] || []).length)) {
+      handlers?.onRerender?.();
+    }
+  });
 }
 
 export function renderComprobanteTable(state, rowIndices, containerEl, refs, handlers, options = {}) {
@@ -244,6 +317,12 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           state.rows[r].__fac_iva_monto_manual = true;
         }
       }
+      // Precio/qty: liberar iva_monto auto (sticky) para que siga al %; respetar manual/FacturIA-fijo vía flag.
+      if (
+        (k === "invoice_line_ids/price_unit" || k === "invoice_line_ids/quantity")
+      ) {
+        clearStickyLineIvaOnPriceQtyEdit(state.rows[r]);
+      }
       if (isTotalAffectingKey(k)) {
         syncLineIvaMetadata(state, r);
         updateRowTotals(state, refs, r);
@@ -283,6 +362,12 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           state.rows[r].__fac_iva_monto_manual = true;
         }
       }
+      if (
+        k === "invoice_line_ids/price_unit" ||
+        k === "invoice_line_ids/quantity"
+      ) {
+        clearStickyLineIvaOnPriceQtyEdit(state.rows[r]);
+      }
       if (isTotalAffectingKey(k)) {
         syncLineIvaMetadata(state, r);
         updateRowTotals(state, refs, r);
@@ -312,16 +397,64 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       handlers.onAutoSave?.();
     });
     if (sel.classList.contains("umSelect")) {
-      sel.addEventListener("focus", () => {
+      const ensureUmOptions = () => {
+        if (sel.disabled) return Promise.resolve(false);
+        const r = parseInt(sel.getAttribute("data-r"), 10);
+        const productId = String(state.rows[r]?.["invoice_line_ids/product_id"] || "").trim();
+        if (!productId) return Promise.resolve(false);
+        const cached = state.uomOptionsByProductId?.[productId];
+        if (Array.isArray(cached) && cached.length) {
+          // Por si el HTML quedó con solo la seleccionada.
+          if (sel.options.length <= 2) fillUmSelectElement(sel, state, state.rows[r]);
+          return Promise.resolve(true);
+        }
+        return fetchProductUoms(state, productId)
+          .then(() => {
+            containerEl.querySelectorAll("select.umSelect").forEach((other) => {
+              const oi = parseInt(other.getAttribute("data-r"), 10);
+              const row = state.rows[oi];
+              if (!row) return;
+              if (String(row["invoice_line_ids/product_id"] || "").trim() !== productId) return;
+              fillUmSelectElement(other, state, row);
+            });
+            return true;
+          })
+          .catch(() => false);
+      };
+      // Bloquear la apertura nativa si aún no hay lista: evita ver solo la UM actual.
+      sel.addEventListener("mousedown", (e) => {
         if (sel.disabled) return;
         const r = parseInt(sel.getAttribute("data-r"), 10);
         const productId = String(state.rows[r]?.["invoice_line_ids/product_id"] || "").trim();
         if (!productId) return;
         const cached = state.uomOptionsByProductId?.[productId];
-        if (Array.isArray(cached) && cached.length) return;
-        fetchProductUoms(state, productId)
-          .then(() => handlers.onRerender?.())
-          .catch(() => {});
+        if (Array.isArray(cached) && cached.length) {
+          // Cache OK pero el HTML quedó con la huérfana: completar in-place.
+          if (sel.options.length < cached.length + 1) {
+            e.preventDefault();
+            fillUmSelectElement(sel, state, state.rows[r]);
+            sel.focus();
+            try {
+              sel.showPicker?.();
+            } catch {
+              /* showPicker puede fallar sin gesto de usuario en algunos browsers */
+            }
+          }
+          return;
+        }
+        e.preventDefault();
+        ensureUmOptions().then((ok) => {
+          if (!ok) return;
+          sel.focus();
+          try {
+            sel.showPicker?.();
+          } catch {
+            /* ignore */
+          }
+        });
+      });
+      sel.addEventListener("focus", () => {
+        ensureUmOptions();
       });
     }
   });
@@ -356,4 +489,5 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
 
   mergeDomRefs(state, containerEl);
   refreshComprobanteHints(containerEl, state);
+  prefetchUmOptionsForRows(state, rowIndices, handlers);
 }
