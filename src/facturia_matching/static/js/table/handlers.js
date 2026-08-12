@@ -104,6 +104,8 @@ export function handleSelectionChange(state, r, k, ctx) {
     const docTypeRaw = String(state.rows[r]?.[k] ?? "").trim();
     const ivaKey = "iva_pct";
     const docOpts = state.options?.document_types || [];
+    const docLabel = findOptionLabel(docOpts, docTypeRaw);
+    if (docLabel) state.rows[r].__doc_type_label = docLabel;
     const isFacturaC =
       isFacturaCTypeId(docTypeRaw, state) ||
       (() => {

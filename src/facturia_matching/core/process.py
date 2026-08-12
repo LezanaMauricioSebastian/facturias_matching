@@ -215,6 +215,7 @@ def parse_process_json(
                 "l10n_latam_document_number": "" if mismo_comprobante else nro,
                 "partner_id": "" if mismo_comprobante else partner_id,
                 "l10n_latam_document_type_id": "" if mismo_comprobante else doc_type_id,
+                "__doc_type_label": "" if mismo_comprobante else doc_type_label_val,
                 "invoice_date": "" if mismo_comprobante else fecha,
                 "invoice_date_due": "" if mismo_comprobante else venc,
                 "x_studio_category": "" if mismo_comprobante else rubro_id,

@@ -7,9 +7,11 @@ from facturia_matching.core.comprobante_tax import classify_comprobante_tax_mode
 from facturia_matching.odoo.import_ import (
     _batch_write_move_lines,
     _build_line_command,
+    _DOC_TYPE_INFO_CACHE,
     _build_move_vals,
     _document_numbers_match,
     _find_existing_move,
+    _vendor_move_type_for_header,
     _move_line_supports_purchase_link,
     _move_matches_document_number,
     _move_product_line_fields,
@@ -143,6 +145,81 @@ class TestOdooImport(unittest.TestCase):
         vals = _build_move_vals(group)
         self.assertEqual(vals["l10n_latam_document_number"], "00001-00000001")
         self.assertEqual(vals["ref"], "00001-00000001")
+        self.assertEqual(vals["move_type"], "in_invoice")
+
+    def test_build_move_vals_credit_note_uses_in_refund(self):
+        group = [
+            {
+                "partner_id": "52",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00066-00012394",
+                "l10n_latam_document_type_id": "3",
+                "__doc_type_label": "NOTAS DE CRÉDITO A",
+                "invoice_date": "08/08/2026",
+                "invoice_line_ids/name": "Linea 1",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "100",
+            },
+        ]
+        vals = _build_move_vals(group)
+        self.assertEqual(vals["move_type"], "in_refund")
+        self.assertEqual(vals["l10n_latam_document_type_id"], 3)
+
+    def test_build_move_vals_fce_invoice_stays_in_invoice(self):
+        group = [
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00001-00000002",
+                "__doc_type_label": "FACTURA DE CRÉDITO ELECTRÓNICA MiPyMEs (FCE) A",
+                "invoice_date": "01/06/2026",
+                "invoice_line_ids/name": "Linea 1",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "100",
+            },
+        ]
+        vals = _build_move_vals(group)
+        self.assertEqual(vals["move_type"], "in_invoice")
+
+    @patch("facturia_matching.odoo.import_.create.odoo_execute_kw_with_config")
+    def test_vendor_move_type_uses_odoo_internal_type(self, mock_rpc):
+        _DOC_TYPE_INFO_CACHE.clear()
+        mock_rpc.return_value = [{"id": 9, "internal_type": "credit_note", "name": "CREDIT NOTES A"}]
+        header = {"l10n_latam_document_type_id": "9"}
+        cfg = {"base_url": "https://odoo.example", "db": "prod"}
+        self.assertEqual(_vendor_move_type_for_header(header, cfg), "in_refund")
+        vals = _build_move_vals(
+            [
+                {
+                    **header,
+                    "partner_id": "1",
+                    "journal_id": "2",
+                    "invoice_date": "08/08/2026",
+                    "invoice_line_ids/name": "x",
+                    "invoice_line_ids/account_id": "10",
+                    "invoice_line_ids/price_unit": "1",
+                }
+            ],
+            cfg,
+        )
+        self.assertEqual(vals["move_type"], "in_refund")
+
+    @patch("facturia_matching.odoo.import_.create.odoo_execute_kw_with_config")
+    def test_find_existing_move_credit_note_searches_in_refund(self, mock_rpc):
+        mock_rpc.return_value = [
+            {
+                "id": 88,
+                "name": "NC/1",
+                "state": "draft",
+                "ref": "00066-00012394",
+                "l10n_latam_document_number": "00066-00012394",
+            }
+        ]
+        found = _find_existing_move({}, 52, "00066-00012394", move_type="in_refund")
+        self.assertEqual(found["id"], 88)
+        first_domain = mock_rpc.call_args_list[0][0][3][0]
+        self.assertIn(("move_type", "=", "in_refund"), first_domain)
+        self.assertIn(("ref", "=", "00066-00012394"), first_domain)
 
     @patch("facturia_matching.odoo.import_._utils.odoo_execute_kw_with_config")
     def test_move_product_line_fields_omits_purchase_when_unsupported(self, mock_rpc):

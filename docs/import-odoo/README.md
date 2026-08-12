@@ -1,6 +1,6 @@
 # Import a Odoo (`odoo/import_/`)
 
-Documentación del paquete que convierte filas de la UI en facturas de proveedor (`account.move`, `move_type=in_invoice`) en Odoo y sincroniza impuestos, montos y vínculos de orden de compra.
+Documentación del paquete que convierte filas de la UI en facturas o notas de crédito de proveedor (`account.move`, `move_type=in_invoice` o `in_refund`) en Odoo y sincroniza impuestos, montos y vínculos de orden de compra.
 
 **Código:** `src/facturia_matching/odoo/import_/`
 

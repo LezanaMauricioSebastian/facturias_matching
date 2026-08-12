@@ -48,6 +48,7 @@ def propagate_invoice_headers(group: List[Dict[str, Any]]) -> List[Dict[str, Any
         "l10n_latam_document_number",
         "partner_id",
         "l10n_latam_document_type_id",
+        "__doc_type_label",
         "invoice_date",
         "invoice_date_due",
         "x_studio_category",

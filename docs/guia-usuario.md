@@ -79,7 +79,7 @@ La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** vi
 
 Al confirmar **Importar a Odoo**:
 
-1. Se crean facturas en **borrador** (`in_invoice`) o se actualizan si ya existen (mismo proveedor + número de documento).
+1. Se crean comprobantes en **borrador**: factura (`in_invoice`) o **nota de crédito** (`in_refund`) según el **Tipo de Documento**, o se actualizan si ya existen (mismo proveedor + número).
 2. Se sincronizan líneas de producto, `tax_ids`, vínculos OC y **montos de impuesto** en las líneas `display_type=tax`.
 3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre **al final** del sync, después de vincular OC **y** de re-aplicar el precio de la tabla.
 4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra. Luego se aplican los montos de impuesto del pie.
@@ -137,6 +137,10 @@ Versiones anteriores generaban una columna por cada impuesto del padrón. Tras a
 Formatos híbridos raros (ej. `350.0,00`) ya se normalizan. Si persiste, reescribir el monto con formato AR estándar (`350.000,00`).
 
 Si una cantidad tipo litros (`15,175`) o un precio (`1457,256`) aparece como `1` × `1,46`, recargá el proceso o usá **Restaurar original**: era un parseo que tomaba el punto de FacturIA como miles.
+
+### Error “No puedes utilizar el tipo de documento credit_note en una factura”
+
+Odoo no permite un tipo **nota de crédito** sobre un `account.move` de factura. Con la versión actual, si el tipo es NC (p. ej. **NOTAS DE CRÉDITO A**), el import crea `in_refund` (sección de notas de crédito en Odoo), no `in_invoice`. Reimportá el borrador. Si el error sigue, recargá la UI y confirmá que el tipo de documento quedó en NC.
 
 ### Error de fecha límite en Odoo
 
