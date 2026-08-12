@@ -6,6 +6,7 @@ La vía principal es context.lang=es_AR en todas las llamadas execute_kw (ver OD
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, List
 
 # Nombres estándar Odoo en_US → español (AFIP / localización Argentina).
@@ -90,6 +91,28 @@ _EN_DOC_TYPE_PATTERNS: List[tuple[re.Pattern[str], str]] = [
 
 def _norm_key(name: str) -> str:
     return " ".join(str(name or "").strip().split()).upper()
+
+
+def _ascii_upper_doc_name(name: str) -> str:
+    raw = " ".join(str(name or "").strip().split())
+    if not raw:
+        return ""
+    folded = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    return " ".join(folded.split()).upper()
+
+
+def is_credit_note_doc_type_name(name: str) -> bool:
+    """True si el tipo LATAM es nota de crédito (no factura FCE / factura común)."""
+    key = _ascii_upper_doc_name(name)
+    if not key:
+        return False
+    if "NOTA DE CREDITO" in key or "NOTAS DE CREDITO" in key:
+        return True
+    if "CREDIT NOTICE" in key:
+        return True
+    if re.search(r"\bCREDIT NOTES?\b", key) and "INVOICE" not in key:
+        return True
+    return False
 
 
 def localize_latam_document_type_name(name: str) -> str:

@@ -27,7 +27,7 @@ sequenceDiagram
       Entry->>Sync: move existente
     else Nuevo
       Entry->>Create: _build_move_vals
-      Create->>Odoo: create in_invoice
+      Create->>Odoo: create in_invoice / in_refund
       Entry->>Sync: move_id nuevo
     end
     Sync->>Odoo: writes líneas y encabezado
@@ -194,7 +194,7 @@ Dict con contadores (`product_lines_updated`, `tax_lines_updated`, …), listas 
 
 **Archivo:** `create.py`
 
-- `move_type`: `in_invoice`
+- `move_type`: `in_invoice`, o `in_refund` si el tipo LATAM es nota de crédito (`internal_type=credit_note` o nombre NC). Las facturas FCE (MiPyMEs) siguen siendo `in_invoice`.
 - `partner_id`, `journal_id`, `invoice_date`, `invoice_date_due`
 - `l10n_latam_document_number` + **`ref`** (mismo número — searchable en Odoo 19)
 - `l10n_latam_document_type_id`, `x_studio_category` (si perfil soporta rubro)
@@ -207,9 +207,10 @@ Dict con contadores (`product_lines_updated`, `tax_lines_updated`, …), listas 
 
 **Archivo:** `create.py`
 
-1. Domain: `move_type=in_invoice`, `partner_id`, opcionalmente `ref=doc_number`
-2. `search_read` hasta 50/200 candidatos
-3. Filtro Python: `_move_matches_document_number` (latam doc, ref, name con sufijos)
+1. Domain: `move_type` esperado (`in_invoice` o `in_refund`), `partner_id`, opcionalmente `ref=doc_number`
+2. Si no hay match, reintenta el otro `move_type` (evita duplicar NC vs factura con el mismo número)
+3. `search_read` hasta 50/200 candidatos
+4. Filtro Python: `_move_matches_document_number` (latam doc, ref, name con sufijos)
 
 No filtra por `l10n_latam_document_number` en domain (campo computed sin store en Odoo 19+).
 

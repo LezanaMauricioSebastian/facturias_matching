@@ -96,9 +96,10 @@ def import_rows_to_odoo(
 
 | Función | Descripción |
 |---------|-------------|
-| `_build_move_vals(group)` | Dict `account.move.create` |
+| `_vendor_move_type_for_header(header, config=None)` | `in_refund` si NC; si no `in_invoice` |
+| `_build_move_vals(group, config=None)` | Dict `account.move.create` |
 | `_build_line_command(row, group, …)` | Tupla línea Odoo |
-| `_find_existing_move(config, partner_id, doc)` | Busca duplicado |
+| `_find_existing_move(config, partner_id, doc, move_type=…)` | Busca duplicado |
 | `_document_numbers_match` / `_move_matches_document_number` | Comparación doc |
 | `_invoice_due_date_from_group(group)` | ISO due date |
 

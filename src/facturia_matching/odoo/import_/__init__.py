@@ -1,5 +1,6 @@
 """
-Importación de filas UI → facturas de proveedor en Odoo (account.move, in_invoice).
+Importación de filas UI → facturas / notas de crédito de proveedor en Odoo
+(account.move, in_invoice o in_refund).
 Usa la misma instancia Odoo del perfil activo (Dinner o Aliare).
 
 Documentación: docs/import-odoo/README.md
@@ -11,10 +12,12 @@ from facturia_matching.odoo.import_._utils import (
     _move_product_line_fields,
 )
 from facturia_matching.odoo.import_.create import (
+    _DOC_TYPE_INFO_CACHE,
     _build_move_vals,
     _document_numbers_match,
     _find_existing_move,
     _move_matches_document_number,
+    _vendor_move_type_for_header,
     import_rows_to_odoo,
 )
 from facturia_matching.odoo.import_.move_lines import _batch_write_move_lines
@@ -54,6 +57,7 @@ from facturia_matching.odoo.import_.taxes import (
 )
 
 __all__ = [
+    "_DOC_TYPE_INFO_CACHE",
     "_MOVE_LINE_PURCHASE_LINK_CACHE",
     "_account_requires_maturity",
     "_batch_write_move_lines",
@@ -70,6 +74,7 @@ __all__ = [
     "_should_refresh_purchase_links",
     "_tax_ids_for_odoo_line",
     "_tax_line_amount_write_vals",
+    "_vendor_move_type_for_header",
     "apply_purchase_order_price_overwrites",
     "collect_expected_tax_amounts_from_group",
     "group_rows_into_invoices",

@@ -166,10 +166,11 @@ Creación de moves, detección de duplicados y entrypoint HTTP.
 
 | Función | Rol |
 |---------|-----|
-| `_build_move_vals` | Dict para `account.move.create` (sin OC en create inicial) |
+| `_vendor_move_type_for_header` | `in_refund` si el tipo LATAM es NC; si no `in_invoice` |
+| `_build_move_vals` | Dict para `account.move.create` (`move_type` según tipo de comprobante; sin OC en create inicial) |
 | `_canonical_document_number` / `_document_numbers_match` | Comparación flexible de números de comprobante |
 | `_move_matches_document_number` | Match por latam doc, ref o name |
-| `_find_existing_move` | `search_read` por partner; filtro Python (ref almacenado) |
+| `_find_existing_move` | `search_read` por partner + `move_type`; filtro Python (ref almacenado) |
 | `_tax_sync_summary` | Formato respuesta API para un comprobante actualizado |
 | `_import_config_error_message` / `_import_odoo_target_label` | Mensajes según perfil |
 | `import_rows_to_odoo` | **Entrypoint:** validar → prepare → create/update → sync |

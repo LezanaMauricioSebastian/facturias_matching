@@ -59,7 +59,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `request_context.py` | `contextvars` para `odoo_profile` del request actual. |
 | `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks. |
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
-| `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam. |
+| `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
 | `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM (default o elegida) + aprendizaje de producto desde procesos pasados (`company_id`). Candidatos bajo demanda (también sin líneas de producto), OCs no recepcionadas, conservar selección ante fetch vacío, Sin OC mantiene candidatos y rematch dinámico al cambiar proveedor. |
 | `__init__.py` | Marcador. |

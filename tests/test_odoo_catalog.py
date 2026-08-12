@@ -7,6 +7,7 @@ from facturia_matching.odoo.catalog import (
     resolve_account_id,
 )
 from facturia_matching.odoo.document_types_i18n import (
+    is_credit_note_doc_type_name,
     localize_latam_document_type_name,
     prepare_document_types_for_ui,
 )
@@ -56,6 +57,14 @@ class TestDocumentTypeLocalization(unittest.TestCase):
             [{"id": 1, "name": "FACTURAS A", "code": "1"}]
         )
         self.assertEqual(rows[0]["name"], "FACTURAS A")
+
+    def test_credit_note_name_detection(self):
+        self.assertTrue(is_credit_note_doc_type_name("NOTAS DE CRÉDITO A"))
+        self.assertTrue(is_credit_note_doc_type_name("CREDIT NOTES A"))
+        self.assertTrue(is_credit_note_doc_type_name("NOTA DE CRÉDITO ELECTRÓNICA MiPyMEs (FCE) A"))
+        self.assertFalse(is_credit_note_doc_type_name("FACTURAS A"))
+        self.assertFalse(is_credit_note_doc_type_name("FACTURA DE CRÉDITO ELECTRÓNICA MiPyMEs (FCE) A"))
+        self.assertFalse(is_credit_note_doc_type_name("ELECTRONIC CREDIT INVOICE FOR SMBs (ECF) B"))
 
     def test_label_map_from_english_odoo_names(self):
         doc_types = [

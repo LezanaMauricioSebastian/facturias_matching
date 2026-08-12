@@ -32,7 +32,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
-| `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados |
+| `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados, **NC → `in_refund`** |
 | `test_purchase_matching.py` | Candidatos OC bajo demanda (**todas** las OC del partner, sin tope 12), notas Dinner qty=0 bajo `[CÓDIGO]`, factura sin líneas, conservar OC ante fetch vacío / tras reload (pastilla searched), solo encabezado con OC guardada, Sin OC sin perder selector, rematch dinámico por proveedor |
 | `test_comprobante_tax.py` | `collect_expected_*`, `_tax_ids_for_odoo_line` con modos IVA |
 | `test_iva_tax_resolve.py` | Resolución tax id Dinner vs Aliare |

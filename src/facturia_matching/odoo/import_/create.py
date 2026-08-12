@@ -30,12 +30,76 @@ from facturia_matching.odoo.import_.rows import (
     validate_rows_for_import,
 )
 from facturia_matching.odoo.import_.sync import sync_move_taxes_from_group
+from facturia_matching.odoo.document_types_i18n import is_credit_note_doc_type_name
+
+# Cache `{base_url|db|doc_type_id → {internal_type, name, code}}`.
+_DOC_TYPE_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
-def _build_move_vals(group: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _doc_type_info_cache_key(config: Dict[str, Any], doc_type_id: int) -> str:
+    return f"{config.get('base_url')}|{config.get('db')}|{doc_type_id}"
+
+
+def _latam_doc_type_info(config: Dict[str, Any], doc_type_id: int) -> Dict[str, Any]:
+    """Lee internal_type / name del tipo LATAM (Odoo); cache por tenant + id."""
+    cache_key = _doc_type_info_cache_key(config, doc_type_id)
+    cached = _DOC_TYPE_INFO_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    info: Dict[str, Any] = {}
+    try:
+        rows = odoo_execute_kw_with_config(
+            config,
+            "l10n_latam.document.type",
+            "read",
+            [[doc_type_id]],
+            {"fields": ["internal_type", "name", "code"]},
+        )
+        if rows and isinstance(rows[0], dict):
+            info = rows[0]
+    except Exception:
+        try:
+            rows = odoo_execute_kw_with_config(
+                config,
+                "l10n_latam.document.type",
+                "read",
+                [[doc_type_id]],
+                {"fields": ["name", "code"]},
+            )
+            if rows and isinstance(rows[0], dict):
+                info = rows[0]
+        except Exception:
+            info = {}
+    _DOC_TYPE_INFO_CACHE[cache_key] = info
+    return info
+
+
+def _vendor_move_type_for_header(
+    header: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """in_refund para notas de crédito de proveedor; si no, in_invoice."""
+    label = _normalize(header.get("__doc_type_label"))
+    if is_credit_note_doc_type_name(label):
+        return "in_refund"
+    doc_type_id = _int_id(header.get("l10n_latam_document_type_id"))
+    if config and doc_type_id:
+        info = _latam_doc_type_info(config, doc_type_id)
+        internal = _normalize(info.get("internal_type")).lower()
+        if internal == "credit_note":
+            return "in_refund"
+        if is_credit_note_doc_type_name(str(info.get("name") or "")):
+            return "in_refund"
+    return "in_invoice"
+
+
+def _build_move_vals(
+    group: List[Dict[str, Any]],
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     header = group[0]
     vals: Dict[str, Any] = {
-        "move_type": "in_invoice",
+        "move_type": _vendor_move_type_for_header(header, config),
         "partner_id": _int_id(header.get("partner_id")),
         "journal_id": _int_id(header.get("journal_id")),
         "invoice_date": _date_ddmm_to_iso(header.get("invoice_date")),
@@ -116,37 +180,42 @@ def _find_existing_move(
     config: Dict[str, Any],
     partner_id: int,
     doc_number: str,
+    move_type: str = "in_invoice",
 ) -> Optional[Dict[str, Any]]:
     """
-    Busca factura de proveedor existente por proveedor + número de comprobante.
+    Busca comprobante de proveedor existente por proveedor + número.
 
     No usar l10n_latam_document_number en el domain: en Odoo 19+ suele ser computed
     sin store. ref (almacenado) + filtro en Python sobre los candidatos del proveedor.
+    Primero el move_type esperado (factura o NC); si no hay, el otro tipo.
     """
-    base_domain = [
-        ("move_type", "=", "in_invoice"),
-        ("partner_id", "=", partner_id),
-    ]
-    search_domains: List[List[Any]] = [
-        base_domain + [("ref", "=", doc_number)],
-        base_domain,
-    ]
-    for domain in search_domains:
-        limit = 50 if len(domain) > 2 else 200
-        rows = odoo_execute_kw_with_config(
-            config,
-            "account.move",
-            "search_read",
-            [domain],
-            {
-                "fields": _EXISTING_MOVE_FIELDS,
-                "limit": limit,
-                "order": "id desc",
-            },
-        )
-        for row in rows or []:
-            if _move_matches_document_number(row, doc_number):
-                return row
+    expected = move_type if move_type in {"in_invoice", "in_refund"} else "in_invoice"
+    other = "in_refund" if expected == "in_invoice" else "in_invoice"
+    for mt in (expected, other):
+        base_domain = [
+            ("move_type", "=", mt),
+            ("partner_id", "=", partner_id),
+        ]
+        search_domains: List[List[Any]] = [
+            base_domain + [("ref", "=", doc_number)],
+            base_domain,
+        ]
+        for domain in search_domains:
+            limit = 50 if len(domain) > 2 else 200
+            rows = odoo_execute_kw_with_config(
+                config,
+                "account.move",
+                "search_read",
+                [domain],
+                {
+                    "fields": _EXISTING_MOVE_FIELDS,
+                    "limit": limit,
+                    "order": "id desc",
+                },
+            )
+            for row in rows or []:
+                if _move_matches_document_number(row, doc_number):
+                    return row
     return None
 
 
@@ -245,7 +314,10 @@ def import_rows_to_odoo(
             group_warnings = list(import_warnings)
             import_warnings = []
             if skip_duplicates and partner_id and doc_number:
-                existing = _find_existing_move(config, partner_id, doc_number)
+                move_type = _vendor_move_type_for_header(header, config)
+                existing = _find_existing_move(
+                    config, partner_id, doc_number, move_type=move_type
+                )
                 if existing:
                     if update_taxes_if_exists:
                         result = sync_move_taxes_from_group(
@@ -266,7 +338,7 @@ def import_rows_to_odoo(
                         )
                     continue
 
-            vals = _build_move_vals(group)
+            vals = _build_move_vals(group, config)
             move_id = odoo_execute_kw_with_config(config, "account.move", "create", [vals])
             move_id = int(move_id)
             created.append(
