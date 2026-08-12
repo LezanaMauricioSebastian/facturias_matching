@@ -1,6 +1,6 @@
 import { toNumberLoose } from "../utils/index.js";
 
-const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado"]);
+const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado", "IVA No Corresponde"]);
 /** Especiales que anulan pie 21 % (no incluir "0": es modo header FacturIA legítimo). */
 const EXPLICIT_ZERO_IVA = new Set(["IVA Exento", "IVA No Gravado", "IVA No Corresponde"]);
 
@@ -66,7 +66,12 @@ export function hasOtrosImpuestosSelection(groupRows) {
 }
 
 export function shouldShowOtrosFooter(groupRows, totals) {
-  return hasOtrosImpuestosSelection(groupRows) || (totals?.otros || 0) > 0;
+  if (hasOtrosImpuestosSelection(groupRows) || (totals?.otros || 0) > 0) return true;
+  // Montos FacturIA sin label todavía (IIBB / percepciones).
+  const first = groupRows?.[0];
+  const percs = first?.__fac_percepciones;
+  if (Array.isArray(percs) && percs.some((p) => toNumberLoose(p?.monto) > 0)) return true;
+  return false;
 }
 
 export function shouldHideIvaFooter(groupRows) {

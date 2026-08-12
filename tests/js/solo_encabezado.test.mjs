@@ -26,20 +26,38 @@ describe("columnsForTaxMode + Solo encabezado", () => {
     { key: "__total_linea" },
   ];
 
-  it("hides Subtotal unless soloEncabezado", () => {
+  it("always shows Subtotal; Total stays visible", () => {
     const without = columnsForTaxMode(columns, "header", { soloEncabezado: false });
-    assert.ok(!without.some((c) => c.key === "__subtotal"));
+    assert.ok(without.some((c) => c.key === "__subtotal"));
+    assert.ok(without.some((c) => c.key === "__total_linea"));
     const withSolo = columnsForTaxMode(columns, "header", { soloEncabezado: true });
     assert.ok(withSolo.some((c) => c.key === "__subtotal"));
   });
 
-  it("shows IVA and otros montos columns in solo encabezado", () => {
+  it("hides IVA and otros montos columns (amounts only in pie)", () => {
     const withSolo = columnsForTaxMode(columns, "header", { soloEncabezado: true });
-    assert.ok(withSolo.some((c) => c.key === "iva_monto"));
-    assert.ok(withSolo.some((c) => c.key === "otros_impuestos_monto"));
+    assert.ok(!withSolo.some((c) => c.key === "iva_monto"));
+    assert.ok(!withSolo.some((c) => c.key === "otros_impuestos_monto"));
     const without = columnsForTaxMode(columns, "header", { soloEncabezado: false });
     assert.ok(!without.some((c) => c.key === "iva_monto"));
     assert.ok(!without.some((c) => c.key === "otros_impuestos_monto"));
+  });
+
+  it("hides otros impuestos monto columns in multi-line", () => {
+    const cols = columnsForTaxMode(
+      [
+        { key: "otros_impuestos" },
+        { key: "otros_impuestos_monto" },
+        { key: "otros_impuestos_2" },
+        { key: "otros_impuestos_2_monto" },
+      ],
+      "line",
+      { soloEncabezado: false }
+    );
+    assert.ok(cols.some((c) => c.key === "otros_impuestos"));
+    assert.ok(cols.some((c) => c.key === "otros_impuestos_2"));
+    assert.ok(!cols.some((c) => c.key === "otros_impuestos_monto"));
+    assert.ok(!cols.some((c) => c.key === "otros_impuestos_2_monto"));
   });
 });
 
@@ -70,7 +88,7 @@ describe("computeRowTotal solo encabezado", () => {
   });
 });
 
-describe("Subtotal columna (Solo encabezado)", () => {
+describe("Subtotal columna", () => {
   it("usa cantidad × precio aunque exista __fac_subtotal", () => {
     const row = {
       __solo_encabezado: true,

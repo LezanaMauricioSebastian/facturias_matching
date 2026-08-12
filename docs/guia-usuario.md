@@ -41,19 +41,17 @@ Cada factura tiene un bloque expandible con:
 
 | Modo | Dónde editar IVA | Pie IVA |
 |------|------------------|---------|
-| **line** | Columna **IVA monto** en cada fila **o** el pie | Editable (si editás abajo un monto distinto al de las líneas, el comprobante puede pasar a modo **header** y el pie manda) |
-| **header** | Pie del comprobante | Editable |
-| **mixed** | Depende de la fila; totales en el pie | Editable por alícuota |
+| **line** / **header** / **mixed** | Solo el **pie** (montos). En la tabla queda **Impuesto IVA** (%) | Editable |
 
-Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea).
+Los montos de IVA y de otros impuestos **no** se editan en columnas de la tabla (mismo criterio que Odoo: impuestos en la línea, importes abajo). Si hay varias líneas con la misma alícuota, el pie muestra la suma / el encabezado FacturIA.
+
+Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea cuando marcás override).
 
 ### IVA fijo y cambio de Precio
 
-Si el **Monto IVA** de una línea ya está fijado (lo editaste vos o vino así de FacturIA y no es simplemente `precio × %`), al cambiar **Precio** o **Cantidad** el IVA del **pie no se recalcula**: se mantiene el monto fijo.
+Si el IVA del **pie** ya está fijado (editaste el pie o vino de FacturIA y no es simplemente `precio × %`), al cambiar **Precio** o **Cantidad** el pie **no se recalcula** solo: se mantiene el monto fijo cuando hay override / header.
 
-Ejemplo: base 344.760 con IVA 21 % = 72.399,60. Si cambiás el precio de la línea, el pie sigue mostrando 72.399,60 — no pasa a `nuevo precio × 21 %`.
-
-En modo **line**, por defecto el monto autoritativo es la columna **IVA monto**. Si editás el IVA en el **pie** con un valor distinto al de las líneas, el modo puede pasar a **header**: la columna se oculta y el pie queda como fuente de verdad para el import. En modo **header**, el monto autoritativo es siempre el pie (`__fac_iva_monto`).
+En modo **line** sin override de pie, al cambiar precio/cantidad se puede realinear el pie desde las líneas (`syncFacIvaMontosFromLines`).
 
 ### Formato de números
 
@@ -61,21 +59,21 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 
 ## Otros impuestos (IIBB / percepciones)
 
-- Solo deberías ver **una columna** “Otros impuestos” en la tabla (más slots extra solo si hay montos reales en `otros_impuestos_2`, `_3`, …).
-- Si ves muchas columnas vacías (legacy de versiones anteriores): **Restaurar original** y volver a guardar, o recargar el proceso tras un deploy nuevo.
-- El monto de **Otros impuestos** en el pie se consolida en la primera línea de producto al importar (junto con los `tax_ids` de IIBB del padrón).
-- El dropdown se arma **desde Odoo del perfil activo**: IIBB/percepciones conocidos + el resto de impuestos purchase del tenant (**incluidos los IVA**, p.ej. IVA 21 %, Perc Gananc). No es una lista fija incompleta.
+- En la tabla ves el **dropdown** “Otros impuestos” (y slots extra con +). Los **montos** se editan en el **pie**, no en columnas de monto.
+- El **pie** desglosa otros impuestos **como trae FacturIA** (labels: **IIBB** / **Percepción IVA** / **Impuesto Interno** + montos) mientras no hayas elegido impuesto en las líneas. El campo FacturIA `otros_tributos` se muestra como **Impuesto Interno**.
+  - Cuando asignás un impuesto Odoo en el slot del monto FacturIA, el pie **pasa a mostrar ese nombre Odoo**.
+  - Si FacturIA trajo montos y en las líneas no cubrís todos, el pie muestra un **aviso**: «No asignaste en las líneas todos los impuestos de la factura…».
+- Al editar un monto del pie, se **reparte** entre las filas que tienen ese impuesto asignado. Si nadie lo tiene, el monto queda en la primera fila para el pie, pero la columna **Total** de la línea **solo suma** los “otros” asignados en esa fila.
+- El dropdown se arma **desde Odoo del perfil activo**: **todos** los impuestos del tenant (orden alfabético).
 
 ## Solo encabezado
 
 Con el tilde **Solo encabezado** en la primera fila del comprobante:
 
 1. Si hay varias líneas, se colapsan a una sola (para deshacer: **Restaurar original**).
-2. Aparece la columna calculada **Subtotal** (siempre cantidad × precio; se actualiza al editar).
-3. Aparecen en la fila **Monto IVA** y **Monto Otros Impuestos** (editables; se copian desde el encabezado FacturIA si venían vacíos).
-4. Se **oculta el pie** del comprobante (base / IVA / otros / total).
+2. El **pie** del comprobante **sigue visible** (montos IVA / otros se editan ahí, igual que sin el tilde).
 
-Sin el tilde, la tabla y el pie se comportan como siempre. La lista de **Otros impuestos** (con IVAs) no depende de este tilde.
+La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**. No depende del tilde Solo encabezado.
 
 ## Import a Odoo — qué esperar
 

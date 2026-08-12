@@ -61,9 +61,9 @@ El pie guarda montos como strings en JSON, a menudo con formato argentino (`"53.
 ## Edición en la UI
 
 - **Un solo IVA en el pie:** al cargar, si `__fac_iva_montos` tiene una sola alícuota, se rellena **Impuesto IVA** (`iva_pct`) en todas las líneas vacías/`0` del comprobante (`propagateSingleFooterIvaToLines` / `propagate_single_footer_iva_to_lines`).
-- **Modo `line`:** se puede editar **IVA monto** en la tabla **o** el total/alícuotas en el **pie**. Si se edita el pie, se marca `__fac_iva_monto_manual` y ese valor manda al import (no se recalcula desde las líneas).
-- **Override desde el pie distinta a la suma por línea:** la clasificación puede pasar de `line` → `header` (o `mixed` si hay varias alícuotas que no cierran). Es **esperado**: el IVA pasa a vivir en el pie, la columna **IVA monto** se oculta y el import usa el pie. Si el monto editado sigue cerrando con las líneas (tolerancia), el modo puede quedarse en `line` con `__fac_iva_monto_manual`.
-- **Modo `header` / `mixed`:** editar IVA en el **pie** del comprobante (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
+- **Montos solo en el pie:** la UI **no** muestra columnas **Monto IVA** / **Monto Otros Impuestos**. Se edita abajo (estilo Odoo). `showIvaMontoColumn` siempre false.
+- **Modo `line`:** el pie sigue editable; si el usuario cambia el total abajo se marca `__fac_iva_monto_manual` y ese valor manda al import.
+- **Modo `header` / `mixed`:** editar IVA en el **pie** (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
 - Al cambiar cantidad, precio o IVA en modo `line` (sin override de pie), JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
 - Editar el campo **IVA** total (`rateKey === "_total"`) actualiza también el desglose cuando hay una sola alícuota (o asume 21 % si no hay desglose).
 

@@ -9,10 +9,10 @@ export function otroImpuestoNFromNameKey(key) {
 
 export function columnsForTaxMode(columns, taxMode, { soloEncabezado = false } = {}) {
   return columns.filter((c) => {
+    // Montos solo en el pie (estilo Odoo). Labels de impuesto siguen en la tabla.
     if (c.key === "iva_monto") return showIvaMontoColumn(taxMode, soloEncabezado);
-    if (c.key === "__subtotal") return soloEncabezado;
-    if (c.key === "otros_impuestos_monto") return soloEncabezado;
-    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return soloEncabezado;
+    if (c.key === "otros_impuestos_monto") return false;
+    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return false;
     return true;
   });
 }

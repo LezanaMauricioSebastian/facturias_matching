@@ -900,6 +900,15 @@ select.selectLoading {
   border-radius: 0 0 10px 10px;
 }
 
+.comprobanteOtrosWarn td {
+  text-align: left !important;
+  color: #8a5a00;
+  background: #fff8e6;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 1px solid #f0e0b8;
+}
+
 .comprobanteTotalsTable {
   width: 100%;
   max-width: 520px;

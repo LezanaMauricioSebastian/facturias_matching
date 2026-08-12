@@ -50,8 +50,8 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | API pública del bloque comprobante (footer expandible). |
-| `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos. |
-| `footer.js` | Inputs del pie (IVA siempre editable); **`setFooterIvaAmount`** actualiza `__fac_iva_montos` vía `serializeFacIvaMontos` y marca `__fac_iva_monto_manual`. |
+| `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos nombrados. |
+| `footer.js` | Inputs del pie (IVA y otros por slot); **`setFooterIvaAmount`** / **`setOtrosFooterAmount`**; al elegir impuesto en columna **`syncOtrosFooterFromRowSelection`** agrega fila nombrada. |
 | `uiState.js` | Expandido/colapsado, clases CSS por modo. |
 
 ---
@@ -64,6 +64,7 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `totals.js` | **`classifyComprobanteTaxMode`**, **`computeComprobanteTotals`** — parity con Python. |
 | `lineCalc.js` | IVA sugerido por línea desde base × `iva_pct`; `lineIvaMonto` respeta `iva_monto` explícito. |
 | `ivaBreakdown.js` | Desglose por alícuota en el pie; en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota; **`serializeFacIvaMontos`** persiste JSON (formato es-AR en strings). |
+| `otrosBreakdown.js` | Desglose nombrado; provisional FacturIA hasta asignar label Odoo en el slot; **`distributeOtrosFooterAmount`** / **`setOtrosFooterAmount`**. |
 | `groups.js` | Agrupa `state.rows` por `__comprobante_idx`. |
 | `migration.js` | Normaliza filas viejas; **`propagateSingleFooterIvaToLines`**: un solo IVA en el pie → `iva_pct` en todas las líneas vacías. |
 
@@ -117,7 +118,7 @@ UI para modo **Solo encabezado** (`__solo_encabezado`).
 | `collapse.js` | Colapsa multi-línea a una fila; setea `__solo_encabezado`. |
 | `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**. |
 
-Con el tilde activo: columna **Subtotal** (`__subtotal`, siempre cantidad × precio); **Monto IVA** y **Monto Otros Impuestos** visibles en la fila; pie oculto en `comprobanteView/footer.js`.
+Con el tilde activo: se colapsan líneas; el **pie sigue visible** (montos solo abajo). Columna **Subtotal** siempre visible.
 
 ---
 

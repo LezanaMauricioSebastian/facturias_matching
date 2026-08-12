@@ -4,11 +4,16 @@ import {
   computeComprobanteTotals,
   comprobanteGroupByIdx,
   computeIvaBreakdown,
+  computeOtrosBreakdown,
   parseFacIvaMontos,
   serializeFacIvaMontos,
   shouldHideIvaFooter,
   shouldShowOtrosFooter,
-  hasOtrosImpuestosSelection,
+  setOtrosFooterAmount,
+  ensureOtrosLabelOnFirstRow,
+  maxOtrosSlotNOnRow,
+  stripPieMirrorLabelsFromFirstRow,
+  missingFacOtrosAssignments,
 } from "../comprobanteTax/index.js";
 import {
   formatMoney,
@@ -17,7 +22,7 @@ import {
   escapeHtml,
 } from "../utils/index.js";
 import { updateProcessTotals, updateRowTotals } from "../table/index.js";
-import { isSoloEncabezado } from "../singleLine/index.js";
+import { ensureOtroImpuestoColumns } from "../rows/index.js";
 
 function footerMoneyCell(n) {
   return n == null || Number.isNaN(n) ? "—" : formatMoney(n);
@@ -49,18 +54,54 @@ function renderIvaFooterRows(totals, compIdx, groupRows) {
     .join("");
 }
 
-function formatOtrosFooterValue(groupRows, totals) {
-  const otrosVal = totals.otros || 0;
-  if (otrosVal > 0) return formatNumericForDisplay(otrosVal, "otros_impuestos_monto");
-  if (hasOtrosImpuestosSelection(groupRows)) return "0";
-  return "";
+function renderOtrosFooterRows(totals, compIdx, groupRows) {
+  if (!shouldShowOtrosFooter(groupRows, totals)) return "";
+  const breakdown = computeOtrosBreakdown(groupRows);
+  const missing = missingFacOtrosAssignments(groupRows);
+  let html = "";
+  if (!breakdown.length) {
+    html = `<tr data-comp-footer-otros-row="${escapeHtml(compIdx)}">
+            <td>Otros impuestos</td>
+            <td>
+              <input type="text" inputmode="decimal" class="comprobanteFooterInput"
+                data-comp-footer-otros="${escapeHtml(compIdx)}"
+                data-otros-slot="1"
+                value="" />
+            </td>
+          </tr>`;
+  } else {
+    html = breakdown
+      .map((row) => {
+        const shown = row.amount > 0 ? formatNumericForDisplay(row.amount, "otros_impuestos_monto") : "";
+        return `<tr data-comp-footer-otros-row="${escapeHtml(compIdx)}" data-otros-slot="${escapeHtml(row.slotKey)}">
+            <td>${escapeHtml(row.label)}</td>
+            <td>
+              <input type="text" inputmode="decimal" class="comprobanteFooterInput"
+                data-comp-footer-otros="${escapeHtml(compIdx)}"
+                data-otros-slot="${escapeHtml(row.slotKey)}"
+                value="${escapeHtml(shown)}" />
+            </td>
+          </tr>`;
+      })
+      .join("");
+  }
+  if (missing.length) {
+    html += `<tr class="comprobanteOtrosWarn" data-comp-footer-otros-warn="${escapeHtml(compIdx)}">
+      <td colspan="2">No asignaste en las líneas todos los impuestos de la factura: ${escapeHtml(missing.join(", "))}</td>
+    </tr>`;
+  }
+  return html;
 }
 
 function footerStructureSignature(groupRows, totals, breakdown) {
+  const otros = computeOtrosBreakdown(groupRows);
+  const missing = missingFacOtrosAssignments(groupRows);
   return JSON.stringify({
     hideIva: shouldHideIvaFooter(groupRows),
     showOtros: shouldShowOtrosFooter(groupRows, totals),
     ivaKeys: (breakdown || []).map((b) => `${b.rateKey}:${b.editable}`).join(","),
+    otrosKeys: otros.map((b) => `${b.slotKey}:${b.label}`).join(","),
+    missingOtros: missing.join("|"),
   });
 }
 
@@ -78,7 +119,7 @@ function syncFooterTaxRows(card, compKey, totals, groupRows) {
   }
 
   const middleHtml =
-    renderIvaFooterRows(totals, compKey, groupRows) + renderOtrosFooterRow(totals, compKey, groupRows);
+    renderIvaFooterRows(totals, compKey, groupRows) + renderOtrosFooterRows(totals, compKey, groupRows);
   if (middleHtml) grandTotal.insertAdjacentHTML("beforebegin", middleHtml);
 }
 
@@ -89,20 +130,8 @@ function isFooterTaxInput(el) {
   );
 }
 
-function renderOtrosFooterRow(totals, compIdx, groupRows) {
-  if (!shouldShowOtrosFooter(groupRows, totals)) return "";
-  const otrosShown = formatOtrosFooterValue(groupRows, totals);
-  return `<tr data-comp-footer-otros-row="${escapeHtml(compIdx)}">
-            <td>Otros impuestos</td>
-            <td>
-              <input type="text" inputmode="decimal" class="comprobanteFooterInput"
-                data-comp-footer-otros="${escapeHtml(compIdx)}" value="${escapeHtml(otrosShown)}" />
-            </td>
-          </tr>`;
-}
-
 export function renderFooterHtml(totals, compIdx, groupRows) {
-  if (isSoloEncabezado(groupRows?.[0])) return "";
+  // Montos siempre en el pie (también con Solo encabezado: colapsa líneas, no el pie).
   return `<div class="comprobanteFooter">
       <table class="comprobanteTotalsTable">
         <tbody>
@@ -111,7 +140,7 @@ export function renderFooterHtml(totals, compIdx, groupRows) {
             <td class="comprobanteFooterReadonly" data-comp-footer-base="${escapeHtml(compIdx)}">${footerMoneyCell(totals.baseOdoo)}</td>
           </tr>
           ${renderIvaFooterRows(totals, compIdx, groupRows)}
-          ${renderOtrosFooterRow(totals, compIdx, groupRows)}
+          ${renderOtrosFooterRows(totals, compIdx, groupRows)}
           <tr class="totalsGrand">
             <td>Total</td>
             <td class="comprobanteFooterReadonly" data-comp-footer-total="${escapeHtml(compIdx)}">${footerMoneyCell(totals.totalOdoo)}</td>
@@ -119,12 +148,6 @@ export function renderFooterHtml(totals, compIdx, groupRows) {
         </tbody>
       </table>
     </div>`;
-}
-
-function firstRowOfComp(state, compIdx) {
-  const g = comprobanteGroupByIdx(state.rows, compIdx);
-  if (!g?.rowIndices?.length) return null;
-  return state.rows[g.rowIndices[0]];
 }
 
 function groupRowsOfComp(state, compIdx) {
@@ -157,18 +180,40 @@ function setFooterIvaAmount(state, compIdx, rateKey, rawValue) {
   if (first) first.__fac_iva_monto_manual = true;
 }
 
-function setComprobanteFooterOtros(state, compIdx, rawValue) {
-  const g = comprobanteGroupByIdx(state.rows, compIdx);
-  if (!g) return;
+function setComprobanteFooterOtrosSlot(state, compIdx, slotN, rawValue) {
+  const groupRows = groupRowsOfComp(state, compIdx);
+  if (!groupRows.length) return;
   const normalized = normalizeNumericValue(rawValue, "otros_impuestos_monto");
-  for (const idx of g.rowIndices) {
-    state.rows[idx].otros_impuestos_monto = "";
+  const n = parseInt(slotN, 10) || 1;
+  if (state && n >= 2) ensureOtroImpuestoColumns(state, n);
+  setOtrosFooterAmount(groupRows, n, normalized);
+}
+
+/**
+ * Al elegir un impuesto en la columna, asegura una fila de pie con ese nombre.
+ * @returns {boolean} true si hay que re-renderizar pie (nuevo slot / label).
+ */
+export function syncOtrosFooterFromRowSelection(state, rowIdx) {
+  const row = state.rows?.[rowIdx];
+  if (!row) return false;
+  const g = comprobanteGroupByIdx(state.rows, row.__comprobante_idx);
+  if (!g) return false;
+  const groupRows = g.rowIndices.map((i) => state.rows[i]);
+  const beforeMissing = missingFacOtrosAssignments(groupRows).join("|");
+  stripPieMirrorLabelsFromFirstRow(groupRows);
+  // Multi-impuesto solo en la línea editada (col 2+ vía +).
+  if (groupRows[0] === row) {
+    const lab1 = String(row.otros_impuestos ?? "").trim();
+    if (lab1) ensureOtrosLabelOnFirstRow(groupRows, lab1, { selectedRow: row });
     for (let n = 2; n <= 20; n++) {
-      state.rows[idx][`otros_impuestos_${n}_monto`] = "";
+      const lab = String(row[`otros_impuestos_${n}`] ?? "").trim();
+      if (lab) ensureOtrosLabelOnFirstRow(groupRows, lab, { selectedRow: row });
     }
   }
-  const first = state.rows[g.rowIndices[0]];
-  if (first) first.otros_impuestos_monto = normalized;
+  const maxOnRow = maxOtrosSlotNOnRow(row);
+  if (maxOnRow >= 2) ensureOtroImpuestoColumns(state, maxOnRow);
+  const afterMissing = missingFacOtrosAssignments(groupRows).join("|");
+  return beforeMissing !== afterMissing;
 }
 
 function refreshComprobanteRowTotals(state, refs, compIdx) {
@@ -197,7 +242,8 @@ export function attachComprobanteFooterHandlers(wrap, state, refs, handlers) {
     }
     if (t.hasAttribute("data-comp-footer-otros")) {
       const comp = t.getAttribute("data-comp-footer-otros");
-      setComprobanteFooterOtros(ctx.state, comp, t.value);
+      const slot = t.getAttribute("data-otros-slot") || "1";
+      setComprobanteFooterOtrosSlot(ctx.state, comp, slot, t.value);
       updateComprobanteFooters(ctx.state, ctx.refs);
       ctx.handlers.onAutoSave?.();
     }
@@ -222,8 +268,9 @@ export function attachComprobanteFooterHandlers(wrap, state, refs, handlers) {
       }
       if (t.hasAttribute("data-comp-footer-otros")) {
         const comp = t.getAttribute("data-comp-footer-otros");
-        setComprobanteFooterOtros(ctx.state, comp, t.value);
+        const slot = t.getAttribute("data-otros-slot") || "1";
         const normalized = normalizeNumericValue(t.value, "otros_impuestos_monto");
+        setComprobanteFooterOtrosSlot(ctx.state, comp, slot, normalized);
         t.value = normalized ? formatNumericForDisplay(normalized, "otros_impuestos_monto") : "";
         updateComprobanteFooters(ctx.state, ctx.refs);
         refreshComprobanteRowTotals(ctx.state, ctx.refs, comp);
@@ -244,12 +291,12 @@ export function updateComprobanteFooters(state, refs) {
     const card = wrap.querySelector(`.comprobanteCard[data-comp="${CSS.escape(String(g.compIdx))}"]`);
     if (!card) continue;
     const groupRows = g.rowIndices.map((i) => state.rows[i]);
-    if (isSoloEncabezado(groupRows[0])) continue;
     const compKey = String(g.compIdx);
     const mode = state.comprobanteTaxModes?.[compKey] || classifyComprobanteTaxMode(groupRows);
     state.comprobanteTaxModes[compKey] = mode;
     const totals = computeComprobanteTotals(groupRows, mode);
     const breakdown = totals.ivaBreakdown || computeIvaBreakdown(groupRows, totals);
+    const otrosBreakdown = computeOtrosBreakdown(groupRows);
     const structureSig = footerStructureSignature(groupRows, totals, breakdown);
     const prevStructure = state.comprobanteFooterStructure[compKey];
 
@@ -275,10 +322,13 @@ export function updateComprobanteFooters(state, refs) {
       ivaCell.textContent = footerMoneyCell(row?.amount || 0);
     });
 
-    const otrosInp = card.querySelector(`[data-comp-footer-otros="${CSS.escape(compKey)}"]`);
-    if (otrosInp && document.activeElement !== otrosInp) {
-      otrosInp.value = formatOtrosFooterValue(groupRows, totals);
-    }
+    card.querySelectorAll(`[data-comp-footer-otros="${CSS.escape(compKey)}"]`).forEach((otrosInp) => {
+      if (document.activeElement === otrosInp) return;
+      const slot = otrosInp.getAttribute("data-otros-slot") || "1";
+      const row = otrosBreakdown.find((b) => String(b.slotKey) === String(slot));
+      const amt = row?.amount || 0;
+      otrosInp.value = amt > 0 ? formatNumericForDisplay(amt, "otros_impuestos_monto") : "";
+    });
 
     const totalCell = card.querySelector(`[data-comp-footer-total="${CSS.escape(compKey)}"]`);
     if (totalCell) totalCell.textContent = footerMoneyCell(totals.totalOdoo);

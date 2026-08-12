@@ -15,7 +15,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 57255.38,
       "expected_base_odoo": 272644.68,
       "expected_total_odoo": 329900.06
@@ -121,7 +121,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 31500.0
     },
     {
@@ -144,7 +144,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 460.0
     },
     {
@@ -163,7 +163,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 999.0,
       "expected_collect_iva": 999.0
     },
@@ -203,7 +203,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true
+      "show_iva_column": false
     },
     {
       "id": "tolerance_boundary_mismatch",
@@ -248,7 +248,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 210.0
     },
     {
@@ -288,7 +288,7 @@
       ],
       "expected_mode": "line",
       "footer_editable": true,
-      "show_iva_column": true,
+      "show_iva_column": false,
       "expected_iva_odoo": 420.0
     },
     {
