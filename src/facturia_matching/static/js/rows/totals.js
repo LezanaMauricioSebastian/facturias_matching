@@ -1,10 +1,27 @@
 import {
   formatNumberEsAR,
+  otrosImpuestoKey,
   otrosImpuestoMontoKey,
   toNumberLoose,
 } from "../utils/index.js";
 import { lineBase, lineIvaSuggested } from "../comprobanteTax/index.js";
 import { isSoloEncabezado } from "../singleLine/index.js";
+
+/**
+ * Solo montos de slots con impuesto asignado en la línea.
+ * Los montos FacturIA hidratados en la 1ª fila (sin label) alimentan el pie,
+ * no deben inflar la columna Total de esa fila.
+ */
+function sumAssignedOtrosMontos(row) {
+  let otrosMonto = 0;
+  for (let n = 1; n <= 20; n++) {
+    if (row?.[`__otros_pie_mirror_${n}`]) continue;
+    const lab = String(row?.[otrosImpuestoKey(n)] ?? "").trim();
+    if (!lab) continue;
+    otrosMonto += toNumberLoose(row?.[otrosImpuestoMontoKey(n)]);
+  }
+  return otrosMonto;
+}
 
 export function computeRowTotal(row, taxMode = "header") {
   const base = lineBase(row);
@@ -32,11 +49,15 @@ export function computeRowTotal(row, taxMode = "header") {
     }
   }
 
-  let otrosMonto = toNumberLoose(row?.["otros_impuestos_monto"]);
-  for (let n = 2; n <= 20; n++) {
-    const mk = otrosImpuestoMontoKey(n);
-    otrosMonto += toNumberLoose(row?.[mk]);
-  }
+  // Solo encabezado: una fila = todo el comprobante → sumar todos los montos.
+  // Multi-línea: solo slots con impuesto asignado (no storage FacturIA del pie).
+  const otrosMonto = isSoloEncabezado(row)
+    ? (() => {
+        let s = toNumberLoose(row?.["otros_impuestos_monto"]);
+        for (let n = 2; n <= 20; n++) s += toNumberLoose(row?.[otrosImpuestoMontoKey(n)]);
+        return s;
+      })()
+    : sumAssignedOtrosMontos(row);
 
   return base + ivaMonto + otrosMonto;
 }

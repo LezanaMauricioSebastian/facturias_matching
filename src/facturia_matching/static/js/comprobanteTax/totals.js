@@ -68,9 +68,9 @@ export function classifyComprobanteTaxMode(groupRows) {
   return "header";
 }
 
-/** Monto IVA por línea cuando el impuesto se detecta en particular (modo line/mixed o Solo encabezado). */
-export function showIvaMontoColumn(mode, soloEncabezado = false) {
-  return mode === "line" || mode === "mixed" || soloEncabezado;
+/** Monto IVA solo en el pie (como Odoo). La columna de tabla ya no se muestra. */
+export function showIvaMontoColumn(_mode, _soloEncabezado = false) {
+  return false;
 }
 
 /** IVA del pie: siempre editable (en modo line el override marca `__fac_iva_monto_manual`). */

@@ -8,11 +8,28 @@ Guía de comportamiento de la UI, el cálculo de totales y el pipeline de import
 
 Los **ids numéricos** de `account.tax` dependen del tenant (Dinner, Aliare, Sudata). La misma alícuota puede ser id distinto en cada Odoo:
 
-| Alícuota | Dinner (ej.) | Aliare (ej.) |
-|----------|--------------|--------------|
-| 21 %     | 63           | 65           |
-| 10,5 %   | 61           | 63           |
-| 27 %     | 65           | 67           |
+| Alícuota | Dinner (ej.) | Aliare (ej.) | Sudata |
+|----------|--------------|--------------|--------|
+| 21 %     | 63           | 65           | 65 (`VAT 21%`) |
+| 10,5 %   | 61           | 63           | 63 (`VAT 10.5%`) |
+| 27 %     | 65           | 67           | 67 (`VAT 27%`) |
+
+### Idioma del catálogo (`resolve_odoo_lang`)
+
+Los nombres de `account.tax` son **campos traducibles**: llegan en el idioma que pide el RPC. Pedir uno no instalado no falla, devuelve el texto fuente en inglés (`VAT 21%` en vez de `IVA 21%`).
+
+`resolve_odoo_lang` elige, en orden:
+
+1. Override por env: `ODOO_LANG_SUDATA` / `ODOO_LANG_ALIARE` / `ODOO_LANG`.
+2. Primer idioma de `ODOO_LANG_CANDIDATES` **instalado** en el tenant: `es_AR`, si no `es_419` (se consulta `res.lang` una vez por tenant, cacheado).
+3. Default histórico: `es_AR` en Dinner/Aliare, sin `lang` en Sudata.
+
+| Tenant | Idioma instalado | `lang` usado | Nombres |
+|--------|------------------|--------------|---------|
+| Dinner / Aliare | `es_AR` | `es_AR` | `IVA 21%`, `Perc IVA` |
+| Sudata Cloud | `es_419` (es_AR inactivo) | `es_419` | `IVA 21%`, `Perc IVA` |
+
+Aun así la resolución **no depende del idioma**: se hace por `amount` (alícuota) y acepta prefijos `IVA `/`VAT ` (`_IVA_TAX_NAME_PREFIXES`) más alias EN de las alícuotas cero (`_SPECIAL_IVA_NAME_KEYS`). Los alias de percepciones son bidireccionales (`Perc IVA` ↔ `Perc VAT`) para que las conversiones guardadas con el catálogo en inglés sigan resolviendo. Ver [§ IVA 21 % llega como IVA 10,5 % en Sudata](#iva-21--llega-como-iva-105--en-sudata-nombres-en).
 
 **Siempre** pasar `?odoo_profile=aliare` (o `perfil=aliare`) en la URL y en el import cuando se trabaja contra Aliare. Sin perfil, la UI resuelve impuestos contra Dinner y los ids no coinciden con Odoo Aliare.
 
@@ -24,9 +41,9 @@ Cada comprobante (grupo de filas con el mismo `__comprobante_idx` o número de d
 
 | Modo | Cuándo | IVA editable en la tabla | IVA editable en el pie |
 |------|--------|--------------------------|-------------------------|
-| **`line`** | Todas las líneas tienen `iva_pct` y los montos por fila cierran con el encabezado FacturIA, o hay `iva_monto` editado en la fila | Sí (columna **IVA monto**) | Sí (override del total; marca `__fac_iva_monto_manual` y el pie manda al import) |
-| **`header`** | El IVA viene del encabezado (`__fac_iva_monto` / `__fac_iva_montos`) y no hay tasas por línea, o una sola línea cuyo % no cierra y el IVA no fue editado manualmente | No (columna oculta o sin uso) | Sí (pie del comprobante) |
-| **`mixed`** | Hay líneas con y sin `iva_pct`, o varias alícuotas con totales que no cierran de forma uniforme | Depende de la fila | Sí (pie por alícuota y/o total) |
+| **`line`** | Todas las líneas tienen `iva_pct` y los montos por fila cierran con el encabezado FacturIA, o hay `iva_monto` editado en la fila | No (montos solo en pie; la tabla conserva **Impuesto IVA** %) | Sí |
+| **`header`** | El IVA viene del encabezado (`__fac_iva_monto` / `__fac_iva_montos`) y no hay tasas por línea, o una sola línea cuyo % no cierra y el IVA no fue editado manualmente | No | Sí |
+| **`mixed`** | Hay líneas con y sin `iva_pct`, o varias alícuotas con totales que no cierran de forma uniforme | No (montos solo en pie) | Sí |
 
 La clasificación vive en:
 
@@ -61,31 +78,23 @@ El pie guarda montos como strings en JSON, a menudo con formato argentino (`"53.
 ## Edición en la UI
 
 - **Un solo IVA en el pie:** al cargar, si `__fac_iva_montos` tiene una sola alícuota, se rellena **Impuesto IVA** (`iva_pct`) en todas las líneas vacías/`0` del comprobante (`propagateSingleFooterIvaToLines` / `propagate_single_footer_iva_to_lines`).
-- **Modo `line`:** se puede editar **IVA monto** en la tabla **o** el total/alícuotas en el **pie**. Si se edita el pie, se marca `__fac_iva_monto_manual` y ese valor manda al import (no se recalcula desde las líneas).
-- **Override desde el pie distinta a la suma por línea:** la clasificación puede pasar de `line` → `header` (o `mixed` si hay varias alícuotas que no cierran). Es **esperado**: el IVA pasa a vivir en el pie, la columna **IVA monto** se oculta y el import usa el pie. Si el monto editado sigue cerrando con las líneas (tolerancia), el modo puede quedarse en `line` con `__fac_iva_monto_manual`.
-- **Modo `header` / `mixed`:** editar IVA en el **pie** del comprobante (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
-- Al cambiar cantidad, precio o IVA en modo `line` (sin override de pie), JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
+- **Montos solo en el pie:** la UI **no** muestra columnas **Monto IVA** / **Monto Otros Impuestos**. Se edita abajo (estilo Odoo). `showIvaMontoColumn` siempre false.
+- **Modo `line`:** el pie sigue editable; si el usuario cambia el total abajo se marca `__fac_iva_monto_manual` y ese valor manda al import.
+- **Modo `header` / `mixed`:** editar IVA en el **pie** (`comprobanteView/footer.js` → `serializeFacIvaMontos`).
+- Al cambiar cantidad, precio o IVA % en modo `line` (sin override de pie), JS llama `syncFacIvaMontosFromLines` para alinear `__fac_iva_montos` antes de autosave.
 - Editar el campo **IVA** total (`rateKey === "_total"`) actualiza también el desglose cuando hay una sola alícuota (o asume 21 % si no hay desglose).
+- **Cambiar la alícuota de una línea** re-etiqueta el pie si ninguna de sus alícuotas sigue en las líneas (el monto se conserva): ver [Cambiar la alícuota en la línea deja la vieja en el pie](#cambiar-la-alícuota-en-la-línea-deja-la-vieja-en-el-pie-testing-elías-1382026).
 
 ### IVA fijo al cambiar precio o cantidad
 
-Si el **Monto IVA** de la línea ya está fijado (editado manualmente o viene de FacturIA y **no coincide** con `precio × cantidad × %`), cambiar **Precio** o **Cantidad** **no debe** pisar ese monto fijo.
+Si el monto IVA del pie / línea ya está fijado (override o FacturIA ≠ `precio × cantidad × %`), cambiar **Precio** o **Cantidad** **no debe** pisar ese monto fijo sin querer.
 
 | Situación | Comportamiento esperado |
 |-----------|-------------------------|
-| Modo `line`/`mixed`, `iva_monto` fijo (`__iva_monto_manual` o FacturIA ≠ sugerido) | Se conserva el monto fijo |
-| Modo `header`, una sola alícuota, `__fac_iva_monto` sin JSON por tasa | El pie usa `__fac_iva_monto`, no el cálculo por línea |
-| Modo `line`/`mixed`, `iva_monto` coincidía con el sugerido (auto) | Al editar precio/cantidad, se limpia el sticky y se recalcula |
+| Pie con `__fac_iva_monto_manual` o modo `header` | Se conserva el monto del pie |
+| Modo `line` sin override, `iva_monto` auto | Al editar precio/cantidad se limpia sticky y se realinea el pie |
 
-**Regresión PDF Salta (filas 1/5/6):** al editar Precio, el `iva_monto` auto viejo ≠ nuevo sugerido y `computeRowTotal` lo trataba como fijo. Fix: `clearStickyLineIvaOnPriceQtyEdit` en input/blur de precio o cantidad si no hay `__iva_monto_manual`.
-
-**Regresión FacturIA fijo:** al editar **Precio**, no sobrescribir un `iva_monto` que ya difería del sugerido. Implementación:
-
-- **JS:** `rows/totals.js` → `computeRowTotal` + `clearStickyLineIvaOnPriceQtyEdit`.
-- **JS:** `comprobanteTax/ivaBreakdown.js` → `computeIvaBreakdown` en `header`/`mixed` usa `__fac_iva_monto` si hay una sola alícuota y no hay monto por tasa en `__fac_iva_montos` (paridad con `fac_iva_montos` en Python).
-- **JS:** `table/render.js` re-renderiza si el modo tax cruza `line` ↔ `header`/`mixed`; columna **Monto IVA** visible también en `mixed` (`showIvaMontoColumn`).
-
-Tests: `header footer IVA fixed when price changes`, `sticky iva_monto on price edit` en `tests/js/comprobante_tax.test.mjs`.
+**JS:** `table/render.js` re-renderiza si el modo tax cruza `line` ↔ `header`/`mixed`.
 
 ## Import a Odoo (resumen del pipeline)
 
@@ -123,9 +132,9 @@ Sin esta distinción, un comprobante `mixed`/`header` con IVA editado en el pie 
 
 ### Regla de `tax_ids` en líneas de producto
 
-- **`header`:** ninguna línea lleva IVA numérico en `tax_ids` (el total IVA va en el pie). **Excepción:** `IVA Exento` e `IVA No Gravado` sí van en la línea de producto (monto 0 en Odoo).
-- **`line` / `mixed`:** IVA en la línea si esa fila tiene `iva_pct > 0` o `IVA Exento` / `IVA No Gravado`.
-- **`0` / `IVA No Corresponde`:** sin tax IVA en la línea (comportamiento anterior).
+- **`header`:** ninguna línea lleva IVA numérico en `tax_ids` (el total IVA va en el pie). **Excepción:** `IVA Exento`, `IVA No Gravado` e `IVA No Corresponde` sí van en la línea de producto (monto 0 en Odoo).
+- **`line` / `mixed`:** IVA en la línea si esa fila tiene `iva_pct > 0` o `IVA Exento` / `IVA No Gravado` / `IVA No Corresponde`.
+- **`"0"` (header FacturIA):** sin tax IVA en la línea (distinto de No Corresponde).
 - **Otros impuestos por línea:** cada fila de producto lleva a Odoo los `otros_impuestos` de **esa** fila (`_tax_ids_for_odoo_line`). Si querés agruparlos en una sola línea, usá «agregar más» en la UI.
 - **IIBB / percepciones en solo encabezado:** se agregan a la **primera línea con contenido** (`_header_only_non_iva_tax_ids`, `_merge_header_only_non_iva_tax_ids` en `odoo/import_/taxes.py`).
 - Tras OC/precio el sync **re-aplica `tax_ids`** para no perder lo de cada línea.
@@ -135,7 +144,7 @@ La distinción vive en `iva_pct_requires_line_tax` (`padron/taxes.py`).
 
 - **IVA:** con un solo producto y `IVA Exento`, `IVA No Gravado` o `IVA No Corresponde`, no se muestran filas de IVA en el pie (y el total no incluye 21 % residual de FacturIA). El `0` de modo header FacturIA sigue mostrando el pie.
 - **Cambio de Impuesto IVA a cero explícito:** limpia `__fac_iva_montos` / `__fac_iva_monto` del comprobante para que el import no mande IVA 21 % junto con Exento/No Gravado/No Corresponde.
-- **Otros impuestos:** el pie muestra **lo que trae FacturIA** (IIBB / Percepción IVA / Otros tributos + montos). Las líneas se asignan a mano; col 2/3 solo si esa línea tiene más de un impuesto. Si faltan asignaciones compatibles en líneas → aviso `missingFacOtrosAssignments`. Código: `otrosBreakdown.js` + `footer.js`.
+- **Otros impuestos:** el pie muestra **lo que trae FacturIA** (IIBB / Percepción IVA / Impuesto Interno + montos) **hasta que** asignás un impuesto Odoo **de ese mismo tipo** en el slot. Elegir **Impuesto Interno** en la 1ª línea (col Otros) es `tax_ids` de esa fila: **no** renombra el slot IIBB ni oculta IIBB, ni duplica Interno (Dinner FA-A 05215-00084885). Si agregás un impuesto con **+** **o** elegís uno extra en otra línea (p.ej. **IVA Adicional 20%**) y todavía no hay monto, el pie **igual lista la fila** (monto 0 / vacío) para editarlo abajo. El key FacturIA `otros_tributos` se etiqueta como **Impuesto Interno**. Las líneas se asignan a mano; col 2/3 solo si esa línea tiene más de un impuesto. Si faltan asignaciones en líneas → aviso `missingFacOtrosAssignments` (Interno en el slot IIBB **no** cubre IIBB). La columna **Total** de cada línea solo suma `otros_*_monto` de slots **con label** en esa fila (montos FacturIA sin asignar en la 1ª fila alimentan el pie, no inflan el Total). Código: `otrosBreakdown.js` + `footer.js` + `rows/totals.js`.
 
 ### Reload y Monto IVA (migración legacy)
 
@@ -149,7 +158,7 @@ Si el modo se clasifica mal como `header` cuando el usuario editó `iva_monto` e
 
 - **`line`:** suma `line_iva_monto(row)` por fila, indexado por `account.tax` id del perfil activo.
 - **`header` / `mixed`:** usa `fac_iva_montos(group)` y mapea cada alícuota con `_iva_tax_id_for_rate` + `_iva_tax_resolve_row` (primera línea con `iva_pct` o fila con metadata del pie).
-- **IIBB / otros:** suma todos los slots `otros_impuestos_N` / `otros_impuestos_N_monto` de **cualquier fila** del comprobante; remapeo de ids padrón vía `build_csv_additional_taxes` (`padron/taxes.py`).
+- **IIBB / otros:** suma todos los slots `otros_impuestos_N` / `otros_impuestos_N_monto` de **cualquier fila** del comprobante. Si el monto está en la 1ª fila **sin label** (hidratación FacturIA) y el impuesto Odoo está en otra línea, se mapea por `amount_key` (`percepcion_iibb` / `percepcion_iva` / `otros_tributos`) al tax id de esa línea — no se pisa el IIBB de la 1ª fila. Remapeo de ids padrón vía `build_csv_additional_taxes` (`padron/taxes.py`).
 
 Si falta una línea `display_type=tax` en Odoo para un impuesto esperado, `_ensure_missing_tax_lines_on_move` refuerza `tax_ids` en la primera línea de producto (incluye IVA faltante en header) y luego se pisan los montos.
 
@@ -225,6 +234,17 @@ Cualquier apunte contable en una cuenta por pagar debe tener una fecha límite y
 - **Solución:** al elegir IVA cero explícito en todas las líneas del comprobante, se limpia el pie (`clear_fac_iva_footer` / `clearFacIvaFooter`); `fac_iva_montos` / `computeIvaBreakdown` ignoran el JSON residual; `reconcile_fac_iva_for_import` limpia antes del sync. El modo **header** con `iva_pct` vacío sigue usando el pie.
 - Tests: `test_meriti_exento_clears_stale_21_footer_amounts`, `clears stale 21% footer when selecting IVA Exento` en `tests/js/comprobante_tax.test.mjs`.
 
+### Cambiar la alícuota en la línea deja la vieja en el pie (testing Elías 13/8/2026)
+
+- **Síntoma:** comprobante Sudata en modo **header** con pie `{"21": "48306,18"}`; al cambiar **Impuesto IVA** de `21` a `10,5` el pie muestra **las dos** filas (`IVA 21 %` con el monto original + `IVA 10,5 %`) y el import sigue mandando el impuesto **21 %** (id 65 en Sudata), o sea que cambiar la alícuota no tenía ningún efecto en Odoo.
+- **Causa:** el desglose unía las alícuotas de las líneas con las claves guardadas en `__fac_iva_montos` (`rateKeys = suggested ∪ stored`), y `fac_iva_montos` devolvía el JSON tal cual, así que la alícuota vieja sobrevivía al cambio.
+- **Solución:** si **ninguna** alícuota del pie sigue declarada en las líneas, el pie se **re-etiqueta** a las alícuotas de las líneas conservando el monto (`_realign_footer_rates` / `realignFooterRates`). Con varias alícuotas declaradas el monto se reparte proporcional al IVA sugerido de cada una. El cambio se persiste (`_persist_realigned_footer_rates` en `reconcile_fac_iva_for_import`; `persistRealignedFooterRates` al cambiar el selector) para que el autosave no deje la clave vieja.
+- **Invariantes que no se tocan** (el pie queda igual):
+  - Alguna alícuota del pie **sí** está en las líneas (pie FacturIA multi-alícuota, ej. líneas 21 % + 10,5 %).
+  - Alguna línea con contenido **no declara** alícuota (`iva_pct` vacío o `"0"`): modo header legítimo, el pie manda.
+  - Las líneas **no cubren** `__fac_subtotal`: el pie puede tener montos de la parte no desglosada (ver `test_header_partial_fac_iva_montos_matches_footer_total`).
+- Tests: `test_switching_line_rate_relabels_footer_iva`, `test_switching_line_rate_persists_relabeled_footer`, `test_footer_rate_not_covered_by_lines_is_kept`, `test_switching_line_rate_sends_new_iva_tax_id`, `cambio de alícuota en la línea (Sudata 13/8/2026)` en `tests/js/comprobante_tax.test.mjs`.
+
 ### Pie con un solo IVA y líneas sin Impuesto IVA
 
 - **Síntoma:** el pie muestra p. ej. **IVA 21 %** con monto, pero la columna **Impuesto IVA** de las líneas está vacía (FacturIA trajo `iva_21` en encabezado sin `alicuota_iva` por ítem).
@@ -251,6 +271,8 @@ Ejemplo: tres líneas con 21 % y 10,5 %, pero en el pie el usuario fija IVA 21 %
 - Montos desde el pie y slots `otros_impuestos_N` en cualquier fila del comprobante.
 - Primera línea de producto recibe los `tax_ids` no-IVA del comprobante en header/mixed.
 - Si al **primer** import el monto en Odoo no coincide pero al **segundo** clic sí: el deploy anterior aplicaba montos tax **antes** de re-aplicar precio; Odoo recalculaba la percepción encima. Con el orden correcto (precio → montos tax) debe bastar **un** clic.
+- **Montos FacturIA en 1ª fila + impuestos en otras líneas (Dinner, FA-A 05215-00084885):** el pie UI muestra IIBB / Perc IVA / Interno correctos, pero Odoo Dinner dejaba Perc IVA e Interno en el % de la línea y el IIBB como **suma** IIBB+Perc IVA. No es un error de `odoo_profile` (Aliare/Sudata): el catálogo Dinner resolvía bien los nombres. Causa: slots 2/3 de la 1ª fila van sin label y el import los asignaba al tax id del slot 1. Solución: mapear esos montos al label Odoo de la línea que tiene ese `amount_key`. Tests: `test_collect_expected_otros_unlabeled_slots_map_to_line_labels`, `test_collect_expected_otros_unlabeled_slots_without_fac_percepciones`.
+- **Impuesto Interno en la 1ª fila oculta IIBB y duplica Interno (Dinner, mismo comprobante):** el slot 1 FacturIA es IIBB (`9154,93`); elegir Interno ahí **no** debe renombrar esa fila del pie. Causa: `labelForFooterSlot` usaba el label de la 1ª fila y `sumAmountForFooterSlot` sumaba por nombre → dos filas «Impuesto Interno» con `9154,93`, IIBB desaparecía, el total seguía incluyendo `18962,88`, y Odoo internaba `9154,93+18962,88=28117,81`. Tests: `keeps IIBB in pie when first row selects Impuesto Interno`, `test_collect_expected_interno_on_iibb_slot_does_not_steal_iibb_amount`.
 - **No** borrar `tax_ids` con `(5,)` para forzar líneas tax: en Aliare puede desaparecer la etiqueta del impuesto en el borrador.
 - Tests: `test_collect_expected_iibb_from_header_only_row`, `test_plan_line_tax_updates_puts_iibb_on_first_content_line`, `test_sync_applies_tax_amounts_after_all_line_writes`
 
@@ -270,6 +292,19 @@ Si un usuario ve ~19 columnas vacías: conversión guardada con versión antigua
 
 - Síntoma: IVA 21 % mapea a id 63 (en Aliare es 10,5 %); montos no se sobreescriben o impuesto incorrecto.
 - Solución: `?odoo_profile=aliare` en URL y en POST `/api/odoo/import`.
+
+### IVA 21 % llega como IVA 10,5 % en Sudata (nombres EN)
+
+- **Síntoma (testing Elías 13/8/2026, Sudata producción):** la UI muestra **Impuesto IVA 21** y el pie **IVA 21 %**, pero el borrador en Odoo queda con **IVA 10,5 %** (el monto sí es el del pie). En Central Ticket / Aliare el mismo caso llega bien.
+- **Causa:** Sudata Cloud responde `account.tax` en inglés (`VAT 21%`, `VAT 10.5%`, `0% NA`, `0% NT`, `0% EXEMPT`, `Perc VAT`). El filtro de IVA exigía nombres que empiecen con `IVA ` → `get_purchase_iva_taxes()` devolvía **lista vacía** → `resolve_iva_tax_id_for_pct("21")` caía al mapa histórico **de Dinner** (`21 → 63`), y en Sudata el id 63 es `VAT 10.5%`. Todas las alícuotas quedaban corridas (10,5 → `VAT 0%`, 27 → `VAT 21%`) y Exento/No Gravado/No Corresponde también.
+- **Solución:**
+  1. `_is_purchase_iva_tax_name` / `_rate_matches_iva_tax_name` aceptan prefijo `VAT ` además de `IVA `.
+  2. `_SPECIAL_IVA_NAME_KEYS` mapea las alícuotas cero EN: `0% NA` → No Corresponde, `0% NT` → No Gravado, `0% EXEMPT` → Exento (matcher único `_special_iva_label_from_name`).
+  3. El fallback a ids fijos de Dinner (`_LEGACY_DINNER_IVA_BY_RATE`) **solo** corre con perfil `default` (`_legacy_dinner_fallback_allowed`): en otro tenant es mejor no mandar impuesto que mandar el equivocado.
+  4. `_UI_TAX_NAME_ALIASES` resuelve `Perc VAT` / `Perc Profits` para percepciones IVA / Ganancias.
+  5. Complemento: `resolve_odoo_lang` ahora pide `es_419` en Sudata (ver [§ Idioma del catálogo](#idioma-del-catálogo-resolve_odoo_lang)), así el catálogo llega en español como en Dinner/Aliare. El fix de resolución no depende de eso.
+- **Efecto en borradores ya rotos:** reimportar alcanza mientras el borrador siga en `draft` — `plan_line_tax_updates` escribe `tax_ids` con `(6, 0, …)` y saca el 10,5 % viejo antes de que `_ensure_missing_tax_lines_on_move` agregue el 21 %.
+- Tests: `test_sudata_english_names_21_maps_to_65_not_63`, `test_sudata_english_zero_rate_labels`, `test_sudata_english_names_give_iva_pct_semantics`, `test_no_dinner_fallback_when_profile_is_not_default`, `test_sudata_english_percepcion_labels_resolve` en `tests/test_iva_tax_resolve.py`.
 
 ### IVA del pie no se sobreescribe en Odoo (formato es-AR)
 

@@ -22,7 +22,6 @@ import {
   escapeHtml,
 } from "../utils/index.js";
 import { updateProcessTotals, updateRowTotals } from "../table/index.js";
-import { isSoloEncabezado } from "../singleLine/index.js";
 import { ensureOtroImpuestoColumns } from "../rows/index.js";
 
 function footerMoneyCell(n) {
@@ -132,7 +131,7 @@ function isFooterTaxInput(el) {
 }
 
 export function renderFooterHtml(totals, compIdx, groupRows) {
-  if (isSoloEncabezado(groupRows?.[0])) return "";
+  // Montos siempre en el pie (también con Solo encabezado: colapsa líneas, no el pie).
   return `<div class="comprobanteFooter">
       <table class="comprobanteTotalsTable">
         <tbody>
@@ -186,7 +185,13 @@ function setComprobanteFooterOtrosSlot(state, compIdx, slotN, rawValue) {
   if (!groupRows.length) return;
   const normalized = normalizeNumericValue(rawValue, "otros_impuestos_monto");
   const n = parseInt(slotN, 10) || 1;
-  if (state && n >= 2) ensureOtroImpuestoColumns(state, n);
+  const first = groupRows[0];
+  const firstHasSlot =
+    first &&
+    (String(first[n === 1 ? "otros_impuestos" : `otros_impuestos_${n}`] ?? "").trim() ||
+      String(first[n === 1 ? "otros_impuestos_monto" : `otros_impuestos_${n}_monto`] ?? "").trim());
+  // Impuesto extra en otra línea: no abrir columnas + en la 1ª fila.
+  if (state && n >= 2 && firstHasSlot) ensureOtroImpuestoColumns(state, n);
   setOtrosFooterAmount(groupRows, n, normalized);
 }
 
@@ -292,7 +297,6 @@ export function updateComprobanteFooters(state, refs) {
     const card = wrap.querySelector(`.comprobanteCard[data-comp="${CSS.escape(String(g.compIdx))}"]`);
     if (!card) continue;
     const groupRows = g.rowIndices.map((i) => state.rows[i]);
-    if (isSoloEncabezado(groupRows[0])) continue;
     const compKey = String(g.compIdx);
     const mode = state.comprobanteTaxModes?.[compKey] || classifyComprobanteTaxMode(groupRows);
     state.comprobanteTaxModes[compKey] = mode;

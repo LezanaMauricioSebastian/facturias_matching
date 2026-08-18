@@ -70,6 +70,12 @@ def get_process(
             conditions.append(f"`{empresa_col}` = %s")
             params.append(empresa)
 
+    # Baja lógica FacturIA: no servir procesos soft-deleted.
+    if "deleted_at" in {c.lower() for c in cols}:
+        # Mantener el nombre real de columna (case según information_schema).
+        deleted_col = next(c for c in cols if c.lower() == "deleted_at")
+        conditions.append(f"`{deleted_col}` IS NULL")
+
     table_ref = _mysql_table_ref(schema, table)
     conn = get_mysql_connection()
     try:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from facturia_matching.core.amounts import amount_to_str, normalize_iva_pct_value, parse_amount_loose
 
@@ -130,8 +130,77 @@ def _iva_rate_key_from_pct(raw: Any) -> Optional[str]:
     return str(rate).rstrip("0").rstrip(".")
 
 
-def _explicit_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Montos desde __fac_iva_montos JSON (sin inferencia por línea)."""
+def _line_declared_rate_keys(group_rows: List[Dict[str, Any]]) -> Optional[Set[str]]:
+    """
+    Alícuotas que declaran las líneas con contenido (IVA cero explícito no declara
+    ninguna). None si alguna línea no declara nada: ahí el pie FacturIA sigue siendo
+    autoritativo (modo header sin `iva_pct` por línea).
+    """
+    content = [r for r in group_rows if isinstance(r, dict) and _line_has_content(r)]
+    if not content:
+        return None
+    keys: Set[str] = set()
+    for row in content:
+        if is_explicit_zero_iva_pct(row.get("iva_pct")):
+            continue
+        key = _iva_rate_key_from_pct(row.get("iva_pct"))
+        if not key:
+            return None
+        keys.add(key)
+    return keys
+
+
+def _lines_cover_fac_subtotal(group_rows: List[Dict[str, Any]]) -> bool:
+    """
+    Las líneas suman el subtotal FacturIA, o sea que desglosan todo el comprobante.
+    Si cubren menos, el pie puede tener alícuotas de la parte no desglosada.
+    """
+    subtotal = fac_subtotal(group_rows)
+    if subtotal is None:
+        return True
+    bases = sum_line_bases(group_rows)
+    return abs(bases - subtotal) <= max(_TAX_TOLERANCE, subtotal * 0.001)
+
+
+def _realign_footer_rates(
+    montos: Dict[str, float], group_rows: List[Dict[str, Any]]
+) -> Dict[str, float]:
+    """
+    Re-etiqueta el pie cuando **ninguna** de sus alícuotas sigue en las líneas
+    (el operador corrigió Impuesto IVA, p. ej. 21 → 10,5): el monto se conserva y
+    pasa a la alícuota declarada, así el import no manda la alícuota vieja.
+
+    No se toca nada si alguna alícuota del pie sigue en las líneas o si las líneas
+    no cubren el subtotal FacturIA: ahí el pie multi-alícuota puede tener montos
+    que ninguna línea desglosa (`test_header_partial_fac_iva_montos_matches_footer_total`).
+    """
+    declared = _line_declared_rate_keys(group_rows)
+    if not declared or declared & set(montos):
+        return montos
+    if not _lines_cover_fac_subtotal(group_rows):
+        return montos
+    weights = {
+        k: v
+        for k, v in _suggested_iva_by_rate(group_rows, "header").items()
+        if k in declared and v > 0
+    }
+    total = round(sum(montos.values()), 2)
+    if not weights or total <= 0:
+        return {}
+    keys = sorted(weights, key=lambda k: float(k), reverse=True)
+    weight_sum = sum(weights.values())
+    out: Dict[str, float] = {}
+    assigned = 0.0
+    for key in keys[:-1]:
+        amt = round(total * weights[key] / weight_sum, 2)
+        out[key] = amt
+        assigned += amt
+    out[keys[-1]] = round(total - assigned, 2)
+    return out
+
+
+def _raw_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Montos tal cual están guardados en __fac_iva_montos (sin re-etiquetar)."""
     first = _first_row(group_rows)
     raw = first.get("__fac_iva_montos")
     if not raw:
@@ -150,6 +219,11 @@ def _explicit_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, floa
         return out
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
+
+
+def _explicit_fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Montos vigentes del pie (__fac_iva_montos JSON, sin inferencia por línea)."""
+    return _realign_footer_rates(_raw_fac_iva_montos(group_rows), group_rows)
 
 
 def fac_iva_montos(group_rows: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -223,6 +297,25 @@ def _write_fac_iva_montos_from_line_amounts(group_rows: List[Dict[str, Any]]) ->
     first["__fac_iva_monto"] = amount_to_str(total) or str(round(total, 2))
 
 
+def _persist_realigned_footer_rates(group_rows: List[Dict[str, Any]]) -> bool:
+    """Guarda el pie re-etiquetado para que la alícuota vieja no vuelva desde el JSON."""
+    raw = _raw_fac_iva_montos(group_rows)
+    if not raw:
+        return False
+    realigned = _realign_footer_rates(raw, group_rows)
+    if set(realigned) == set(raw):
+        return False
+    first = _first_row(group_rows)
+    if not realigned:
+        first.pop("__fac_iva_montos", None)
+        return True
+    clean = {k: (amount_to_str(v) or str(round(v, 2))) for k, v in realigned.items()}
+    first["__fac_iva_montos"] = json.dumps(clean, ensure_ascii=False)
+    total = sum(realigned.values())
+    first["__fac_iva_monto"] = amount_to_str(total) or str(round(total, 2))
+    return True
+
+
 def _lines_with_iva_rate(group_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     content = [r for r in group_rows if isinstance(r, dict) and _line_has_content(r)]
     return [r for r in content if iva_pct_to_rate(r.get("iva_pct")) > 0]
@@ -263,6 +356,7 @@ def reconcile_fac_iva_for_import(group_rows: List[Dict[str, Any]]) -> None:
     if all_content_lines_explicit_zero_iva(group_rows):
         clear_fac_iva_footer(group_rows)
         return
+    _persist_realigned_footer_rates(group_rows)
     if fac_iva_monto_manual(group_rows):
         return
     line_manual = any(

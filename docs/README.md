@@ -126,6 +126,10 @@ flowchart TD
 
 Orden corto: **memoria → vínculo OC por mismo product_id (si no, etiqueta) → fuzzy de OCs del proveedor → vacío**.
 
+## Memoria de diario / cuenta / rubro
+
+Al cargar un **proceso nuevo** (sin conversión propia), tras resolver el proveedor se reusa el último `journal_id` / cuenta / rubro guardado en conversiones recientes de la misma empresa+template (`partner_header_memory`, sin tabla dedicada). Prioridad: conversión del proceso → memoria partner → padrón. Ids inválidos para el catálogo activo se ignoran.
+
 ## Índice de documentos
 
 | Documento | Contenido |
@@ -134,7 +138,8 @@ Orden corto: **memoria → vínculo OC por mismo product_id (si no, etiqueta) �
 | [arquitectura.md](arquitectura.md) | Capas, dependencias, convenciones de filas/columnas |
 | [modulos-python.md](modulos-python.md) | Cada paquete y archivo `.py` del backend |
 | [modulos-frontend.md](modulos-frontend.md) | Módulos ES6 en `static/js/` |
-| [api.md](api.md) | Endpoints REST y payloads |
+| [api.md](api.md) | Endpoints REST y payloads (proceso, import, padrón, …) |
+| [api-health.md](api-health.md) | Health Odoo / credenciales (sin exponer `uid`) |
 | [tests-y-scripts.md](tests-y-scripts.md) | Tests, fixtures y scripts de diagnóstico |
 | [iva-y-import-odoo.md](iva-y-import-odoo.md) | IVA por comprobante e import a Odoo (detalle profundo) |
 | [import-odoo/](import-odoo/README.md) | **Paquete `odoo/import_/`**: módulos, pipeline, OC, impuestos, API, tests |

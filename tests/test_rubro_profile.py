@@ -30,6 +30,16 @@ class TestRubroProfile(unittest.TestCase):
         keys = [c["key"] for c in meta["columns"]]
         self.assertIn("x_studio_category", keys)
 
+    def test_metadata_um_between_quantity_and_price(self):
+        with odoo_profile_context("default"):
+            meta = build_metadata_payload()
+        keys = [c["key"] for c in meta["columns"]]
+        qty = keys.index("invoice_line_ids/quantity")
+        um = keys.index("__um_empresa")
+        price = keys.index("invoice_line_ids/price_unit")
+        self.assertEqual(um, qty + 1)
+        self.assertEqual(price, um + 1)
+
     @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_remap_clears_rubro_on_aliare(self, mock_match, mock_catalog):

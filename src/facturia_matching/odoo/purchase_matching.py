@@ -12,7 +12,14 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
 
-from facturia_matching.odoo.api import get_active_odoo_config, is_odoo_config_ready, odoo_search_read
+from facturia_matching.odoo.api import (
+    clear_odoo_model_fields_cache,
+    get_active_odoo_config,
+    is_odoo_config_ready,
+    odoo_available_fields,
+    odoo_model_field_names,
+    odoo_search_read,
+)
 
 
 def _purchase_odoo_config() -> Dict[str, Any]:
@@ -51,6 +58,17 @@ _UM_ALIASES: Dict[str, str] = {
     "MT": "m",
     "M2": "m²",
     "MES": "Units",
+    "TN": "Ton",
+    "TON": "Ton",
+    "TONELADA": "Ton",
+    "TONELADAS": "Ton",
+}
+
+# Odoo traduce algunos nombres de uom.uom (es_419: 'Unidades', 'Tonelada'): al indexar
+# los alias hay que aceptar cualquier variante de idioma del nombre destino.
+_UOM_NAME_SYNONYMS: Dict[str, Tuple[str, ...]] = {
+    "Units": ("Units", "Unidades", "Unidad"),
+    "Ton": ("Ton", "Tonelada", "Toneladas"),
 }
 
 _QTY_UM_IN_DESC = re.compile(
@@ -152,6 +170,160 @@ def _has_conflicting_modifiers(inv_tokens: List[str], po_tokens: List[str]) -> b
         if (inv & left and po & right) or (inv & right and po & left):
             return True
     return False
+
+
+def _invoice_content_token_set(descripcion: str) -> set:
+    return set(_content_match_tokens(_split_desc_tokens(_normalize(descripcion).upper())))
+
+
+def _invoice_has_zero_token(descripcion: str) -> bool:
+    """True si la etiqueta de factura es variante Zero (Coca Zero, etc.)."""
+    return "ZERO" in _invoice_content_token_set(descripcion)
+
+
+def _invoice_gas_flags(descripcion: str) -> Tuple[bool, bool]:
+    """(sin_gas, con_gas) sobre la etiqueta de factura."""
+    u = _normalize(descripcion).upper().replace("/", " ")
+    toks = set(t for t in re.split(r"\s+", u) if t)
+    still = "SIN" in toks and "GAS" in toks
+    spark = (
+        ("CON" in toks and "GAS" in toks) or ({"C", "G"} <= toks)
+    ) and not still
+    return still, spark
+
+
+def _invoice_variant_conflict(a: str, b: str) -> bool:
+    """ZERO vs no-ZERO, agua sin gas vs con gas (misma idea que memoria de producto)."""
+    if (_invoice_has_zero_token(a)) != (_invoice_has_zero_token(b)):
+        return True
+    a_still, a_spark = _invoice_gas_flags(a)
+    b_still, b_spark = _invoice_gas_flags(b)
+    return (a_still and b_spark) or (b_still and a_spark)
+
+
+def _soft_recount_allowed(
+    inv_desc: str, po: Dict[str, Any], hard: Optional[Dict[str, Any]]
+) -> bool:
+    """El pase soft es para extra unidades del mismo SKU (3× PICADA), no variantes.
+
+    Coca Zero no cuenta sobre la línea nota ``coca``; Benedictino C/G no cuenta
+    sobre la línea ya matcheada a Benedictino sin gas.
+    """
+    if hard and _invoice_variant_conflict(inv_desc, str(hard.get("invoice_desc") or "")):
+        return False
+    notes = [_normalize(n) for n in (po.get("note_labels") or []) if _normalize(n)]
+    if not notes:
+        return True
+    best_note = max(_score_dinner_note(inv_desc, n) for n in notes)
+    # 70 = Coca Zero vs nota "coca": marca, no el mismo SKU.
+    return best_note >= 100.0
+
+
+_SODA_BRAND_RE = re.compile(r"\b(COCA|SPRITE|FANTA|PEPSI|SCHWEPPES)\b")
+
+
+def _invoice_is_soda_brand(descripcion: str) -> bool:
+    return bool(_SODA_BRAND_RE.search(_normalize(descripcion).upper()))
+
+
+def _po_invoice_family_mismatch(po_name: str, descripcion: str) -> bool:
+    """Gaseosa ≠ agua saborizada ≠ agua mineral (FANTA NARANJA ≠ nota naranja)."""
+    po_u = _normalize_key(po_name)
+    d = _normalize(descripcion).upper()
+    soda = _invoice_is_soda_brand(descripcion)
+    if "SABORIZ" in po_u and soda:
+        return True
+    if "GASEOSAS" in po_u and (
+        "BENEDICTINO" in d or (not soda and ("AGUA" in d or "SIN GAS" in d or "C/G" in d))
+    ):
+        return True
+    if "AGUA" in po_u and "SABORIZ" not in po_u and soda:
+        return True
+    return False
+
+
+def _score_dinner_note(descripcion: str, note: str) -> float:
+    """Score nota Dinner (coca/sprite/zero/…) vs etiqueta de factura.
+
+    Notas cortas: solo token/contención real. Evita partial_ratio falso
+    (p. ej. ACUERDO≈ZERO vía 'ERDO' → 75%).
+    Si la factura es ZERO, la nota ``zero`` gana; ``coca`` queda por debajo.
+    Notas multi-palabra: no alcanza un token suelto dentro de la nota
+    (``GAS`` ∈ ``AGUA CON GAS`` no vale para Benedictino sin gas).
+    """
+    note_u = _normalize_key(note)
+    desc = _normalize(descripcion)
+    if not note_u or not desc:
+        return 0.0
+    desc_u = desc.upper()
+    inv_tokens = _invoice_content_token_set(desc)
+    inv_has_zero = "ZERO" in inv_tokens
+    note_is_zero = (
+        note_u == "ZERO"
+        or note_u.startswith("ZERO")
+        or "ZERO" in note_u.split()
+    )
+    n_still, n_spark = _invoice_gas_flags(note)
+    i_still, i_spark = _invoice_gas_flags(desc)
+    if (n_still and i_spark) or (n_spark and i_still):
+        return 0.0
+    waterish = "BENEDICTINO" in desc_u or "AGUA" in desc_u
+    if (n_still or n_spark) and waterish and not _invoice_is_soda_brand(desc):
+        if (n_still and i_still) or (n_spark and i_spark):
+            return 100.0
+        return 0.0
+
+    if note_is_zero and not inv_has_zero:
+        return 0.0
+
+    note_parts = [t for t in re.split(r"[\s/\-]+", note_u) if len(t) >= 3 and t != "CON"]
+    multi = len(note_parts) > 1
+
+    hit = note_u in inv_tokens
+    if not hit and multi:
+        hit = all(
+            any(p == tok or p in tok or tok in p for tok in inv_tokens)
+            for p in note_parts
+        )
+    if not hit and not multi:
+        for tok in inv_tokens:
+            if len(note_u) >= 3 and len(tok) >= 3 and (note_u in tok or tok in note_u):
+                hit = True
+                break
+    if not hit and re.search(rf"\b{re.escape(note_u)}\b", desc_u):
+        hit = True
+
+    if not hit:
+        # Notas largas: token_set; nunca partial_ratio en notas cortas (falsos +).
+        if len(note_u) >= 6:
+            return float(fuzz.token_set_ratio(desc_u, note_u))
+        return 0.0
+
+    if inv_has_zero and not note_is_zero:
+        # COCA-COLA ZERO vs nota "coca": brand match débil; "zero" debe ganar.
+        return 70.0
+    return 100.0
+
+
+def _agua_affinity_score(descripcion: str, po_name: str) -> float:
+    """Afinidad Benedictino/aguas ↔ línea BEB-AGUA C/S GAS (sin nota de sabor)."""
+    po_u = _normalize_key(po_name)
+    if "AGUA" not in po_u:
+        return 0.0
+    # Sabores (pera/pomelo) van por nota, no por afinidad genérica.
+    if "SABORIZ" in po_u:
+        return 0.0
+    d = _normalize(descripcion).upper()
+    # Gaseosas de marca no son agua mineral.
+    if _invoice_is_soda_brand(descripcion):
+        return 0.0
+    if "AGUA" in d or "BENEDICTINO" in d:
+        return 82.0
+    water_hints = ("SIN GAS", "CON GAS", "C/G", "S/G", "VILLAVICENCIO", "GLACIAR", "ECO DE LOS ANDES")
+    if any(h in d for h in water_hints):
+        return 82.0
+    return 0.0
+
 
 def _normalize(s: Any) -> str:
     if s is None:
@@ -283,34 +455,153 @@ def _prefer_uom(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     )[0]
 
 
-def _fetch_uom_catalog() -> Dict[str, Dict[str, Any]]:
-    rows = odoo_search_read(
-        "uom.uom",
-        [],
-        ["id", "name", "uom_type", "factor", "category_id"],
-        limit=500,
-        config=_purchase_odoo_config(),
-    )
-    by_name: Dict[str, List[Dict[str, Any]]] = {}
-    by_id: Dict[int, Dict[str, Any]] = {}
-    for row in rows or []:
-        iid = int(row["id"])
-        name = _normalize(row.get("name"))
-        item = {
-            "id": iid,
-            "name": name,
+# Odoo 19 rehizo uom.uom: sin category_id ni uom_type, con árbol relative_uom_id +
+# relative_factor (y factor = razón a la raíz del árbol). Se normaliza al shape histórico
+# — category_id = raíz del árbol, factor con semántica ≤ 18 — para no tocar convert_qty.
+_UOM_LEGACY_FIELDS = ["id", "name", "uom_type", "factor", "category_id"]
+_UOM_RELATIVE_FIELDS = ["id", "name", "factor", "relative_factor", "relative_uom_id"]
+
+_uom_model_relative_cache: Dict[str, bool] = {}
+
+
+def _uom_model_is_relative() -> bool:
+    """True si el tenant es Odoo 19 (uom.uom por árbol en vez de categorías)."""
+    key = _tenant_cache_key()
+    if key in _uom_model_relative_cache:
+        return _uom_model_relative_cache[key]
+    fields = odoo_model_field_names("uom.uom", _purchase_odoo_config())
+    relative = bool(fields) and "category_id" not in fields and "relative_uom_id" in fields
+    if fields:
+        _uom_model_relative_cache[key] = relative
+    return relative
+
+
+def _relative_parent_id(row: Dict[str, Any]) -> Optional[int]:
+    ref = row.get("relative_uom_id")
+    if isinstance(ref, (list, tuple)) and ref:
+        return int(ref[0])
+    return None
+
+
+def _missing_parent_ids(nodes: Dict[int, Dict[str, Any]]) -> List[int]:
+    missing = set()
+    for row in nodes.values():
+        pid = _relative_parent_id(row)
+        if pid is not None and pid not in nodes:
+            missing.add(pid)
+    return sorted(missing)
+
+
+def _fetch_archived_uom_parents(
+    raw: Dict[int, Dict[str, Any]]
+) -> Dict[int, Dict[str, Any]]:
+    """Padres archivados: no vienen en search_read y sin ellos no se llega a la raíz."""
+    extra: Dict[int, Dict[str, Any]] = {}
+    # Las cadenas son cortas (g → kg → tonelada); el tope corta ciclos o datos raros.
+    for _ in range(5):
+        missing = _missing_parent_ids({**extra, **raw})
+        if not missing:
+            break
+        rows = odoo_search_read(
+            "uom.uom",
+            [("id", "in", missing)],
+            _UOM_RELATIVE_FIELDS,
+            limit=len(missing),
+            config=_purchase_odoo_config(),
+            context={"active_test": False},
+        )
+        fetched = {int(r["id"]): r for r in rows or [] if r.get("id") is not None}
+        if not fetched:
+            break
+        extra.update(fetched)
+    return extra
+
+
+def _uom_root_and_ratio(
+    row: Dict[str, Any], nodes: Dict[int, Dict[str, Any]]
+) -> Tuple[int, str, float]:
+    """(id raíz, nombre raíz, unidades raíz por 1 de esta UM)."""
+    ratio = 1.0
+    current = row
+    seen = {int(row["id"])}
+    while True:
+        pid = _relative_parent_id(current)
+        if pid is None or pid in seen:
+            break
+        parent = nodes.get(pid)
+        if parent is None:
+            break
+        ratio *= float(current.get("relative_factor") or 1.0)
+        seen.add(pid)
+        current = parent
+    # factor ya es la razón acumulada a la raíz y sobrevive a padres inaccesibles.
+    stored = float(row.get("factor") or 0.0)
+    if stored > 0:
+        ratio = stored
+    return int(current["id"]), _normalize(current.get("name")), ratio
+
+
+def _relative_uom_items(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    raw = {int(r["id"]): r for r in rows or [] if r.get("id") is not None}
+    nodes = {**_fetch_archived_uom_parents(raw), **raw}
+    items: List[Dict[str, Any]] = []
+    for iid, row in raw.items():
+        root_id, root_name, ratio = _uom_root_and_ratio(row, nodes)
+        if ratio <= 0:
+            ratio = 1.0
+        if root_id == iid:
+            uom_type = "reference"
+        else:
+            uom_type = "bigger" if ratio > 1 else "smaller"
+        items.append(
+            {
+                "id": iid,
+                "name": _normalize(row.get("name")),
+                # ≤ 18: factor = cuántas de esta UM entran en la unidad de referencia.
+                "factor": 1.0 / ratio,
+                "category_id": [root_id, root_name],
+                "uom_type": uom_type,
+            }
+        )
+    return items
+
+
+def _legacy_uom_items(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": int(row["id"]),
+            "name": _normalize(row.get("name")),
             "factor": float(row.get("factor") or 1.0),
             "category_id": row.get("category_id"),
             "uom_type": row.get("uom_type"),
         }
-        by_id[iid] = item
-        _catalog_add_name(by_name, _normalize_key(name), item)
-        canon = _canonical_um(name)
+        for row in rows or []
+        if row.get("id") is not None
+    ]
+
+
+def _fetch_uom_catalog() -> Dict[str, Dict[str, Any]]:
+    relative = _uom_model_is_relative()
+    rows = odoo_search_read(
+        "uom.uom",
+        [],
+        _UOM_RELATIVE_FIELDS if relative else _UOM_LEGACY_FIELDS,
+        limit=500,
+        config=_purchase_odoo_config(),
+    )
+    items = _relative_uom_items(rows) if relative else _legacy_uom_items(rows)
+    by_name: Dict[str, List[Dict[str, Any]]] = {}
+    by_id: Dict[int, Dict[str, Any]] = {}
+    for item in items:
+        by_id[int(item["id"])] = item
+        _catalog_add_name(by_name, _normalize_key(item["name"]), item)
+        canon = _canonical_um(item["name"])
         if canon:
             _catalog_add_name(by_name, _normalize_key(canon), item)
     for alias, target in _UM_ALIASES.items():
-        for tgt in by_name.get(_normalize_key(target)) or []:
-            _catalog_add_name(by_name, _normalize_key(alias), tgt)
+        for target_name in _UOM_NAME_SYNONYMS.get(target, (target,)):
+            for tgt in by_name.get(_normalize_key(target_name)) or []:
+                _catalog_add_name(by_name, _normalize_key(alias), tgt)
     return {"by_name": by_name, "by_id": by_id}
 
 
@@ -382,10 +673,14 @@ def _product_default_uom_id(product_id: int) -> Optional[int]:
     if not is_purchase_odoo_configured():
         tenant_cache[product_id] = None
         return None
+    # Odoo 19 eliminó uom_po_id (la UM de compra se unificó en uom_id).
+    fields = odoo_available_fields(
+        "product.product", ["uom_id", "uom_po_id"], _purchase_odoo_config()
+    )
     rows = odoo_search_read(
         "product.product",
         [("id", "=", product_id)],
-        ["uom_id", "uom_po_id"],
+        fields,
         limit=1,
         config=_purchase_odoo_config(),
     )
@@ -483,8 +778,13 @@ def _resolve_target_uom_for_product(
     product_id: int,
     uom_catalog: Dict[str, Dict[str, Any]],
     target_uom_id: Optional[int] = None,
+    invoice_um_raw: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """UM destino: la elegida (si está en la categoría del producto) o uom_po default."""
+    """UM destino: elegida a mano, kg de factura si aplica, o uom_po default.
+
+    PDF Gran Crianza: si FacturIA trae KG y el producto tiene UM de peso en la
+    misma categoría, preferir kg sobre el pack/unidad de compra (uom_po).
+    """
     product_uom_id = _product_default_uom_id(product_id)
     by_id = uom_catalog.get("by_id") or {}
     default_uom = by_id.get(int(product_uom_id)) if product_uom_id else None
@@ -493,6 +793,12 @@ def _resolve_target_uom_for_product(
         if candidate:
             if default_uom is None or _category_id(candidate) == _category_id(default_uom):
                 return candidate
+    inv_canon = _normalize_key(_canonical_um(invoice_um_raw) or invoice_um_raw)
+    if inv_canon in {"KG", "G", "GR", "GRS"} and default_uom is not None:
+        cat_id = _category_id(default_uom)
+        found = _find_uom_in_category(invoice_um_raw or inv_canon, cat_id, uom_catalog)
+        if found:
+            return found
     return default_uom
 
 
@@ -505,7 +811,12 @@ def _apply_uom_scaling_for_product(
     uom_catalog: Dict[str, Dict[str, Any]],
     target_uom_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    to_uom = _resolve_target_uom_for_product(product_id, uom_catalog, target_uom_id)
+    to_uom = _resolve_target_uom_for_product(
+        product_id,
+        uom_catalog,
+        target_uom_id,
+        invoice_um_raw=invoice_um_raw,
+    )
     if not to_uom:
         return {
             "um_proveedor": invoice_um_raw or "",
@@ -816,19 +1127,15 @@ def _line_match_score(
         for n in (po_line.get("note_labels") or [])
         if _normalize(n)
     ]
+    if _po_invoice_family_mismatch(str(po_line.get("line_name") or ""), descripcion):
+        return 0.0
     if notes:
-        base = {**po_line, "note_labels": []}
-        best = _line_match_score_against_name(
-            codigo=codigo, descripcion=descripcion, qty=qty, po_line=base
-        )
+        # Con notas Dinner, el match útil es etiqueta↔factura (coca/zero/…).
+        # El nombre genérico (BEB-AGUA + afinidad 82) no debe tapar una nota
+        # incompatible (agua con gas ≠ Benedictino sin gas).
+        best = 0.0
         for note in notes:
-            probe = {**base, "line_name": note}
-            best = max(
-                best,
-                _line_match_score_against_name(
-                    codigo=codigo, descripcion=descripcion, qty=qty, po_line=probe
-                ),
-            )
+            best = max(best, _score_dinner_note(descripcion, note))
         return best
     return _line_match_score_against_name(
         codigo=codigo, descripcion=descripcion, qty=qty, po_line=po_line
@@ -854,6 +1161,8 @@ def _line_match_score_against_name(
         if code in _normalize_key(po_name) or _normalize_key(po_name) in code:
             return 92.0
 
+    best_sc = 0.0
+    po_compact_len = len(re.sub(r"[^A-Z0-9]", "", po_name.upper()))
     if desc and po_name:
         po_upper = po_name.upper()
         po_tokens = [t for t in re.split(r"[\s/\-]+", po_upper) if len(t) >= 3]
@@ -865,17 +1174,17 @@ def _line_match_score_against_name(
                 partial_best = max(
                     partial_best, float(fuzz.token_set_ratio(desc_variant, po_upper))
                 )
-                partial_best = max(
-                    partial_best, float(fuzz.partial_ratio(desc_variant, po_upper))
-                )
+                if po_compact_len >= 6:
+                    partial_best = max(
+                        partial_best, float(fuzz.partial_ratio(desc_variant, po_upper))
+                    )
             return min(partial_best, 60.0)
 
-        best_sc = 0.0
         for desc_variant in _desc_match_variants(desc):
             sc = float(fuzz.token_set_ratio(desc_variant, po_upper))
             best_sc = max(best_sc, sc)
             if sc >= 80:
-                return sc
+                break
             # tokens cortos tipo "pan" vs "ALM-PAN FRANCES" (con OCR fix en CHOCL0→CHOCLO)
             # Solo boost a 75 si hay overlap real y no es un solo género compartido
             # con otros discriminadores distintos (TOMATE SECO ≠ TOMATE TRITURADO).
@@ -889,25 +1198,34 @@ def _line_match_score_against_name(
                             if dt in pt or pt in dt:
                                 best_sc = max(best_sc, 75.0)
                                 break
-            best_sc = max(best_sc, float(fuzz.partial_ratio(desc_variant, po_upper)))
-        if best_sc >= 75.0:
-            return best_sc
-        if best_sc > 0:
-            return best_sc
+            # partial_ratio solo con nombre OC suficientemente largo (evita
+            # falsos tipo ACUERDO≈ZERO vía 'ERDO').
+            if po_compact_len >= 6:
+                best_sc = max(best_sc, float(fuzz.partial_ratio(desc_variant, po_upper)))
+
+    agua = _agua_affinity_score(desc, po_name)
+    if agua:
+        best_sc = max(best_sc, agua)
+
+    if best_sc >= 75.0:
+        return best_sc
 
     if qty is not None and po_line.get("product_qty"):
         if abs(float(qty) - float(po_line["product_qty"])) <= 0.01:
-            partial_best = 0.0
-            for desc_variant in _desc_match_variants(desc):
-                partial_best = max(partial_best, float(fuzz.partial_ratio(desc_variant, po_name.upper())))
+            partial_best = best_sc
+            if po_compact_len >= 6:
+                for desc_variant in _desc_match_variants(desc):
+                    partial_best = max(
+                        partial_best, float(fuzz.partial_ratio(desc_variant, po_name.upper()))
+                    )
             return max(55.0, partial_best)
 
-    if desc:
+    if desc and best_sc <= 0 and po_compact_len >= 6:
         partial_best = 0.0
         for desc_variant in _desc_match_variants(desc):
             partial_best = max(partial_best, float(fuzz.partial_ratio(desc_variant, po_name.upper())))
         return partial_best
-    return 0.0
+    return best_sc
 
 def _compose_match_note(*parts: str) -> str:
     out: List[str] = []
@@ -1070,6 +1388,68 @@ def _min_match_score(codigo: str) -> float:
     return 70.0 if _normalize_key(codigo) not in {"", "1", "NO DISPONIBLE"} else 75.0
 
 
+# Soft score: filas extra del mismo producto/etiqueta reusan una línea OC (tope product_qty).
+# Mismo umbral que memoria de producto (etiqueta≈etiqueta entre filas de factura).
+_SOFT_SIBLING_LABEL_MIN = 88.0
+
+
+def _po_line_score_capacity(product_qty: Any, *, lines_total: int) -> int:
+    """Cuántas filas de factura puede contar una línea OC en el ranking del modal.
+
+    - ``product_qty`` entero (p.ej. 3 pedidas / 1 línea CAR-CARNE): capacidad = ese entero.
+    - Qty fraccional (pedido en kg): sin tope práctico → ``lines_total``.
+    """
+    try:
+        qty = float(product_qty or 0)
+    except (TypeError, ValueError):
+        qty = 0.0
+    if qty < 1:
+        return 1
+    rounded = round(qty)
+    if abs(qty - rounded) <= 0.01:
+        return max(1, int(rounded))
+    return max(1, int(lines_total or 1))
+
+
+def _integer_product_qty(product_qty: Any) -> Optional[int]:
+    """Cant. pedida entera (3 unidades / 1 línea), o None si es fraccional/kg."""
+    try:
+        qty = float(product_qty or 0)
+    except (TypeError, ValueError):
+        return None
+    if qty < 1:
+        return None
+    rounded = round(qty)
+    if abs(qty - rounded) > 0.01:
+        return None
+    return int(rounded)
+
+
+def _qty_fit_score(
+    slots_used: Dict[int, int],
+    po_by_lid: Dict[int, Dict[str, Any]],
+) -> float:
+    """Afinidad Cant. pedida ↔ filas de factura asignadas a esa línea OC.
+
+    Exacto (pedida=3, 3 PICADAs) = 100; pedida=4 con 3 filas = 75. Desempata
+    OCs con el mismo soft score (P06790 qty=3 > OC qty=4).
+    """
+    fits: List[float] = []
+    for lid, slots in slots_used.items():
+        if slots <= 0:
+            continue
+        po = po_by_lid.get(lid)
+        if not po:
+            continue
+        ordered = _integer_product_qty(po.get("product_qty"))
+        if ordered is None:
+            continue
+        fits.append(100.0 * min(slots, ordered) / max(slots, ordered))
+    if not fits:
+        return 100.0
+    return round(sum(fits) / len(fits), 1)
+
+
 def _row_match_context(row: Dict[str, Any]) -> Dict[str, Any]:
     codigo = _normalize(row.get("__item_codigo") or row.get("invoice_line_ids/name"))
     desc = _normalize(row.get("invoice_line_ids/name") or row.get("Nombre de producto"))
@@ -1086,6 +1466,157 @@ def _group_po_lines_by_order(po_lines: List[Dict[str, Any]]) -> Dict[int, List[D
     return by_order
 
 
+# Campos de fila UI / FacturIA con posible referencia de pedido (PDF Salta: PEDIDO 26.05).
+_INVOICE_REF_ROW_KEYS = (
+    "__fac_referencia",
+    "__fac_partner_ref",
+    "payment_reference",
+)
+_REF_DATE_TOKEN_RE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})\b")
+# Match fuerte de ref (PEDIDO …) gana el tie-break / ranking frente a canasta empatada.
+_REF_SCORE_STRONG = 85.0
+
+
+def _normalize_oc_ref(raw: Any) -> str:
+    s = _normalize_key(raw)
+    if not s:
+        return ""
+    s = re.sub(r"[^\w.\s]+", " ", s, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _collect_invoice_refs(comprobante_rows: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for row in comprobante_rows or []:
+        if not isinstance(row, dict):
+            continue
+        for key in _INVOICE_REF_ROW_KEYS:
+            raw = _normalize(row.get(key))
+            if not raw:
+                continue
+            key_n = _normalize_oc_ref(raw)
+            if key_n and key_n not in seen:
+                seen.add(key_n)
+                out.append(raw)
+    return out
+
+
+def _collect_invoice_dates(comprobante_rows: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for row in comprobante_rows or []:
+        if not isinstance(row, dict):
+            continue
+        raw = _normalize(row.get("invoice_date"))
+        if raw and raw not in seen:
+            seen.add(raw)
+            out.append(raw)
+    return out
+
+
+def _parse_dd_mm_tokens(text: str) -> List[Tuple[int, int]]:
+    found: List[Tuple[int, int]] = []
+    for m in _REF_DATE_TOKEN_RE.finditer(text or ""):
+        try:
+            d, mo = int(m.group(1)), int(m.group(2))
+        except ValueError:
+            continue
+        if 1 <= d <= 31 and 1 <= mo <= 12:
+            found.append((d, mo))
+    return found
+
+
+def _invoice_date_dd_mm(raw: str) -> Optional[Tuple[int, int]]:
+    """Extrae (día, mes) de invoice_date UI (dd/mm/yyyy o ISO)."""
+    s = _normalize(raw)
+    if not s:
+        return None
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", s)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
+    if m:
+        return int(m.group(3)), int(m.group(2))
+    return None
+
+
+def _partner_ref_date_proximity_score(
+    partner_ref_norm: str, invoice_dates: List[str]
+) -> float:
+    """Boost suave si partner_ref trae DD.MM cercano a la fecha de factura (±1 día)."""
+    ref_tokens = _parse_dd_mm_tokens(partner_ref_norm)
+    if not ref_tokens or not invoice_dates:
+        return 0.0
+    best = 0.0
+    for inv in invoice_dates:
+        inv_dm = _invoice_date_dd_mm(inv)
+        if not inv_dm:
+            continue
+        d, mo = inv_dm
+        for rd, rm in ref_tokens:
+            if rm != mo:
+                continue
+            if rd == d:
+                best = max(best, 60.0)
+            elif abs(rd - d) == 1:
+                best = max(best, 50.0)
+    return best
+
+
+def _ref_match_score(
+    partner_ref: Any,
+    invoice_refs: List[str],
+    invoice_dates: Optional[List[str]] = None,
+) -> float:
+    """0–100: similitud partner_ref OC ↔ referencias / fecha de la factura."""
+    pref = _normalize_oc_ref(partner_ref)
+    if not pref:
+        return 0.0
+    best = 0.0
+    for inv in invoice_refs or []:
+        inv_n = _normalize_oc_ref(inv)
+        if not inv_n:
+            continue
+        if pref == inv_n:
+            return 100.0
+        if pref in inv_n or inv_n in pref:
+            best = max(best, 95.0)
+            continue
+        best = max(best, float(fuzz.token_set_ratio(pref, inv_n)))
+        best = max(best, float(fuzz.partial_ratio(pref, inv_n)))
+    if best < _REF_SCORE_STRONG:
+        best = max(
+            best,
+            _partner_ref_date_proximity_score(pref, invoice_dates or []),
+        )
+    return float(best)
+
+
+def _oc_date_sort_value(raw: Any) -> float:
+    """Timestamp para desempate: fechas más recientes ordenan más arriba."""
+    from datetime import datetime
+
+    s = _normalize(raw)
+    if not s:
+        return 0.0
+    # Odoo suele mandar "2026-05-26 10:30:00" o "2026-05-26".
+    candidates_fmt = (
+        ("%Y-%m-%d %H:%M:%S", s[:19] if len(s) >= 19 else ""),
+        ("%Y-%m-%d", s[:10]),
+        ("%d/%m/%Y", s[:10]),
+        ("%d-%m-%Y", s[:10]),
+    )
+    for fmt, chunk in candidates_fmt:
+        if not chunk or len(chunk) < 8:
+            continue
+        try:
+            return datetime.strptime(chunk, fmt).timestamp()
+        except ValueError:
+            continue
+    return 0.0
+
+
 def score_oc_candidates(
     comprobante_rows: List[Dict[str, Any]],
     po_lines: List[Dict[str, Any]],
@@ -1094,12 +1625,25 @@ def score_oc_candidates(
 
     Si no hay líneas de producto en la factura (p.ej. solo encabezado), igual lista
     todas las OCs del proveedor con score 0 para que el operador pueda elegir.
+
+    Además puntúa `partner_ref` de la OC contra referencias FacturIA (`__fac_referencia`)
+    y, si no hay match fuerte, proximidad de fecha en la ref (PDF Salta: PEDIDO 26.05).
+    Orden: ``basket_score`` (el % del modal) → ref fuerte → líneas matcheadas →
+    ``qty_fit_score`` → ``date_order`` más reciente → ref_score → score_sum.
+
+    Tras el greedy 1:1, un pase soft cuenta filas extra del mismo ``product_id``
+    (o etiqueta hermana ≥88) contra una línea OC ya usada, hasta ``product_qty``
+    (p.ej. 3× PICADA ↔ 1× CAR-CARNE con pedida=3). No cambia el vínculo Odoo.
+    Con el mismo ``basket_score`` y ``lines_matched``, gana la OC cuya Cant. pedida
+    entera calza mejor con las filas asignadas (``qty_fit_score``) antes que la fecha.
     """
     content_rows = [r for r in comprobante_rows if _is_content_row(r)]
     lines_total = len(content_rows)
     if not po_lines:
         return []
 
+    invoice_refs = _collect_invoice_refs(comprobante_rows)
+    invoice_dates = _collect_invoice_dates(comprobante_rows)
     by_order = _group_po_lines_by_order(po_lines)
     candidates: List[Dict[str, Any]] = []
 
@@ -1110,11 +1654,12 @@ def score_oc_candidates(
         po_line_details: List[Dict[str, Any]] = []
         best_invoice_by_line: Dict[int, Dict[str, Any]] = {}
 
-        for inv_row in content_rows:
+        pairs: List[Tuple[float, int, Dict[str, Any]]] = []
+        for inv_i, inv_row in enumerate(content_rows):
             ctx = _row_match_context(inv_row)
             min_score = _min_match_score(ctx["codigo"])
-            best_sc = 0.0
-            best_po: Optional[Dict[str, Any]] = None
+            inv_pid_raw = _normalize(inv_row.get("invoice_line_ids/product_id"))
+            inv_pid = int(inv_pid_raw) if inv_pid_raw.isdigit() else None
             for po in _matchable_po_lines(oc_lines):
                 sc = _line_match_score(
                     codigo=ctx["codigo"],
@@ -1122,19 +1667,100 @@ def score_oc_candidates(
                     qty=ctx["qty"],
                     po_line=po,
                 )
-                if sc > best_sc:
-                    best_sc = sc
-                    best_po = po
-            if best_po and best_sc >= min_score:
-                lines_matched += 1
-                score_sum += best_sc
-                lid = int(best_po["line_id"])
-                prev = best_invoice_by_line.get(lid)
-                if not prev or best_sc > float(prev.get("score") or 0):
-                    best_invoice_by_line[lid] = {
-                        "invoice_desc": ctx["descripcion"],
-                        "score": best_sc,
-                    }
+                # Mismo product_id (PICADA ya mapeada a CAR-CARNE): cuenta como match
+                # aunque el fuzzy de etiqueta falle (preview modal Gran Crianza).
+                po_pid = int(po.get("product_id") or 0)
+                if inv_pid and po_pid and inv_pid == po_pid:
+                    sc = max(sc, 90.0)
+                if sc >= min_score:
+                    pairs.append((sc, inv_i, po))
+        # 1 factura ↔ 1 línea OC: mejor score primero (zero↔ZERO antes que coca).
+        pairs.sort(key=lambda t: t[0], reverse=True)
+        used_inv: set = set()
+        used_po: set = set()
+        slots_used: Dict[int, int] = {}
+        po_by_lid: Dict[int, Dict[str, Any]] = {
+            int(p["line_id"]): p for p in _matchable_po_lines(oc_lines)
+        }
+        for sc, inv_i, po in pairs:
+            lid = int(po["line_id"])
+            if inv_i in used_inv or lid in used_po:
+                continue
+            used_inv.add(inv_i)
+            used_po.add(lid)
+            slots_used[lid] = 1
+            lines_matched += 1
+            score_sum += sc
+            ctx = _row_match_context(content_rows[inv_i])
+            best_invoice_by_line[lid] = {
+                "invoice_desc": ctx["descripcion"],
+                "score": sc,
+            }
+
+        # Soft: varias filas factura (mismo product_id / etiqueta hermana) cuentan
+        # contra una línea OC con product_qty>1 (P06790: 3× PICADA ↔ 1× CAR-CARNE qty=3).
+        # No asigna otro invoice_match en UI ni viola purchase_line_id 1:1 al importar.
+        soft_pairs: List[Tuple[float, int, int]] = []
+        for inv_i, inv_row in enumerate(content_rows):
+            if inv_i in used_inv:
+                continue
+            ctx = _row_match_context(inv_row)
+            min_score = _min_match_score(ctx["codigo"])
+            inv_pid_raw = _normalize(inv_row.get("invoice_line_ids/product_id"))
+            inv_pid = int(inv_pid_raw) if inv_pid_raw.isdigit() else None
+            best_soft: Optional[Tuple[float, int]] = None
+            for lid in used_po:
+                po = po_by_lid.get(lid)
+                if not po:
+                    continue
+                cap = _po_line_score_capacity(
+                    po.get("product_qty"), lines_total=lines_total
+                )
+                if slots_used.get(lid, 0) >= cap:
+                    continue
+                hard = best_invoice_by_line.get(lid)
+                if not _soft_recount_allowed(ctx["descripcion"], po, hard):
+                    continue
+                sc = _line_match_score(
+                    codigo=ctx["codigo"],
+                    descripcion=ctx["descripcion"],
+                    qty=ctx["qty"],
+                    po_line=po,
+                )
+                po_pid = int(po.get("product_id") or 0)
+                if inv_pid and po_pid and inv_pid == po_pid:
+                    sc = max(sc, 90.0)
+                if hard and ctx["descripcion"] and hard.get("invoice_desc"):
+                    sibling = float(
+                        fuzz.token_set_ratio(
+                            ctx["descripcion"].upper(),
+                            str(hard["invoice_desc"]).upper(),
+                        )
+                    )
+                    if sibling >= _SOFT_SIBLING_LABEL_MIN:
+                        sc = max(sc, float(hard.get("score") or 0))
+                if sc >= min_score and (
+                    best_soft is None or sc > best_soft[0]
+                ):
+                    best_soft = (sc, lid)
+            if best_soft is not None:
+                soft_pairs.append((best_soft[0], inv_i, best_soft[1]))
+        soft_pairs.sort(key=lambda t: t[0], reverse=True)
+        for sc, inv_i, lid in soft_pairs:
+            if inv_i in used_inv:
+                continue
+            po = po_by_lid.get(lid)
+            if not po:
+                continue
+            cap = _po_line_score_capacity(
+                po.get("product_qty"), lines_total=lines_total
+            )
+            if slots_used.get(lid, 0) >= cap:
+                continue
+            used_inv.add(inv_i)
+            slots_used[lid] = slots_used.get(lid, 0) + 1
+            lines_matched += 1
+            score_sum += sc
 
         for po in _matchable_po_lines(oc_lines):
             lid = int(po["line_id"])
@@ -1153,18 +1779,23 @@ def score_oc_candidates(
                 }
             )
 
+        partner_ref = first.get("partner_ref") or ""
+        ref_score = _ref_match_score(partner_ref, invoice_refs, invoice_dates)
         basket_score = score_sum / lines_total if lines_total else 0.0
+        qty_fit = _qty_fit_score(slots_used, po_by_lid)
         candidates.append(
             {
                 "order_id": order_id,
                 "order_name": first.get("order_name") or "",
-                "partner_ref": first.get("partner_ref") or "",
+                "partner_ref": partner_ref,
                 "date_order": first.get("date_order") or "",
                 "receipt_status": first.get("receipt_status"),
                 "receipt_status_label": first.get("receipt_status_label")
                 or _receipt_status_label(first.get("receipt_status")),
                 "deliver_to": first.get("deliver_to") or "",
                 "basket_score": round(basket_score, 1),
+                "ref_score": round(ref_score, 1),
+                "qty_fit_score": qty_fit,
                 "lines_matched": lines_matched,
                 "lines_total": lines_total,
                 "score_sum": round(score_sum, 1),
@@ -1173,7 +1804,15 @@ def score_oc_candidates(
         )
 
     candidates.sort(
-        key=lambda c: (c["lines_matched"], c["score_sum"], c["basket_score"]),
+        key=lambda c: (
+            float(c.get("basket_score") or 0),
+            float(c.get("ref_score") or 0) >= _REF_SCORE_STRONG,
+            c["lines_matched"],
+            float(c.get("qty_fit_score") or 0),
+            _oc_date_sort_value(c.get("date_order")),
+            float(c.get("ref_score") or 0),
+            c["score_sum"],
+        ),
         reverse=True,
     )
     return candidates
@@ -1300,21 +1939,48 @@ def _match_comprobante_rows(
         if po_line_raw and str(po_line_raw).isdigit():
             po_line_int = int(po_line_raw)
             if po_line_int in used_po_line_ids:
-                # Match OC inválido (línea ya usada): no dejar el producto a medias.
-                # Reintentar sin OC para que aplique memoria / fuzzy.
-                row["invoice_line_ids/product_id"] = ""
+                # Misma línea OC ya tomada (p.ej. 3× CAR-CARNE MOLIDA): reintentar
+                # contra las líneas OC *libres* de la misma OC — no tirar el vínculo
+                # si hay otra línea del mismo product_id disponible.
+                remaining = [
+                    p
+                    for p in scoped
+                    if int(p.get("line_id") or 0) not in used_po_line_ids
+                ]
                 match_fields = match_invoice_row(
                     row,
-                    [],
+                    remaining,
                     uom_catalog,
                     suggest_pool=po_lines,
                     learned_product_id=learned_id,
                     learned_uom_id=learned_uom_id,
                 )
-                match_fields["__oc_match_note"] = _compose_match_note(
-                    match_fields.get("__oc_match_note") or "",
-                    "Línea OC ya asignada a otra fila",
-                )
+                retry_raw = match_fields.get("__oc_line_id")
+                if retry_raw and str(retry_raw).isdigit():
+                    retry_id = int(retry_raw)
+                    if retry_id not in used_po_line_ids:
+                        used_po_line_ids.add(retry_id)
+                    else:
+                        for oc_key in (
+                            "__oc_line_id",
+                            "__oc_name",
+                            "__oc_partner_ref",
+                            "__oc_line_name",
+                            "__oc_match_score",
+                            "__qty_pedido",
+                            "__qty_recibido",
+                            "__qty_facturado_po",
+                        ):
+                            match_fields[oc_key] = ""
+                        match_fields["__oc_match_note"] = _compose_match_note(
+                            match_fields.get("__oc_match_note") or "",
+                            "Línea OC ya asignada a otra fila",
+                        )
+                else:
+                    match_fields["__oc_match_note"] = _compose_match_note(
+                        match_fields.get("__oc_match_note") or "",
+                        "Línea OC ya asignada a otra fila",
+                    )
             else:
                 used_po_line_ids.add(po_line_int)
         # OC vinculada pero sin product_id en la PO: igual sugerir desde memoria.
@@ -1909,12 +2575,27 @@ def apply_oc_selection(
     rows: List[Dict[str, Any]],
     comprobante_idx: Any,
     order_id: int,
+    *,
+    company_id: Optional[int] = None,
+    product_memory: Optional[Dict[Tuple[int, str], Any]] = None,
 ) -> Dict[str, Any]:
-    """Aplica selección manual de OC y re-matchea solo ese comprobante."""
+    """Aplica selección manual de OC y re-matchea solo ese comprobante.
+
+    Con `company_id` (o `product_memory`) se consulta la memoria de producto
+    para no perder elecciones aprendidas al vincular OC (PDF Gran Crianza).
+    """
     groups = _group_rows_by_comprobante(rows)
     comprobante_rows = groups.get(comprobante_idx) or groups.get(str(comprobante_idx))
     if not comprobante_rows:
         raise ValueError(f"Comprobante {comprobante_idx} no encontrado.")
+
+    memory_index = product_memory
+    if memory_index is None and company_id is not None:
+        from facturia_matching.persistence.product_label_memory import (
+            build_memory_index_for_company,
+        )
+
+        memory_index = build_memory_index_for_company(company_id)
 
     if int(order_id) == 0:
         clear_comprobante_purchase_fields(comprobante_rows)
@@ -1924,7 +2605,9 @@ def apply_oc_selection(
         if is_purchase_odoo_configured():
             return search_oc_candidates_for_comprobante(rows, comprobante_idx)
         comp_key = str(comprobante_rows[0].get("__comprobante_idx", comprobante_idx))
-        summary = enrich_rows_with_purchase_data(rows, fetch_candidates=False)
+        summary = enrich_rows_with_purchase_data(
+            rows, fetch_candidates=False, company_id=company_id, product_memory=memory_index
+        )
         summary.setdefault("oc_searched_by_comprobante", {})[comp_key] = True
         return summary
 
@@ -1949,8 +2632,16 @@ def apply_oc_selection(
 
     _set_comprobante_oc_selection(comprobante_rows, int(order_id), order_name)
     uom_catalog = get_uom_catalog()
-    _match_comprobante_rows(comprobante_rows, po_lines, uom_catalog, int(order_id))
-    summary = enrich_rows_with_purchase_data(rows, fetch_candidates=True)
+    _match_comprobante_rows(
+        comprobante_rows,
+        po_lines,
+        uom_catalog,
+        int(order_id),
+        product_memory=memory_index,
+    )
+    summary = enrich_rows_with_purchase_data(
+        rows, fetch_candidates=True, company_id=company_id, product_memory=memory_index
+    )
     comp_key = str(comprobante_rows[0].get("__comprobante_idx", comprobante_idx))
     summary.setdefault("oc_searched_by_comprobante", {})[comp_key] = True
     return summary
@@ -1985,3 +2676,5 @@ def clear_purchase_cache() -> None:
     _po_cache.clear()
     _product_uom_cache.clear()
     _uom_cache.clear()
+    _uom_model_relative_cache.clear()
+    clear_odoo_model_fields_cache()

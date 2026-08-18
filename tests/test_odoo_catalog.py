@@ -1,6 +1,11 @@
-"""Unit tests: catálogo Odoo (cuentas, tipos de documento)."""
+"""Unit tests: catálogo Odoo (cuentas, tipos de documento, campos por versión)."""
 import unittest
+from unittest.mock import patch
 
+from facturia_matching.odoo.api import (
+    clear_odoo_model_fields_cache,
+    odoo_available_fields,
+)
 from facturia_matching.odoo.catalog import (
     build_account_maps,
     build_doc_type_label_map,
@@ -78,6 +83,60 @@ class TestDocumentTypeLocalization(unittest.TestCase):
         self.assertEqual(m["FACTURAS B"], 6)
         self.assertEqual(m["FACTURAS C"], 11)
         self.assertEqual(m["OC-X"], 73)
+
+
+class TestModelFieldsByVersion(unittest.TestCase):
+    """Odoo 19 quitó campos (uom_po_id): pedirlos vacía el search_read completo."""
+
+    CONFIG = {"base_url": "https://x", "db": "y"}
+
+    def setUp(self):
+        clear_odoo_model_fields_cache()
+
+    def tearDown(self):
+        clear_odoo_model_fields_cache()
+
+    def _with_fields(self, names):
+        return patch(
+            "facturia_matching.odoo.api.odoo_execute_kw_with_config",
+            return_value={n: {} for n in names},
+        )
+
+    def test_drops_missing_field_on_odoo_19(self):
+        with self._with_fields(["id", "name", "default_code", "uom_id"]):
+            fields = odoo_available_fields(
+                "product.product",
+                ["id", "name", "default_code", "uom_id", "uom_po_id"],
+                self.CONFIG,
+            )
+        self.assertEqual(fields, ["id", "name", "default_code", "uom_id"])
+
+    def test_keeps_all_fields_on_legacy(self):
+        with self._with_fields(["id", "name", "default_code", "uom_id", "uom_po_id"]):
+            fields = odoo_available_fields(
+                "product.product", ["id", "uom_po_id"], self.CONFIG
+            )
+        self.assertEqual(fields, ["id", "uom_po_id"])
+
+    def test_keeps_all_fields_when_probe_fails(self):
+        with patch(
+            "facturia_matching.odoo.api.odoo_execute_kw_with_config",
+            side_effect=RuntimeError("sin conexión"),
+        ):
+            fields = odoo_available_fields(
+                "product.product", ["id", "uom_po_id"], self.CONFIG
+            )
+        self.assertEqual(fields, ["id", "uom_po_id"])
+
+    def test_probe_is_cached_per_model_and_tenant(self):
+        with patch(
+            "facturia_matching.odoo.api.odoo_execute_kw_with_config",
+            return_value={"id": {}, "uom_id": {}},
+        ) as probe:
+            for _ in range(3):
+                odoo_available_fields("product.product", ["id"], self.CONFIG)
+            odoo_available_fields("product.product", ["id"], {"base_url": "z", "db": "w"})
+        self.assertEqual(probe.call_count, 2)
 
 
 if __name__ == "__main__":

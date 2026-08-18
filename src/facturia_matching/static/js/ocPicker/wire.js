@@ -1,4 +1,5 @@
 import {
+  filterOcCandidates,
   openOcPicker,
   renderOcPickerBar,
   setOverwriteOcPriceForComprobante,
@@ -51,6 +52,18 @@ export function wireOcPicker(state, refs, handlers, setStatusFn) {
     if (compKey == null) return;
     setOverwriteOcPriceForComprobante(state.rows, compKey, cb.checked);
     handlers?.onAutoSave?.();
+  });
+
+  refs.ocPickerDialog?.addEventListener("input", (e) => {
+    if (!e.target.closest(".ocPickerSearchInput") && !e.target.closest(".ocPickerDateFrom")) {
+      return;
+    }
+    filterOcCandidates(refs.ocPickerDialog);
+  });
+
+  refs.ocPickerDialog?.addEventListener("change", (e) => {
+    if (!e.target.closest(".ocPickerDateFrom")) return;
+    filterOcCandidates(refs.ocPickerDialog);
   });
 
   refs.ocPickerDialog?.addEventListener("click", (e) => {

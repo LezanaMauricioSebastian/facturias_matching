@@ -419,12 +419,16 @@ def fetch_recent_conversion_row_lists(
     template_id: Optional[int] = None,
     limit: int = DEFAULT_CONVERSION_LIMIT,
 ) -> List[List[Dict[str, Any]]]:
-    """Fallback / seed: conversiones recientes (más nuevas primero)."""
+    """Fallback / seed: conversiones recientes (más nuevas primero).
+
+    Excluye conversiones cuyo `process` tiene baja lógica (`deleted_at` no nulo).
+    """
     if company_id is None:
         return []
     tid = int(template_id) if template_id is not None else get_conversion_template_id()
     lim = max(1, min(int(limit or DEFAULT_CONVERSION_LIMIT), 200))
-    table_ref = _mysql_table_ref(PROCESS_SCHEMA, CONVERSIONS_TABLE)
+    conv_ref = _mysql_table_ref(PROCESS_SCHEMA, CONVERSIONS_TABLE)
+    process_ref = _mysql_table_ref(PROCESS_SCHEMA, "process")
     conn = get_mysql_connection()
     out: List[List[Dict[str, Any]]] = []
     try:
@@ -432,10 +436,13 @@ def fetch_recent_conversion_row_lists(
         try:
             cur.execute(
                 f"""
-                SELECT id, process_id, converted_data
-                FROM {table_ref}
-                WHERE company_id = %s AND template_id = %s
-                ORDER BY updated_at DESC, id DESC
+                SELECT pc.id, pc.process_id, pc.converted_data
+                FROM {conv_ref} pc
+                INNER JOIN {process_ref} p ON p.id = pc.process_id
+                WHERE pc.company_id = %s
+                  AND pc.template_id = %s
+                  AND p.deleted_at IS NULL
+                ORDER BY pc.updated_at DESC, pc.id DESC
                 LIMIT %s
                 """,
                 (int(company_id), tid, lim),

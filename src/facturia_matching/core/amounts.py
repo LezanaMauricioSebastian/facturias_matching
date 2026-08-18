@@ -29,6 +29,34 @@ _FAC_IVA_MONTO_KEYS = [
 _FAC_IVA_RATE_KEYS = ["iva_21", "iva_10_5", "iva_27", "iva_2_5", "iva_5"]
 _FAC_PERCEPCION_AMOUNT_KEYS = ["percepcion_iibb", "percepcion_iva", "otros_tributos"]
 
+_RE_OTROS_TRIBUTOS = re.compile(
+    r"impuesto\s*interno|impuestos\s*internos|internal\s*tax", re.I
+)
+_RE_PERCEPCION_IIBB = re.compile(r"iibb|ingresos\s*brutos", re.I)
+_RE_PERCEPCION_IVA = re.compile(
+    r"perc(?:epci[oó]n)?[\s._-]*iva|perc\s*iva|perc\s*vat", re.I
+)
+
+
+def amount_key_for_odoo_label(lab: Any) -> Optional[str]:
+    """Odoo / UI label → amount_key FacturIA (`percepcion_iibb` / `percepcion_iva` / `otros_tributos`)."""
+    s = str(lab or "").strip()
+    if not s:
+        return None
+    if _RE_OTROS_TRIBUTOS.search(s):
+        return "otros_tributos"
+    if _RE_PERCEPCION_IIBB.search(s):
+        return "percepcion_iibb"
+    if _RE_PERCEPCION_IVA.search(s):
+        return "percepcion_iva"
+    return None
+
+
+def default_fac_amount_key_for_slot(n: int) -> Optional[str]:
+    if 1 <= n <= len(_FAC_PERCEPCION_AMOUNT_KEYS):
+        return _FAC_PERCEPCION_AMOUNT_KEYS[n - 1]
+    return None
+
 _CSV_AMOUNT_ROW_KEYS = frozenset(
     {
         "invoice_line_ids/quantity",

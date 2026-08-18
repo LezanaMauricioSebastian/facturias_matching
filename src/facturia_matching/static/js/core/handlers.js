@@ -30,7 +30,8 @@ export function createHandlers({ state, refs, setStatusBound }) {
     },
     onRemoveOtroImpuesto: (n) => {
       if (!(state.rows && state.rows.length)) return;
-      if (!window.confirm(`¿Quitar el impuesto ${n}?`)) return;
+      // Sin confirm: en iframe FacturIA (sin allow-modals) confirm() falla en silencio
+      // y la × “no hace nada”; el + sí anda porque no pide confirmación.
       if (!removeOtroImpuesto(state, n)) return;
       renderNow();
       scheduleAutoSave(state, refs, setStatusBound);

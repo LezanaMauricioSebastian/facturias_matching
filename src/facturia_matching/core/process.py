@@ -38,7 +38,7 @@ from facturia_matching.core.comprobante_tax import (
     sanitize_inflated_line_amounts,
 )
 from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data
-from facturia_matching.infra.normalization import doc_type_label, normalize, normalize_comprobante_number, normalize_date_ddmmyyyy
+from facturia_matching.infra.normalization import doc_type_label, normalize, normalize_comprobante_number, normalize_date_ddmmyyyy, pick
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,24 @@ _FAC_SUBTOTAL_KEYS = [
     "neto",
     "importe_total_neto",
     "monto_neto",
+]
+
+# Referencia de pedido / OC en JSON FacturIA (para rankear OCs por partner_ref).
+_FAC_REFERENCIA_KEYS = [
+    "referencia",
+    "referencia_factura",
+    "referencia_de_factura",
+    "ref",
+    "orden_compra",
+    "orden_de_compra",
+    "nro_orden_compra",
+    "numero_orden_compra",
+    "oc",
+    "pedido",
+    "nro_pedido",
+    "numero_pedido",
+    "remito",
+    "observaciones",
 ]
 
 
@@ -108,6 +126,28 @@ def parse_process_json(
     comprobante_idx = -1
     tax_match_cache = PadronTaxMatchCache()
 
+    company_raw = row.get("company_id")
+    company_id = (
+        int(company_raw)
+        if company_raw is not None and str(company_raw).strip().isdigit()
+        else None
+    )
+    header_index = None
+    if odoo_ok and company_id is not None:
+        try:
+            from facturia_matching.persistence.partner_header_memory import (
+                build_header_index_for_company,
+            )
+
+            header_index = build_header_index_for_company(company_id)
+        except Exception as e:
+            logger.warning(
+                "partner_header_memory: índice no disponible company_id=%s: %s",
+                company_id,
+                e,
+            )
+            header_index = None
+
     for fac_wrap in facturas:
         j = fac_wrap.get("json") if isinstance(fac_wrap, dict) else None
         if not isinstance(j, dict):
@@ -121,6 +161,7 @@ def parse_process_json(
         fac_iva_montos_json = (
             json.dumps(fac_iva_montos_hdr, ensure_ascii=False) if fac_iva_montos_hdr else ""
         )
+        fac_referencia = pick(fac, _FAC_REFERENCIA_KEYS)
 
         nro = normalize_comprobante_number(fac.get("numero_factura"))
         fecha = normalize_date_ddmmyyyy(fac.get("fecha"))
@@ -172,6 +213,22 @@ def parse_process_json(
                 )
             else:
                 rubro_id = ""
+            if header_index and partner_id:
+                from facturia_matching.persistence.partner_header_memory import (
+                    apply_learned_header_ids,
+                )
+
+                journal_id, account_id, rubro_id = apply_learned_header_ids(
+                    partner_id=partner_id,
+                    journal_id=journal_id,
+                    account_id=account_id,
+                    rubro_id=rubro_id,
+                    header_index=header_index,
+                    journals=journals_odoo,
+                    cuentas=cuentas_odoo,
+                    rubros=rubros_odoo,
+                    supports_rubro=supports_rubro_field(),
+                )
         else:
             partner_id = ""
             journal_id = ""
@@ -244,6 +301,7 @@ def parse_process_json(
                 "__fac_subtotal": fac_subtotal_hdr if i == 0 else "",
                 "__fac_iva_monto": fac_iva_monto_hdr if i == 0 else "",
                 "__fac_iva_montos": fac_iva_montos_json if i == 0 else "",
+                "__fac_referencia": fac_referencia if i == 0 else "",
             }
             if i == 0:
                 apply_fac_percepciones_to_row(fac, row_out)
@@ -261,12 +319,6 @@ def parse_process_json(
 
     purchase_summary: Dict[str, Any] = {"enabled": False}
     if odoo_ok and out_rows:
-        company_raw = row.get("company_id")
-        company_id = (
-            int(company_raw)
-            if company_raw is not None and str(company_raw).strip().isdigit()
-            else None
-        )
         purchase_summary = enrich_rows_with_purchase_data(
             out_rows, fetch_candidates=False, company_id=company_id
         )

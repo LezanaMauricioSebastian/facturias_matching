@@ -1,12 +1,18 @@
-import { escapeAttr, findOptionLabel, isPadronOptionKey } from "../utils/index.js";
+import { escapeAttr, findOptionLabel, isPadronOptionKey, optionValue } from "../utils/index.js";
 
 export function renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, loading, state, suggested }) {
   const opts = state.options?.[optKey] || [];
+  // Solo mostrar label si el id existe en el catálogo activo (no huérfanos de otro Odoo).
+  const known =
+    !cellVal ||
+    optKey === "productos" ||
+    opts.some((o) => optionValue(o) === String(cellVal));
+  const safeVal = known ? cellVal : "";
   const display =
     loading && !opts.length
       ? "Cargando…"
-      : cellVal
-        ? findOptionLabel(opts, cellVal) || cellVal
+      : safeVal
+        ? findOptionLabel(opts, safeVal) || (optKey === "productos" ? safeVal : "")
         : "";
   const dis = loading ? " disabled" : "";
   const cls = (loading ? " combobox-loading" : "") + (suggested ? " combobox-suggested" : "");

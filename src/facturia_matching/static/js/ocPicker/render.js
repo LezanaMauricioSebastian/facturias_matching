@@ -98,14 +98,55 @@ function renderCandidateLines(lines) {
   </table>`;
 }
 
+function candidateDateKey(candidate) {
+  const raw = String(candidate.date_order || "").trim();
+  if (!raw) return "";
+  // Odoo suele mandar "YYYY-MM-DD HH:MM:SS" o solo fecha.
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+
+function candidateSearchText(candidate) {
+  const parts = [
+    candidate.order_name,
+    candidate.partner_ref,
+    candidate.deliver_to,
+    candidate.receipt_status_label,
+    formatDate(candidate.date_order),
+    String(candidate.order_id ?? ""),
+  ];
+  for (const ln of candidate.lines || []) {
+    parts.push(ln.line_name);
+    if (Array.isArray(ln.note_labels)) parts.push(...ln.note_labels);
+  }
+  return parts
+    .map((p) => String(p || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Mes mínimo por defecto en el modal (ene-2026). */
+export const OC_PICKER_DEFAULT_FROM_MONTH = "2026-01";
+
+function monthToFromDate(monthValue) {
+  const s = String(monthValue || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(s)) return "";
+  return `${s}-01`;
+}
+
 function buildCandidateCard(candidate, compKey, selectedOrderId, expanded) {
   const isSelected = Number(candidate.order_id) === Number(selectedOrderId);
   const datePart = formatDate(candidate.date_order);
+  const refHit =
+    Number(candidate.ref_score || 0) >= 85
+      ? `Ref match: ${Number(candidate.ref_score).toFixed(0)}%`
+      : "";
   const meta = [
     candidate.partner_ref ? `Ref: ${escapeHtml(candidate.partner_ref)}` : "",
     datePart ? `Fecha: ${datePart}` : "",
     `Score: ${candidate.basket_score ?? 0}%`,
     `${candidate.lines_matched ?? 0}/${candidate.lines_total ?? 0} líneas`,
+    refHit,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -118,8 +159,10 @@ function buildCandidateCard(candidate, compKey, selectedOrderId, expanded) {
     : "";
   const tags =
     receiptLabel || deliverTo ? `<span class="ocCandidateTags">${receiptLabel}${deliverTo}</span>` : "";
+  const search = escapeHtml(candidateSearchText(candidate));
+  const dateKey = escapeHtml(candidateDateKey(candidate));
 
-  return `<article class="ocCandidate${isSelected ? " isSelected" : ""}" data-order-id="${candidate.order_id}">
+  return `<article class="ocCandidate${isSelected ? " isSelected" : ""}" data-order-id="${candidate.order_id}" data-oc-search="${search}" data-oc-date="${dateKey}">
     <button type="button" class="ocCandidateToggle" data-comp="${escapeHtml(compKey)}" data-order="${candidate.order_id}" aria-expanded="${expanded ? "true" : "false"}">
       <span class="ocCandidateTitle">${escapeHtml(candidate.order_name || "OC")}</span>
       ${tags}
@@ -132,6 +175,51 @@ function buildCandidateCard(candidate, compKey, selectedOrderId, expanded) {
       </button>
     </div>
   </article>`;
+}
+
+/** Filtra las tarjetas del modal por texto + fecha «desde» (client-side). */
+export function filterOcCandidates(dialog) {
+  if (!dialog) return;
+  const list = dialog.querySelector(".ocCandidateList");
+  if (!list) return;
+
+  const searchInput = dialog.querySelector(".ocPickerSearchInput");
+  const dateInput = dialog.querySelector(".ocPickerDateFrom");
+  const q = String(searchInput?.value || "")
+    .trim()
+    .toLowerCase();
+  const fromDate = monthToFromDate(dateInput?.value);
+
+  const cards = list.querySelectorAll(".ocCandidate");
+  let visible = 0;
+  for (const card of cards) {
+    const hay = card.getAttribute("data-oc-search") || "";
+    const matchText = !q || hay.includes(q);
+    const ocDate = card.getAttribute("data-oc-date") || "";
+    // Sin fecha en la OC: no la ocultamos por el filtro de mes.
+    const matchDate = !fromDate || !ocDate || ocDate >= fromDate;
+    // La OC en uso siempre queda visible, aunque quede fuera del rango.
+    const keepSelected = card.classList.contains("isSelected");
+    const show = keepSelected || (matchText && matchDate);
+    card.hidden = !show;
+    if (show) visible += 1;
+  }
+
+  let empty = list.querySelector(".ocPickerFilterEmpty");
+  if (!empty) {
+    empty = document.createElement("p");
+    empty.className = "ocPickerEmpty ocPickerFilterEmpty";
+    list.appendChild(empty);
+  }
+  const hasFilter = !!q || !!fromDate;
+  if (!hasFilter || visible > 0) {
+    empty.hidden = true;
+  } else {
+    empty.hidden = false;
+    empty.textContent = fromDate
+      ? "Ninguna OC coincide con la búsqueda / fecha."
+      : "Ninguna OC coincide con la búsqueda.";
+  }
 }
 
 function rowsHaveOcLink(rows, compKey) {
@@ -249,9 +337,35 @@ export function openOcPicker(state, refs, handlers, setStatusFn, compKey) {
   }
   const label = comprobanteLabel(state.rows || [], compKey);
 
+  const fromDefault = monthToFromDate(OC_PICKER_DEFAULT_FROM_MONTH);
+  const firstVisibleIdx = candidates.findIndex((c) => {
+    const d = candidateDateKey(c);
+    return !fromDefault || !d || d >= fromDefault;
+  });
   const list = candidates.length
-    ? candidates.map((c, i) => buildCandidateCard(c, compKey, selectedOrderId, i === 0)).join("")
+    ? candidates
+        .map((c, i) => {
+          const isSelected = Number(c.order_id) === Number(selectedOrderId);
+          const expanded = isSelected || (!selectedOrderId && i === firstVisibleIdx);
+          return buildCandidateCard(c, compKey, selectedOrderId, expanded);
+        })
+        .join("")
     : '<p class="ocPickerEmpty">No hay OCs del proveedor en Odoo (o no se pudo consultar). Probá «Buscar OCs similares» de nuevo.</p>';
+
+  const search = candidates.length
+    ? `<div class="ocPickerSearchRow">
+        <div class="ocPickerSearchFields">
+          <div class="ocPickerSearchField ocPickerSearchFieldGrow">
+            <label class="ocPickerSearchLabel" for="ocPickerSearchInput">Buscar OC</label>
+            <input type="search" id="ocPickerSearchInput" class="ocPickerSearchInput" placeholder="Nombre, ref. proveedor, producto…" autocomplete="off" />
+          </div>
+          <div class="ocPickerSearchField">
+            <label class="ocPickerSearchLabel" for="ocPickerDateFrom">Desde</label>
+            <input type="month" id="ocPickerDateFrom" class="ocPickerDateFrom" value="${OC_PICKER_DEFAULT_FROM_MONTH}" title="Mostrar OCs desde este mes (inclusive). Vacíalo para ver todas." />
+          </div>
+        </div>
+      </div>`
+    : "";
 
   const deselect = `<div class="ocDeselectRow">
     <button type="button" class="ocDeselectBtn${!selectedOrderId ? " isActive" : ""}" data-comp="${escapeHtml(compKey)}" data-order="0">
@@ -264,7 +378,7 @@ export function openOcPicker(state, refs, handlers, setStatusFn, compKey) {
 
   const body = dialog.querySelector(".ocPickerDialogBody");
   if (body) {
-    body.innerHTML = `${deselect}<div class="ocCandidateList" data-comp="${escapeHtml(compKey)}">${list}</div>`;
+    body.innerHTML = `${search}${deselect}<div class="ocCandidateList" data-comp="${escapeHtml(compKey)}">${list}</div>`;
   }
 
   dialog.dataset.compKey = compKey;
@@ -272,6 +386,15 @@ export function openOcPicker(state, refs, handlers, setStatusFn, compKey) {
     dialog.showModal();
   } else {
     dialog.setAttribute("open", "");
+  }
+
+  // Aplica el filtro por defecto (desde 01/2026) al abrir.
+  filterOcCandidates(dialog);
+
+  const searchInput = dialog.querySelector(".ocPickerSearchInput");
+  if (searchInput) {
+    // Foco al abrir: si ya saben el nombre/ref, escriben y filtran al toque.
+    requestAnimationFrame(() => searchInput.focus());
   }
 }
 

@@ -7,6 +7,7 @@ from facturia_matching.odoo.import_ import (
     _tax_ids_for_odoo_line,
     collect_expected_tax_amounts_from_group,
 )
+from facturia_matching.core.amounts import parse_amount_loose
 from facturia_matching.core.comprobante_tax import (
     _explicit_fac_iva_montos,
     classify_comprobante_tax_mode,
@@ -501,6 +502,50 @@ class TestComprobanteTax(unittest.TestCase):
             places=2,
         )
         self.assertGreater(abs(totals["total_odoo"] - 96262.14), 1.0)
+
+    def _elias_rows(self, iva_pct):
+        return [
+            {
+                "iva_pct": iva_pct,
+                "__fac_subtotal": "294299,87",
+                "__fac_iva_monto": "48306,18",
+                "__fac_iva_montos": '{"21": "48306,18"}',
+                "invoice_line_ids/name": "COCA-COLA 600*12 PET",
+                "invoice_line_ids/price_unit": "294299,87",
+                "invoice_line_ids/quantity": "1",
+                "otros_impuestos": "P. IIBB CABA",
+                "otros_impuestos_monto": "7133,73",
+            }
+        ]
+
+    def test_switching_line_rate_relabels_footer_iva(self):
+        """Testing Elías 13/8: 21 → 10,5 dejaba las dos alícuotas en el pie."""
+        rows = self._elias_rows("10,5")
+        self.assertEqual(fac_iva_montos(rows), {"10.5": 48306.18})
+        breakdown = compute_iva_breakdown(rows)
+        self.assertEqual([b["rate_key"] for b in breakdown], ["10.5"])
+        self.assertAlmostEqual(breakdown[0]["amount"], 48306.18, places=2)
+
+    def test_switching_line_rate_persists_relabeled_footer(self):
+        rows = self._elias_rows("10,5")
+        reconcile_fac_iva_for_import(rows)
+        self.assertEqual(rows[0]["__fac_iva_montos"], '{"10.5": "48306.18"}')
+        self.assertAlmostEqual(parse_amount_loose(rows[0]["__fac_iva_monto"]), 48306.18, places=2)
+
+    def test_unchanged_line_rate_keeps_footer_json(self):
+        rows = self._elias_rows("21")
+        reconcile_fac_iva_for_import(rows)
+        self.assertEqual(rows[0]["__fac_iva_montos"], '{"21": "48306,18"}')
+        self.assertEqual(fac_iva_montos(rows), {"21": 48306.18})
+
+    def test_footer_rate_not_covered_by_lines_is_kept(self):
+        """El pie puede tener alícuotas de la parte del comprobante que las líneas no desglosan."""
+        rows = self._elias_rows("10,5")
+        rows[0]["__fac_subtotal"] = "500000"
+        self.assertEqual(_explicit_fac_iva_montos(rows), {"21": 48306.18})
+        self.assertEqual(
+            sorted(b["rate_key"] for b in compute_iva_breakdown(rows)), ["10.5", "21"]
+        )
 
     def test_header_partial_fac_iva_montos_matches_footer_total(self):
         rows = [

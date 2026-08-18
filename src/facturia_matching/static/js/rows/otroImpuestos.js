@@ -20,8 +20,10 @@ export function findAddOtroImpuestoInsertAt(columns) {
     }
   }
   if (lastTaxIdx >= 0) return lastTaxIdx + 1;
-  const purchaseIdx = columns.findIndex((c) => c.key === "__um_empresa");
-  if (purchaseIdx >= 0) return purchaseIdx;
+  const trailingPurchaseIdx = columns.findIndex(
+    (c) => c.key === "__qty_pedido" || c.key === "__qty_recibido" || c.key === "__oc_match_note"
+  );
+  if (trailingPurchaseIdx >= 0) return trailingPurchaseIdx;
   const totalIdx = columns.findIndex((c) => c.key === "__total_linea");
   return totalIdx >= 0 ? totalIdx : columns.length;
 }
@@ -105,14 +107,21 @@ export function ensureOtroImpuestoColumns(state, n) {
   const actionIdx = state.columns.findIndex((c) => c.key === ADD_OTRO_IMPUESTO_KEY);
   const insertAt =
     actionIdx >= 0 ? actionIdx : findAddOtroImpuestoInsertAt(state.columns);
+  // ORDEN A: Monto luego Impuesto (igual que Monto IVA → Impuesto IVA / slot 1).
   if (!hasMonto) {
     const label = n === 1 ? "Monto Otros Impuestos" : `Monto Otros Impuestos (${n})`;
     state.columns.splice(insertAt, 0, { key: montoKey, label, type: "numeric" });
   }
   if (!hasName) {
     const label = n === 1 ? "Otros Impuestos" : `Otros Impuestos (${n})`;
-    const nameInsertAt = insertAt + (hasMonto ? 1 : 0);
-    state.columns.splice(nameInsertAt, 0, { key: nameKey, label, type: "selection", options_key: "otros_impuestos_options" });
+    const montoIdx = state.columns.findIndex((c) => c.key === montoKey);
+    const nameInsertAt = montoIdx >= 0 ? montoIdx + 1 : insertAt;
+    state.columns.splice(nameInsertAt, 0, {
+      key: nameKey,
+      label,
+      type: "selection",
+      options_key: "otros_impuestos_options",
+    });
   }
   for (const r of state.rows) {
     if (r[nameKey] == null) r[nameKey] = "";

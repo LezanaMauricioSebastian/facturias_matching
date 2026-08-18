@@ -150,6 +150,23 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
 
     @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
+    def test_clears_partner_id_when_missing_from_active_catalog(self, mock_match, mock_catalog):
+        """Huérfano de otro tenant sin match por CUIT/nombre → vacío (no Fault 2 al importar)."""
+        mock_catalog.return_value = (_aliare_catalog(), True)
+        mock_match.return_value = ("", "", "", "", 0.0)
+        rows = [
+            {
+                "__comprobante_idx": 1,
+                "partner_id": "13495",
+                "Nombre de Proveedor": "Aaron Almiron",
+                "CUIT": "44086030",
+            }
+        ]
+        out = remap_saved_rows_to_catalog(rows)
+        self.assertEqual(out[0]["partner_id"], "")
+
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_keeps_valid_journal_rubro_account_despite_padron(self, mock_match, mock_catalog):
         """Operador eligió IDs válidos; padrón distinto no debe pisarlos en reload."""
         catalog = _aliare_catalog()

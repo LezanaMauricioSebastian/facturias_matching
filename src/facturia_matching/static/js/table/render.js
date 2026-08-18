@@ -216,7 +216,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           const multi = comprobanteHasMultipleLines(state.rows, rIdx);
           const title = multi
             ? "Solo encabezado: una línea (elimina líneas extra) y oculta el pie"
-            : "Solo encabezado: muestra Subtotal y oculta el pie del comprobante";
+            : "Solo encabezado: muestra Monto IVA / Otros en la fila y oculta el pie del comprobante";
           html.push(
             `<td class="soloEncabezadoCell"${tdStyle}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
           );
@@ -264,10 +264,14 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
               html.push(`<option${sel} value="${ov.replaceAll('"', "&quot;")}">${lab}</option>`);
             }
             if (cellVal && !values.has(cellVal)) {
-              const orphanLab = findOptionLabel(opts, cellVal).replaceAll('"', "&quot;");
-              html.push(
-                `<option selected value="${cellVal.replaceAll('"', "&quot;")}">${orphanLab}</option>`
-              );
+              // No inyectar opciones huérfanas de otro tenant (ids inválidos en Odoo activo).
+              // Excepción: IVA % y otros impuestos usan valores libres / labels no-id.
+              if (key === "iva_pct" || String(key).startsWith("otros_impuestos")) {
+                const orphanLab = findOptionLabel(opts, cellVal).replaceAll('"', "&quot;");
+                html.push(
+                  `<option selected value="${cellVal.replaceAll('"', "&quot;")}">${orphanLab}</option>`
+                );
+              }
             }
           }
           html.push("</select></td>");
@@ -468,14 +472,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     }
   });
 
-  containerEl.querySelectorAll("button[data-remove-otro-impuesto]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      if (e.currentTarget.disabled) return;
-      const n = parseInt(e.currentTarget.getAttribute("data-remove-otro-impuesto"), 10);
-      if (!Number.isFinite(n) || n < 2) return;
-      handlers.onRemoveOtroImpuesto?.(n);
-    });
-  });
+  // Quitar impuesto (×): delegado en main.js sobre #tableWrap (mismo patrón que +).
 
   containerEl.querySelectorAll("button[data-del-r]").forEach((btn) => {
     btn.addEventListener("click", (e) => {

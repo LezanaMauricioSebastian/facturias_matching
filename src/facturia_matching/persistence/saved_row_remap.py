@@ -68,6 +68,20 @@ def _set_comprobante_header_field(
     header[key] = value
 
 
+def _set_or_clear_comprobante_field(
+    comp_rows: List[Dict[str, Any]],
+    key: str,
+    value: str,
+    *,
+    clear_if_empty: bool = False,
+) -> None:
+    if value:
+        _set_comprobante_header_field(comp_rows, key, value)
+    elif clear_if_empty:
+        for row in comp_rows:
+            row[key] = ""
+
+
 def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Ajusta partner_id y otros IDs Odoo de filas persistidas al catálogo del tenant actual.
@@ -75,6 +89,10 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
     Remapea rubro / diario / cuenta solo cuando el ID guardado está vacío o no existe
     en el catálogo activo (cambio de empresa / perfil). No re-aplica el padrón sobre
     IDs válidos elegidos por el operador.
+
+    Si un partner_id (u otro id de catálogo) no existe en el Odoo activo y no se puede
+    resolver por CUIT/nombre, se vacía: la UI no debe ofrecer ni conservar huérfanos
+    de otro tenant (Fault 2 al importar).
     """
     if not rows:
         return rows
@@ -107,75 +125,104 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
         header = comp_rows[0]
         nombre = normalize(header.get("Nombre de Proveedor") or "")
         cuit = normalize(header.get("CUIT") or "")
-        if not nombre and not cuit:
-            continue
 
         old_partner = _str_id(header.get("partner_id"))
-        new_partner, _ = resolve_partner_id(nombre, cuit, proveedores, partner_cuit_to_id)
-        if not new_partner:
-            matched_name, _, _, _, _ = match_proveedor(nombre, cuit)
-            if matched_name:
-                new_partner = resolve_id_fuzzy(matched_name, proveedores, min_score=72.0)
+        new_partner = ""
+        if nombre or cuit:
+            new_partner, _ = resolve_partner_id(nombre, cuit, proveedores, partner_cuit_to_id)
+            if not new_partner:
+                matched_name, _, _, _, _ = match_proveedor(nombre, cuit)
+                if matched_name:
+                    new_partner = resolve_id_fuzzy(matched_name, proveedores, min_score=72.0)
 
         partner_changed = bool(new_partner and new_partner != old_partner)
-        if new_partner and (partner_changed or (old_partner and old_partner not in valid_partners)):
+        partner_invalid = bool(old_partner and old_partner not in valid_partners)
+        if new_partner and (partner_changed or partner_invalid):
             for row in comp_rows:
                 cur = _str_id(row.get("partner_id"))
                 if partner_changed or row is header or not cur or cur not in valid_partners:
                     row["partner_id"] = new_partner
-            if partner_changed:
+            if partner_changed or partner_invalid:
                 clear_comprobante_purchase_fields(comp_rows)
+        elif partner_invalid and not new_partner:
+            # Id de otro tenant / borrado: no dejar huérfano seleccionable.
+            for row in comp_rows:
+                row["partner_id"] = ""
+            clear_comprobante_purchase_fields(comp_rows)
 
-        matched_name, matched_rubro, matched_diario, matched_cuenta, _ = match_proveedor(
-            nombre, cuit
-        )
+        matched_name, matched_rubro, matched_diario, matched_cuenta, _ = ("", "", "", "", 0.0)
+        if nombre or cuit:
+            matched_name, matched_rubro, matched_diario, matched_cuenta, _ = match_proveedor(
+                nombre, cuit
+            )
 
         old_journal = _str_id(header.get("journal_id"))
         if not old_journal or old_journal not in valid_journals:
-            new_journal = resolve_id_fuzzy(
-                matched_diario,
-                journals_odoo,
-                fallback_name=DEFAULT_JOURNAL_NAME or None,
-                min_score=75.0,
+            new_journal = ""
+            if matched_diario or DEFAULT_JOURNAL_NAME:
+                new_journal = resolve_id_fuzzy(
+                    matched_diario,
+                    journals_odoo,
+                    fallback_name=DEFAULT_JOURNAL_NAME or None,
+                    min_score=75.0,
+                )
+            _set_or_clear_comprobante_field(
+                comp_rows,
+                "journal_id",
+                new_journal,
+                clear_if_empty=bool(old_journal and old_journal not in valid_journals),
             )
-            if new_journal:
-                _set_comprobante_header_field(comp_rows, "journal_id", new_journal)
 
         if supports_rubro_field():
             old_rubro = _str_id(header.get("x_studio_category"))
             if not old_rubro or old_rubro not in valid_rubros:
-                new_rubro = resolve_id_fuzzy(
-                    matched_rubro,
-                    rubros_odoo,
-                    fallback_name=DEFAULT_RUBRO_NAME or None,
-                    min_score=72.0,
+                new_rubro = ""
+                if matched_rubro or DEFAULT_RUBRO_NAME:
+                    new_rubro = resolve_id_fuzzy(
+                        matched_rubro,
+                        rubros_odoo,
+                        fallback_name=DEFAULT_RUBRO_NAME or None,
+                        min_score=72.0,
+                    )
+                _set_or_clear_comprobante_field(
+                    comp_rows,
+                    "x_studio_category",
+                    new_rubro,
+                    clear_if_empty=bool(old_rubro and old_rubro not in valid_rubros),
                 )
-                if new_rubro:
-                    _set_comprobante_header_field(comp_rows, "x_studio_category", new_rubro)
         else:
             for row in comp_rows:
                 row["x_studio_category"] = ""
 
         old_account = _str_id(header.get("invoice_line_ids/account_id"))
         if not old_account or old_account not in valid_accounts:
-            new_account = resolve_account_id(
-                matched_cuenta,
-                cuentas_odoo,
-                account_maps,
-                min_score=65.0,
+            new_account = ""
+            if matched_cuenta:
+                new_account = resolve_account_id(
+                    matched_cuenta,
+                    cuentas_odoo,
+                    account_maps,
+                    min_score=65.0,
+                )
+            _set_or_clear_comprobante_field(
+                comp_rows,
+                "invoice_line_ids/account_id",
+                new_account,
+                clear_if_empty=bool(old_account and old_account not in valid_accounts),
             )
-            if new_account:
-                _set_comprobante_header_field(comp_rows, "invoice_line_ids/account_id", new_account)
 
         old_doc = _str_id(header.get("l10n_latam_document_type_id"))
         if old_doc and old_doc not in valid_doc_types:
+            new_doc = ""
             doc_label = _infer_doc_type_label(header)
             if doc_label:
-                new_doc = resolve_doc_type_id(doc_label, doc_label_map)
-                if new_doc:
-                    _set_comprobante_header_field(
-                        comp_rows, "l10n_latam_document_type_id", new_doc
-                    )
+                new_doc = resolve_doc_type_id(doc_label, doc_label_map) or ""
+            _set_or_clear_comprobante_field(
+                comp_rows,
+                "l10n_latam_document_type_id",
+                new_doc,
+                clear_if_empty=True,
+            )
 
     for row in rows:
         if isinstance(row, dict):

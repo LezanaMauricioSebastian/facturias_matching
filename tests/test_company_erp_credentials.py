@@ -245,5 +245,86 @@ class TestHealthCredencialesDbRoute(unittest.TestCase):
         self.assertIn("authenticate", out["error"])
 
 
+class TestHealthCredencialesParamsRoute(unittest.TestCase):
+    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    def test_health_credenciales_ok_from_body(self, mock_verify):
+        from facturia_matching.api.routes import odoo_health_credenciales
+
+        mock_verify.return_value = {"ok": True, "uid": 10, "db": "resolved-db"}
+        with patch(
+            "facturia_matching.odoo.env.resolve_odoo_db_name",
+            side_effect=lambda *a, **k: (a[1] or "").strip() or "resolved-db",
+        ):
+            out = odoo_health_credenciales(
+                {
+                    "ODOO_BASE_URL": "https://testct.aliare.com.ar",
+                    "ODOO_DB": "resolved-db",
+                    "ODOO_USER_ID": "a@b.com",
+                    "ODOO_PASSWORD": "tok",
+                    "company_id": 4,
+                }
+            )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["company_id"], 4)
+        self.assertEqual(out["db"], "resolved-db")
+        self.assertNotIn("uid", out)
+        self.assertNotIn("auth_uid", out)
+        self.assertNotIn("uid_source", out)
+        mock_verify.assert_called_once()
+
+    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    def test_health_credenciales_nested_config(self, mock_verify):
+        from facturia_matching.api.routes import odoo_health_credenciales
+
+        mock_verify.return_value = {"ok": True, "uid": 2, "db": "db1"}
+        with patch(
+            "facturia_matching.odoo.env.resolve_odoo_db_name",
+            side_effect=lambda *a, **k: "db1",
+        ):
+            out = odoo_health_credenciales(
+                {
+                    "config": {
+                        "ODOO_BASE_URL": "https://dinner-test.odoo.com",
+                        "ODOO_USER_ID": "a@b.com",
+                        "ODOO_PASSWORD": "tok",
+                    }
+                }
+            )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["db"], "db1")
+        self.assertNotIn("uid", out)
+
+    def test_health_credenciales_empty_body(self):
+        from facturia_matching.api.routes import odoo_health_credenciales
+
+        out = odoo_health_credenciales({})
+        self.assertEqual(set(out.keys()), {"ok", "error"})
+        self.assertFalse(out["ok"])
+        self.assertIn("Faltan credenciales", out["error"])
+
+    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    def test_health_credenciales_auth_error_minimal(self, mock_verify):
+        from facturia_matching.api.routes import odoo_health_credenciales
+
+        mock_verify.return_value = {
+            "ok": False,
+            "error": "No se pudo obtener uid (authenticate falló y no hay uid fijo).",
+        }
+        with patch(
+            "facturia_matching.odoo.env.resolve_odoo_db_name",
+            side_effect=lambda *a, **k: "db1",
+        ):
+            out = odoo_health_credenciales(
+                {
+                    "ODOO_BASE_URL": "https://dinner-test.odoo.com",
+                    "ODOO_USER_ID": "a@b.com",
+                    "ODOO_PASSWORD": "bad",
+                }
+            )
+        self.assertEqual(set(out.keys()), {"ok", "error"})
+        self.assertFalse(out["ok"])
+        self.assertIn("authenticate", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -294,6 +294,21 @@ def save_conversion(
                     process_id,
                     mem_err,
                 )
+            try:
+                from facturia_matching.persistence.partner_header_memory import (
+                    invalidate_header_index_cache,
+                )
+
+                invalidate_header_index_cache(
+                    company_id, template_id=template_id
+                )
+            except Exception as hdr_err:
+                logger.warning(
+                    "partner_header_memory: no se pudo invalidar cache "
+                    "process_id=%s: %s",
+                    process_id,
+                    hdr_err,
+                )
             return {
                 "id": conv_id,
                 "process_id": process_id,

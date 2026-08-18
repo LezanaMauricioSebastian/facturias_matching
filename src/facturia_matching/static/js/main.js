@@ -70,9 +70,19 @@ async function init() {
     );
   }
   refs.tableWrap.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-add-otro-impuesto]");
-    if (!btn || btn.disabled) return;
-    handlers.onAddOtroImpuesto();
+    const addBtn = e.target.closest("[data-add-otro-impuesto]");
+    if (addBtn) {
+      if (addBtn.disabled) return;
+      handlers.onAddOtroImpuesto();
+      return;
+    }
+    const removeBtn = e.target.closest("[data-remove-otro-impuesto]");
+    if (removeBtn) {
+      if (removeBtn.disabled) return;
+      const n = parseInt(removeBtn.getAttribute("data-remove-otro-impuesto"), 10);
+      if (!Number.isFinite(n) || n < 2) return;
+      handlers.onRemoveOtroImpuesto(n);
+    }
   });
   refs.processNumberEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") buscarProceso(state, refs, setStatusBound, handlers);

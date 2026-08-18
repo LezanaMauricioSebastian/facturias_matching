@@ -28,7 +28,15 @@ Dominio en `_partner_po_search_domain`:
 ]
 ```
 
-El modal lista **todas** las órdenes traídas (ordenadas por score de canasta); no se ocultan por score mínimo.
+El modal lista **todas** las órdenes traídas (ordenadas por **% de matching** (`basket_score`) + referencia de pedido + líneas matcheadas + **afinidad Cant. pedida** (`qty_fit_score`) + **fecha más reciente**); no se ocultan por score mínimo. Arriba del listado hay un **buscador** (filtro client-side por nombre de OC, `partner_ref`, destino, líneas/notas) y un filtro **Desde** (mes, default `2026-01`) que oculta OCs anteriores a ese mes; vaciar el mes muestra todas. La OC en uso siempre queda visible. El buscador de texto recibe foco al abrir el modal.
+
+**Ranking por `basket_score`:** el % que muestra cada tarjeta va primero. Una OC al 91,7% queda arriba de otra al 90% aunque la de 90% tenga mejor `qty_fit_score` o fecha más reciente. Test: `test_score_oc_candidates_ranks_higher_basket_score_first`.
+
+**Ranking por `partner_ref` (PDF Salta):** si la factura trae referencia FacturIA (`__fac_referencia`, p. ej. `PEDIDO 26.05`) y una OC tiene el mismo `partner_ref`, esa OC sube al tope **cuando el % de canasta empata**. Si no hay ref en FacturIA, se usa un boost suave cuando el `partner_ref` trae `DD.MM` cercano (±1 día) a `invoice_date`. Campo en candidatos: `ref_score`. Tests: `test_score_oc_candidates_boosts_matching_partner_ref`, `test_ref_match_score_exact_and_date_proximity`.
+
+**Desempate por Cant. pedida (`qty_fit_score`):** con el mismo `basket_score` / `lines_matched` / basket soft, gana la OC cuya pedida **entera** calza mejor con las filas de factura asignadas a esa línea (3 PICADAs ↔ pedida=3 > pedida=4). Qty fraccional (kg) no penaliza. Va **antes** del desempate por fecha. Test: `test_score_oc_candidates_prefers_better_qty_fit`.
+
+**Desempate por fecha:** con el mismo `basket_score`, `lines_matched` y mismo `qty_fit_score`, gana la OC con `date_order` más reciente (p. ej. varias Salta a 6/7 líneas). Test: `test_score_oc_candidates_prefers_newer_date_on_tie`.
 
 **UI final (por comprobante):** los controles viven en una franja del **header de cada tarjeta de factura**, encima de la tabla.
 
@@ -57,7 +65,9 @@ Heurística (`_attach_dinner_po_note_labels`):
 
 → se marca `is_note` y el texto se agrega a `note_labels` del padre. El matching **no** elige la nota sola; puntúa el padre también contra esas etiquetas (producto↔etiqueta). El modal OC muestra las notas como chips bajo el producto, sin filas a 0.
 
-Específico de Dinner (no todos los tenants usan ese patrón). Tests: `test_attach_dinner_po_note_labels_*`, `test_line_match_score_uses_dinner_note_label`, `test_score_oc_candidates_hides_note_rows_and_keeps_match_on_parent`.
+**Notas cortas / Zero / Agua (PDF Salta):** `_score_dinner_note` exige token real (`zero`∈`COCA-COLA ZERO`); no usa `partial_ratio` en notas cortas (evita `ACUERDO`≈`ZERO` vía `ERDO`). Si la factura es Zero, la nota `zero` gana sobre `coca`. `BEB-AGUA C/S GAS` gana afinidad con Benedictino / SIN GAS / C/G (no con Coca/Sprite/Fanta). Con nota Dinner, **no** se usa esa afinidad genérica: `agua con gas` no pega a Benedictino sin gas, y `GAS` dentro de la nota no cuenta como hit. `BEB-AGUAS SABORIZADAS` + nota `naranja` no pega a **FANTA NARANJA** (familia gaseosa ≠ saborizada). El ranking de canasta asigna **1 factura ↔ 1 línea OC** (greedy por score).
+
+Específico de Dinner (no todos los tenants usan ese patrón). Tests: `test_attach_dinner_po_note_labels_*`, `test_line_match_score_uses_dinner_note_label`, `test_score_oc_candidates_hides_note_rows_and_keeps_match_on_parent`, `test_dinner_note_zero_not_benedictino_and_agua_affinity`, `test_score_oc_candidates_fanta_not_saborizada_and_gas_notes`.
 
 ---
 
@@ -92,7 +102,7 @@ Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_mat
 
 Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (p. ej. `SPRITE` → `GASEOSAS`) en un proceso anterior del **mismo proveedor**, el matching vuelve a sugerir ese producto aunque no esté en las OCs recientes.
 
-**Código:** `persistence/product_label_memory.py` + `match_invoice_row(..., learned_product_id=…)` vía `_match_comprobante_rows` / `enrich_rows_with_purchase_data(..., company_id=…)`. Escritura en `save_conversion`.
+**Código:** `persistence/product_label_memory.py` + `match_invoice_row(..., learned_product_id=…)` vía `_match_comprobante_rows` / `enrich_rows_with_purchase_data(..., company_id=…)` / `apply_oc_selection(..., company_id=…)`. Escritura en `save_conversion`.
 
 **Prioridad (sin producto previo en la fila):**
 
@@ -100,7 +110,7 @@ Cuando el operador ya eligió un producto de Odoo para una etiqueta de factura (
 2. **Vínculo OC producto↔producto** — entre líneas de la OC seleccionada con el **mismo** `product_id` que la memoria, elige la mejor por etiqueta/qty **sin** exigir umbral de score (ej. etiqueta `SPRITE…` → producto `BEB-GASEOSAS` en la OC). Si hay varias líneas con ese producto, gana la de mejor etiqueta. Si no hay ninguna con ese `product_id`, intenta match por etiqueta clásico (solo vincula si el producto coincide; si no, queda solo memoria).
 3. Fuzzy contra productos de las OCs del proveedor (sin vínculo OC).
 
-**Señales “confirmadas”:** filas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy/memoria sin revisar).
+**Señales “confirmadas”:** filas con producto y **sin** `__product_suggested` (elección manual o match OC; no se aprende de fuzzy/memoria sin confirmar).
 
 **Tabla `product_label_memory`** (MySQL, schema = `PROCESS_SCHEMA`):
 
@@ -114,12 +124,20 @@ Clave única: `(company_id, template_id, partner_id, label_key)`. Guarda `produc
 **Flujo:**
 
 1. Al **guardar** conversión → `upsert_product_memory_choices` (solo elecciones confirmadas).
-2. Al **cargar** proceso → `build_memory_index_for_company` lee la tabla. Si está vacía para esa empresa/perfil, hace seed lazy desde las últimas ~100 conversiones y persiste.
+2. Al **cargar** proceso → `build_memory_index_for_company` lee la tabla. Si está vacía para esa empresa/perfil, hace seed lazy desde las últimas ~100 conversiones y persiste. El seed / `fetch_recent_conversion_row_lists` **no** usa procesos con baja lógica (`process.deleted_at IS NOT NULL`).
 3. Setea `__product_suggested=memory`, `__um_empresa*` desde `uom_id` aprendido si existe, y nota `Producto aprendido…`; misma UI naranja. No re-escala qty.
+4. Al **elegir OC** (`POST .../select-oc`) → `apply_oc_selection` recibe `company_id` y consulta memoria (PDF Gran Crianza: con OC no se pierden productos aprendidos).
+5. Al **importar** → `_refresh_purchase_links(..., company_id=…)` también pasa memoria.
 
-**Limitaciones:** etiqueta **normalizada** + fuzzy RapidFuzz (`token_set_ratio` ≥ 88) sobre keys del mismo proveedor; exacto gana primero. Rechaza conflictos obvios (sin gas vs con gas, ZERO vs no-ZERO). No busca en todo el catálogo Odoo. Rematch bajo demanda sin `company_id` no consulta memoria todavía.
+**Colisión 1 línea OC ↔ 1 fila:** si dos filas reclaman la misma `purchase.order.line`, se reintenta contra las **otras líneas libres** de esa OC (p.ej. 3× `CAR-CARNE MOLIDA` ↔ 3 filas PICADA con el mismo `product_id`). Solo si no queda ninguna libre se suelta el vínculo y queda la nota «Línea OC ya asignada a otra fila», **conservando** el `product_id`. El preview del modal también cuenta match por `product_id` (no solo fuzzy de etiqueta).
 
-Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_picks_best_label_among_same_product`, `test_match_invoice_row_learned_applies_uom`, `test_match_invoice_row_learned_no_oc_when_product_absent` en `tests/test_product_label_memory.py`.
+**Score soft (mismo producto / qty pedida):** el ranking del modal (`score_oc_candidates`) hace greedy **1 factura ↔ 1 `line_id`** y después un pase **soft**: filas de factura aún sin match pueden **recontar** contra una línea OC ya usada si (a) mismo `product_id` (boost 90) o score ≥ umbral, o (b) etiqueta hermana `token_set_ratio` ≥ 88 respecto de la fila que ya matcheó esa línea. Tope por línea OC = `product_qty` cuando es entero (p.ej. pedida **3** en una sola `CAR-CARNE` → hasta 3 PICADAs en el `X/Y` y el basket); qty fraccional (kg) no limita. La UI del detalle sigue mostrando **un** `invoice_match` primario. Esto **no** asigna varios `__oc_line_id` al mismo `purchase_line_id` (Odoo lo rechaza). Caso P06790: 3× PICADA + 1× SALCHICHA → **4/4** ~90% en vez de 2/4 @ 45%. Con dos OCs a 4/4, `qty_fit_score` (pedida=3 exacta vs pedida=4) desempata antes que la fecha.
+
+El soft **no** recuenta variantes incompatibles: Coca Zero no suma sobre la línea nota `coca`, ni Benedictino C/G sobre la ya matcheada a sin gas (aunque compartan `BEB-GASEOSAS` / `BEB-AGUA C/S GAS`). En ese comprobante el modal debe mostrar **4/6**, no 6/6 @ 100%. Tests: `test_score_oc_candidates_soft_*`, `test_score_oc_candidates_soft_skips_zero_and_gas_variants`, `test_score_oc_candidates_prefers_better_qty_fit`.
+
+**Limitaciones:** etiqueta **normalizada** + fuzzy RapidFuzz (`token_set_ratio` ≥ 88) sobre keys del mismo proveedor; exacto gana primero. Rechaza conflictos obvios (sin gas vs con gas, ZERO vs no-ZERO). No busca en todo el catálogo Odoo.
+
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_picks_best_label_among_same_product`, `test_match_invoice_row_learned_applies_uom`, `test_match_invoice_row_learned_no_oc_when_product_absent` en `tests/test_product_label_memory.py`; `test_apply_oc_selection_uses_product_memory`, `test_oc_collision_keeps_product_id` en `tests/test_purchase_matching.py`; `test_plan_product_line_content_updates_writes_product_even_with_oc` en `tests/test_odoo_import.py`.
 
 ### Unidad de medida — envase en descripción
 
@@ -168,11 +186,11 @@ Tests: `test_apply_purchase_order_price_overwrites_*`, `test_group_wants_overwri
 Flujo:
 
 1. Detectar / asignar `invoice_line_ids/product_id` (OC, fuzzy o manual).
-2. Resolver la UM de la factura contra las UOMs de la **categoría del producto** (`uom.uom` con mismo `category_id` que `uom_po_id` / `uom_id` del producto). La UM **inferida** por defecto (`__um_empresa`) es el default de compra del producto (`uom_po_id`, p.ej. `pack (12 unidades)`), **no** la UM de la línea OC (esa puede ser `Unidades` aunque el producto compre en packs). Sin `uom_ids` por producto en Dinner: la “lista” = UOMs de esa categoría (incluye custom).
+2. Resolver la UM de la factura contra las UOMs de la **categoría del producto** (`uom.uom` con mismo `category_id` que `uom_po_id` / `uom_id` del producto). La UM **inferida** por defecto (`__um_empresa`) es el default de compra del producto (`uom_po_id`, p.ej. `pack (12 unidades)`), **no** la UM de la línea OC (esa puede ser `Unidades` aunque el producto compre en packs). **Excepción (PDF Gran Crianza):** si FacturIA trae UM de peso (`KG` / `g`) y existe esa UM en la categoría del producto, se prefiere **kg** sobre el pack/`uom_po` (`_resolve_target_uom_for_product`). Sin `uom_ids` por producto en Dinner: la “lista” = UOMs de esa categoría (incluye custom).
 3. Si hace falta, re-escalar `invoice_line_ids/quantity` a la UM destino y guardar `__um_empresa_id`.
 4. Al importar, `_build_line_command` / sync escriben `product_uom_id` en `account.move.line` (create, contenido, vínculo OC y reapply final). El vínculo OC (`purchase_line_id`) es independiente de la UM elegida.
 
-**UI — selector de UM:** la columna **UM** es un `<select>` por fila. Opciones = `list_uoms_for_product` (misma categoría). Sin producto, el select queda vacío y deshabilitado. Al cambiar producto, `POST .../rematch-uom` infiere el default y cachea las opciones (`state.uomOptionsByProductId`). Al elegir otra UM, el mismo endpoint con `uom_id` re-escala desde `__qty_original` / `__um_proveedor` y el autosave persiste `__um_empresa_id` en la conversión. Tras pintar la tabla, se **precargan** las UMs de cada `product_id` visible (`GET .../product-uoms`) para que el primer click del select ya liste todas las opciones (antes solo se veía la UM guardada y hacía falta un segundo click). Si aún no hay cache al hacer click, se bloquea la apertura nativa, se completa el `<select>` in-place y se puede abrir de nuevo. Tras F5, la UM guardada se conserva (ver [carga inicial](#filtro-de-ocs-en-matching)).
+**UI — selector de UM:** la columna **UM** es un `<select>` por fila, **entre Cantidad y Precio** (solo orden visual; el dato sigue en `__um_empresa` / `__um_empresa_id`). Opciones = `list_uoms_for_product` (misma categoría). Sin producto, el select queda vacío y deshabilitado. Al cambiar producto, `POST .../rematch-uom` infiere el default y cachea las opciones (`state.uomOptionsByProductId`). Al elegir otra UM, el mismo endpoint con `uom_id` re-escala desde `__qty_original` / `__um_proveedor` y el autosave persiste `__um_empresa_id` en la conversión. Tras pintar la tabla, se **precargan** las UMs de cada `product_id` visible (`GET .../product-uoms`) para que el primer click del select ya liste todas las opciones (antes solo se veía la UM guardada y hacía falta un segundo click). Si aún no hay cache al hacer click, se bloquea la apertura nativa, se completa el `<select>` in-place y se puede abrir de nuevo. Tras F5, la UM guardada se conserva (ver [carga inicial](#filtro-de-ocs-en-matching)).
 
 **Resolve category-aware:** `_apply_uom_scaling` matchea la UM de FacturIA (`KG`, `LT`, …) **dentro de la categoría del destino** (`_find_uom_in_category`), no solo por `by_name` global. El catálogo indexa colisiones de nombre como listas (`by_name[key] = […]`): en Dinner hay dos `kg` (Peso vs Conversión Crema) y dos `L` (Volumen vs LITROS); sin filtro por categoría el alias global elegía la categoría equivocada y fallaba con `Categoría UM distinta`.
 
@@ -184,7 +202,25 @@ Flujo:
 
 **Caches por tenant:** `_po_cache`, `_product_uom_cache` y `_uom_cache` se indexan por `base_url|db` — los ids de `uom.uom` / `product.product` no son portables entre perfiles Odoo (Dinner/Aliare/Sudata). `clear_purchase_cache()` limpia todo.
 
-Tests: `test_apply_uom_scaling_sets_empresa_id`, `test_apply_uom_scaling_kg_collision_uses_target_category`, `test_apply_uom_scaling_oc_custom_pack_from_kg_invoice`, `test_apply_uom_scaling_lt_collision_uses_volume_category`, `test_match_invoice_row_oc_uses_product_purchase_uom_not_po_line`, `test_build_line_command_includes_matched_product_uom`, `test_plan_product_line_content_updates_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_uom_not_written_without_product`, `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom`.
+**Alias UM e idioma:** `_UM_ALIASES` mapea la UM de FacturIA (`UN`, `UNIDAD`, `MES`, `TN`) a nombres canónicos Odoo (`Units`, `Ton`). Como Odoo traduce `uom.uom.name` (en `es_419`: `Unidades`, `Tonelada`), el índice de alias acepta las variantes de `_UOM_NAME_SYNONYMS`; `kg` / `g` / `L` / `ml` / `m` son iguales en todos los idiomas. Ver [idioma RPC](../iva-y-import-odoo.md#idioma-del-catálogo-resolve_odoo_lang).
+
+### UM en Odoo 19 (Sudata)
+
+Odoo 19 rehizo `uom.uom`: **no** hay `category_id` ni `uom_type`, las UM cuelgan unas de otras (`relative_uom_id` + `relative_factor`) y `factor` pasó a ser la razón acumulada **a la raíz del árbol** (en Sudata `kg` = 1000 porque la raíz es `g`), semántica inversa a la de ≤ 18 (donde `g` = 1000 con `kg` como referencia).
+
+`_fetch_uom_catalog` detecta el modelo con `_uom_model_is_relative()` (una vez por tenant) y **normaliza al shape histórico**, así `convert_qty`, `_find_uom_in_category` y `list_uoms_for_product` no cambian:
+
+| Campo interno | Odoo ≤ 18 | Odoo 19 |
+|---|---|---|
+| `category_id` | tal cual | `[id, nombre]` de la **raíz del árbol** |
+| `factor` | tal cual | `1 / razón_a_la_raíz` (semántica ≤ 18) |
+| `uom_type` | tal cual | `reference` la raíz, `bigger` / `smaller` según la razón |
+
+Los padres **archivados** no vienen en `search_read` y sin ellos no se llega a la raíz (en Sudata `m` cuelga de `cm`, archivado): `_fetch_archived_uom_parents` los completa con `active_test: False`, iterando hasta cerrar la cadena, y se usan solo para calcular la raíz (no se ofrecen como opción).
+
+Verificado en Sudata: `g`/`kg`/`Tonelada` comparten categoría (raíz `g`), 1000 g → 1 kg, 12 Unidades → 2 `Paquete de 6`, y `m` cae en la raíz `mm`.
+
+Tests: `test_apply_uom_scaling_sets_empresa_id`, `test_apply_uom_scaling_kg_collision_uses_target_category`, `test_apply_uom_scaling_oc_custom_pack_from_kg_invoice`, `test_apply_uom_scaling_lt_collision_uses_volume_category`, `test_resolve_target_uom_prefers_invoice_kg`, `test_match_invoice_row_oc_uses_product_purchase_uom_not_po_line`, `test_build_line_command_includes_matched_product_uom`, `test_plan_product_line_content_updates_product_uom`, `test_plan_product_price_quantity_reapply_restores_uom`, `test_uom_not_written_without_product`, `test_list_uoms_for_product_same_category`, `test_apply_product_uom_to_row_explicit_uom_id_rescales`, `test_apply_product_uom_to_row_rejects_out_of_category_uom`.
 
 ---
 
@@ -196,6 +232,8 @@ Tests: `test_apply_uom_scaling_sets_empresa_id`, `test_apply_uom_scaling_kg_coll
 - Si no existe `purchase_line_id` → todo el flujo OC se omite (ej. Odoo Cloud Sudata sin módulo purchase)
 
 Cache: `_MOVE_LINE_PURCHASE_LINK_CACHE` — limpiar en tests.
+
+**Campos según versión (`odoo_available_fields` en `api.py`):** pedir un campo inexistente no devuelve ese campo vacío, **falla el `search_read` completo**. Odoo 19 eliminó `product.product.uom_po_id`, y pedirlo dejaba el catálogo de **productos de Sudata en cero** (sin desplegable ni fuzzy de producto). `odoo_model_field_names` cachea los campos por tenant + modelo y `odoo_available_fields` filtra la lista; si el `fields_get` falla se pide todo igual que antes. Lo usan el catálogo de productos y `_product_default_uom_id`. Limpiar con `clear_odoo_model_fields_cache()` / `clear_purchase_cache()`.
 
 ---
 

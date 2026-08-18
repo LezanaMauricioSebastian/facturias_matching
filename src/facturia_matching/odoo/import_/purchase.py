@@ -94,17 +94,22 @@ def _should_refresh_purchase_links(rows: List[Dict[str, Any]]) -> bool:
     return False
 
 
-def _refresh_purchase_links(rows: List[Dict[str, Any]]) -> List[str]:
+def _refresh_purchase_links(
+    rows: List[Dict[str, Any]],
+    *,
+    company_id: Optional[int] = None,
+) -> List[str]:
     """
     Re-matchea OC contra Odoo inmediatamente antes de importar.
     Garantiza __oc_line_id frescos aunque el cliente envíe filas guardadas sin IDs.
+    Con `company_id` conserva sugerencias de memoria de producto al rematchear.
     """
     from facturia_matching.odoo.purchase_matching import clear_purchase_cache, enrich_rows_with_purchase_data
 
     if not rows:
         return []
     clear_purchase_cache()
-    summary = enrich_rows_with_purchase_data(rows)
+    summary = enrich_rows_with_purchase_data(rows, company_id=company_id)
     warnings: List[str] = []
     if not summary.get("enabled"):
         return warnings
@@ -146,8 +151,13 @@ def _prepare_rows_for_import(
     """
     warnings: List[str] = []
     purchase_ok = _move_line_supports_purchase_link(config)
+    company_id = config.get("company_id") if isinstance(config, dict) else None
+    try:
+        company_id = int(company_id) if company_id is not None else None
+    except (TypeError, ValueError):
+        company_id = None
     if purchase_ok and _should_refresh_purchase_links(rows):
-        warnings.extend(_refresh_purchase_links(rows))
+        warnings.extend(_refresh_purchase_links(rows, company_id=company_id))
 
     groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices(rows)]
 
@@ -165,7 +175,7 @@ def _prepare_rows_for_import(
             warnings.extend(group_warnings)
 
     if sanitized_any:
-        warnings.extend(_refresh_purchase_links(rows))
+        warnings.extend(_refresh_purchase_links(rows, company_id=company_id))
         groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices(rows)]
 
     for group in groups:

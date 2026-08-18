@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 from facturia_matching.core.comprobante_tax import classify_comprobante_tax_mode
 from facturia_matching.odoo.import_ import (
+    _DOC_TYPE_INFO_CACHE,
     _batch_write_move_lines,
     _build_line_command,
-    _DOC_TYPE_INFO_CACHE,
     _build_move_vals,
     _document_numbers_match,
     _find_existing_move,
@@ -537,6 +537,189 @@ class TestOdooImport(unittest.TestCase):
         self.assertEqual(amounts.get(63), 2100.0)
         self.assertEqual(amounts.get(1), 99.5)
 
+    def test_collect_expected_otros_unlabeled_slots_map_to_line_labels(self):
+        """
+        Dinner FA-A 05215-00084885: montos FacturIA en 1ª fila (slots 1/2/3); IIBB /
+        Perc IVA / Interno asignados en líneas distintas. Slot 2/3 sin label no deben
+        sumarse al IIBB (9154.93+8901.72=18056.65 era el monto que quedaba en Odoo).
+        """
+        iibb_id, perc_iva_id, interno_id = 16, 20, 30
+        rows = [
+            {
+                "iva_pct": "21",
+                "__fac_iva_monto": "62312,04",
+                "__fac_iva_montos": '{"21": "62312,04"}',
+                "invoice_line_ids/name": "COCA-COLA 600*12",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/price_unit": "11658,03",
+                "otros_impuestos": "Percepción IIBB Chaco Sufrida",
+                "otros_impuestos_monto": "9154.93",
+                "otros_impuestos_2_monto": "8901.72",
+                "otros_impuestos_3_monto": "18962.88",
+                "__fac_percepciones": [
+                    {
+                        "amount_key": "percepcion_iibb",
+                        "monto": "9154.93",
+                        "ui_monto_key": "otros_impuestos_monto",
+                    },
+                    {
+                        "amount_key": "percepcion_iva",
+                        "monto": "8901.72",
+                        "ui_monto_key": "otros_impuestos_2_monto",
+                    },
+                    {
+                        "amount_key": "otros_tributos",
+                        "monto": "18962.88",
+                        "ui_monto_key": "otros_impuestos_3_monto",
+                    },
+                ],
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "SPRITE FX LS 500ML",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/price_unit": "5033,29",
+                "otros_impuestos": "Percepción IVA Sufrida",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "COCA-COLA ZERO 600*06",
+                "invoice_line_ids/quantity": "5",
+                "invoice_line_ids/price_unit": "5829,01",
+                "otros_impuestos": "Impuesto Interno",
+            },
+        ]
+
+        def _resolve(label, **_kwargs):
+            return {
+                "Percepción IIBB Chaco Sufrida": iibb_id,
+                "Percepción IVA Sufrida": perc_iva_id,
+                "Impuesto Interno": interno_id,
+            }.get(str(label or "").strip())
+
+        with patch(
+            "facturia_matching.odoo.import_.taxes.resolve_tax_label_to_id",
+            side_effect=_resolve,
+        ):
+            amounts = collect_expected_tax_amounts_from_group(rows)
+
+        self.assertEqual(amounts.get(iibb_id), 9154.93)
+        self.assertEqual(amounts.get(perc_iva_id), 8901.72)
+        self.assertEqual(amounts.get(interno_id), 18962.88)
+        self.assertNotEqual(amounts.get(iibb_id), 18056.65)
+
+    def test_collect_expected_otros_unlabeled_slots_without_fac_percepciones(self):
+        """Sin __fac_percepciones: el slot N se mapea al amount_key default y al label del grupo."""
+        iibb_id, perc_iva_id, interno_id = 16, 20, 30
+        rows = [
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "A",
+                "invoice_line_ids/price_unit": "100",
+                "otros_impuestos": "Percepción IIBB Chaco Sufrida",
+                "otros_impuestos_monto": "10",
+                "otros_impuestos_2_monto": "20",
+                "otros_impuestos_3_monto": "30",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "B",
+                "invoice_line_ids/price_unit": "100",
+                "otros_impuestos": "Percepción IVA Sufrida",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "C",
+                "invoice_line_ids/price_unit": "100",
+                "otros_impuestos": "Impuesto Interno",
+            },
+        ]
+
+        def _resolve(label, **_kwargs):
+            return {
+                "Percepción IIBB Chaco Sufrida": iibb_id,
+                "Percepción IVA Sufrida": perc_iva_id,
+                "Impuesto Interno": interno_id,
+            }.get(str(label or "").strip())
+
+        with patch(
+            "facturia_matching.odoo.import_.taxes.resolve_tax_label_to_id",
+            side_effect=_resolve,
+        ):
+            amounts = collect_expected_tax_amounts_from_group(rows)
+
+        self.assertEqual(amounts.get(iibb_id), 10.0)
+        self.assertEqual(amounts.get(perc_iva_id), 20.0)
+        self.assertEqual(amounts.get(interno_id), 30.0)
+
+    def test_collect_expected_interno_on_iibb_slot_does_not_steal_iibb_amount(self):
+        """Dinner: Impuesto Interno en 1ª fila (slot IIBB) no suma 9154+18962 al interno."""
+        iibb_id, perc_iva_id, interno_id = 16, 20, 30
+        rows = [
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "COCA-COLA 600*12",
+                "invoice_line_ids/price_unit": "11658,03",
+                "otros_impuestos": "Impuesto Interno",
+                "otros_impuestos_monto": "9154.93",
+                "otros_impuestos_2_monto": "8901.72",
+                "otros_impuestos_3_monto": "18962.88",
+                "__fac_percepciones": [
+                    {
+                        "amount_key": "percepcion_iibb",
+                        "monto": "9154.93",
+                        "ui_monto_key": "otros_impuestos_monto",
+                    },
+                    {
+                        "amount_key": "percepcion_iva",
+                        "monto": "8901.72",
+                        "ui_monto_key": "otros_impuestos_2_monto",
+                    },
+                    {
+                        "amount_key": "otros_tributos",
+                        "monto": "18962.88",
+                        "ui_monto_key": "otros_impuestos_3_monto",
+                    },
+                ],
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "SPRITE",
+                "invoice_line_ids/price_unit": "5033,29",
+                "otros_impuestos": "Percepción IVA Sufrida",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "ZERO",
+                "invoice_line_ids/price_unit": "5829,01",
+                "otros_impuestos": "Impuesto Interno",
+            },
+            {
+                "iva_pct": "21",
+                "invoice_line_ids/name": "AQUARIUS",
+                "invoice_line_ids/price_unit": "5033,29",
+                "otros_impuestos": "Percepción IIBB Chaco Sufrida",
+            },
+        ]
+
+        def _resolve(label, **_kwargs):
+            return {
+                "Percepción IIBB Chaco Sufrida": iibb_id,
+                "Percepción IVA Sufrida": perc_iva_id,
+                "Impuesto Interno": interno_id,
+            }.get(str(label or "").strip())
+
+        with patch(
+            "facturia_matching.odoo.import_.taxes.resolve_tax_label_to_id",
+            side_effect=_resolve,
+        ):
+            amounts = collect_expected_tax_amounts_from_group(rows)
+
+        self.assertEqual(amounts.get(iibb_id), 9154.93)
+        self.assertEqual(amounts.get(perc_iva_id), 8901.72)
+        self.assertEqual(amounts.get(interno_id), 18962.88)
+        self.assertNotEqual(amounts.get(interno_id), 28117.81)
+
     def test_tax_ids_header_mode_merges_iibb_from_header_row(self):
         group = [
             {
@@ -1055,13 +1238,14 @@ class TestOdooImport(unittest.TestCase):
             }
         ]
 
-        def refresh_side_effect(target_rows):
+        def refresh_side_effect(target_rows, **_kwargs):
             target_rows[0]["__oc_line_id"] = "501"
             return []
 
         mock_refresh.side_effect = refresh_side_effect
-        groups, warnings = _prepare_rows_for_import({}, rows)
+        groups, warnings = _prepare_rows_for_import({"company_id": 1}, rows)
         self.assertEqual(mock_refresh.call_count, 1)
+        mock_refresh.assert_called_with(rows, company_id=1)
         self.assertEqual(groups[0][0]["__oc_line_id"], "501")
         self.assertEqual(warnings, [])
 
@@ -1117,6 +1301,37 @@ class TestOdooImport(unittest.TestCase):
         ]
         updates, _ = plan_product_line_content_updates(product_lines, rows)
         self.assertEqual(updates, [])
+
+    def test_plan_product_line_content_updates_writes_product_even_with_oc(self):
+        """Con OC, igual escribir product_id (evita líneas vacías si el vínculo se omite)."""
+        product_lines = [
+            {
+                "id": 10,
+                "name": "Viejo",
+                "product_id": False,
+                "quantity": 1.0,
+                "price_unit": 100.0,
+                "account_id": [10, "Cuenta"],
+            }
+        ]
+        rows = [
+            {
+                "invoice_line_ids/name": "Item",
+                "invoice_line_ids/product_id": "575",
+                "invoice_line_ids/quantity": "2",
+                "invoice_line_ids/price_unit": "150",
+                "invoice_line_ids/account_id": "10",
+                "__oc_line_id": "456",
+                "__um_empresa_id": "12",
+            }
+        ]
+        updates, warnings = plan_product_line_content_updates(product_lines, rows)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(updates), 1)
+        vals = updates[0]["write_vals"]
+        self.assertEqual(vals["product_id"], 575)
+        self.assertEqual(vals["product_uom_id"], 12)
+        self.assertEqual(vals["quantity"], 2.0)
 
     def test_plan_product_price_quantity_reapply_po_price_differs(self):
         product_lines = [

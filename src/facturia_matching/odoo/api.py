@@ -422,6 +422,50 @@ def odoo_search_read(
         return []
 
 
+_MODEL_FIELDS_CACHE: Dict[Tuple[str, str], frozenset] = {}
+
+
+def clear_odoo_model_fields_cache() -> None:
+    _MODEL_FIELDS_CACHE.clear()
+
+
+def odoo_model_field_names(
+    model: str, config: Optional[Dict[str, Any]] = None
+) -> frozenset:
+    """
+    Campos existentes en un modelo, cacheados por tenant.
+
+    Sirve para adaptarse a diferencias de versión (p.ej. Odoo 19 quitó
+    `product.product.uom_po_id`): pedir un campo inexistente hace fallar todo el
+    `search_read`, no solo ese campo. Vacío si el `fields_get` falla.
+    """
+    cfg = config or get_active_odoo_config()
+    key = (f"{cfg.get('base_url', '')}|{cfg.get('db', '')}", model)
+    cached = _MODEL_FIELDS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names: frozenset = frozenset()
+    try:
+        fg = odoo_execute_kw_with_config(cfg, model, "fields_get", [], {"attributes": []})
+        if isinstance(fg, dict) and fg:
+            names = frozenset(fg)
+    except Exception as e:
+        logger.debug("fields_get %s falló: %s", model, e)
+    if names:
+        _MODEL_FIELDS_CACHE[key] = names
+    return names
+
+
+def odoo_available_fields(
+    model: str, fields: List[str], config: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Filtra `fields` a los que existen en el tenant; si no se pudo saber, los deja pasar."""
+    available = odoo_model_field_names(model, config)
+    if not available:
+        return list(fields)
+    return [f for f in fields if f in available]
+
+
 def odoo_xmlrpc_version() -> Optional[dict]:
     base = get_active_odoo_config()["base_url"]
     if not base:

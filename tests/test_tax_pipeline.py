@@ -72,7 +72,7 @@ class TestTaxScenarioFixtures(unittest.TestCase):
         """Modo line: pie editable para override del total IVA."""
         scenario = scenario_by_id("proceso4_line_single_rate")
         self.assertTrue(scenario["footer_editable"])
-        self.assertTrue(scenario["show_iva_column"])
+        self.assertFalse(scenario["show_iva_column"])
         self.assertEqual(classify_comprobante_tax_mode(scenario["rows"]), "line")
         breakdown = compute_iva_breakdown(scenario["rows"])
         self.assertTrue(all(row["editable"] for row in breakdown))

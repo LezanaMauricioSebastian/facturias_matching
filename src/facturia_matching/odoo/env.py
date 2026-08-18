@@ -2,6 +2,7 @@
 
 import logging
 import xmlrpc.client
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -461,14 +462,81 @@ def build_odoo_import_config(profile: Optional[str] = None) -> Dict[str, Any]:
     return dict(build_odoo_main_config(profile or resolve_odoo_profile()))
 
 
+# Idioma RPC preferido: es_AR (l10n_ar) y, si no está instalado, es_419 (Sudata Cloud).
+ODOO_LANG_CANDIDATES: Tuple[str, ...] = ("es_AR", "es_419")
+
+_ACTIVE_LANG_CACHE: Dict[Tuple[str, str], str] = {}
+_probing_odoo_lang: ContextVar[bool] = ContextVar("probing_odoo_lang", default=False)
+
+
+def clear_odoo_lang_cache() -> None:
+    _ACTIVE_LANG_CACHE.clear()
+
+
+def _env_odoo_lang(profile: str) -> str:
+    """Idioma forzado por env (gana sobre la detección en el tenant)."""
+    if profile == "sudata":
+        return _env_strip("ODOO_LANG_SUDATA")
+    if profile == "aliare":
+        return _env_strip("ODOO_LANG_ALIARE") or _env_strip("ODOO_LANG")
+    return _env_strip("ODOO_LANG")
+
+
+def _default_odoo_lang(profile: str) -> str:
+    """Idioma cuando no se pudo consultar el tenant (Sudata Cloud: sin lang)."""
+    return "" if profile == "sudata" else "es_AR"
+
+
+def _active_lang_codes(profile: str) -> Tuple[str, ...]:
+    """Idiomas instalados en el tenant; `search_read` ya excluye los inactivos."""
+    token = _probing_odoo_lang.set(True)
+    try:
+        from facturia_matching.odoo.api import (
+            get_odoo_uid_from_config,
+            is_odoo_config_ready,
+            odoo_execute_kw_with_config,
+        )
+
+        cfg = build_odoo_main_config(profile)
+        if not is_odoo_config_ready(cfg) or not get_odoo_uid_from_config(cfg):
+            return ()
+        rows = odoo_execute_kw_with_config(
+            cfg,
+            "res.lang",
+            "search_read",
+            [[]],
+            {"fields": ["code"], "limit": 200},
+        )
+        return tuple(str(r.get("code") or "").strip() for r in rows or [] if r.get("code"))
+    except Exception as e:
+        logger.debug("res.lang no consultable en perfil %s: %s", profile, e)
+        return ()
+    finally:
+        _probing_odoo_lang.reset(token)
+
+
+def _installed_odoo_lang(profile: str) -> str:
+    """Primer candidato de ODOO_LANG_CANDIDATES instalado en el tenant ('' si ninguno)."""
+    if _probing_odoo_lang.get():
+        return ""
+    key = (profile, str(get_request_empresa() or ""))
+    if key in _ACTIVE_LANG_CACHE:
+        return _ACTIVE_LANG_CACHE[key]
+    codes = _active_lang_codes(profile)
+    if not codes:
+        return ""
+    chosen = next((c for c in ODOO_LANG_CANDIDATES if c in codes), "")
+    _ACTIVE_LANG_CACHE[key] = chosen
+    return chosen
+
+
 def resolve_odoo_lang(profile: Optional[str] = None) -> str:
     """
-    Idioma RPC (context.lang). Sudata Cloud no trae es_AR → sin lang por defecto.
+    Idioma RPC (context.lang): env → primer idioma instalado (es_AR, luego es_419) → default.
+
+    Pedir un idioma no instalado no falla pero devuelve los nombres fuente en inglés
+    (`VAT 21%` en vez de `IVA 21%`), así que se elige entre los que el tenant tiene.
     Override: ODOO_LANG_SUDATA / ODOO_LANG_ALIARE / ODOO_LANG.
     """
     prof = resolve_odoo_profile(profile)
-    if prof == "sudata":
-        return _env_strip("ODOO_LANG_SUDATA")
-    if prof == "aliare":
-        return _env_strip("ODOO_LANG_ALIARE") or _env_strip("ODOO_LANG", "es_AR")
-    return _env_strip("ODOO_LANG", "es_AR")
+    return _env_odoo_lang(prof) or _installed_odoo_lang(prof) or _default_odoo_lang(prof)

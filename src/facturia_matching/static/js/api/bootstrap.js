@@ -4,6 +4,7 @@ import {
   syncOdooProfileState,
   hasExplicitOdooProfileOverride,
   activeOdooProfile,
+  dropInvalidCatalogIds,
 } from "../utils/index.js";
 import {
   ensureOtroImpuestoColumns,
@@ -24,17 +25,17 @@ function ensureSoloEncabezadoColumn(state) {
   });
 }
 
-/** Columna calculada (monto sin impuestos); solo visible con Solo encabezado. */
+/** Columna calculada (qty×precio, sin impuestos); siempre visible, antes de Total. */
 function ensureSubtotalColumn(state) {
   if (state.columns.some((c) => c.key === SUBTOTAL_KEY)) return;
-  const priceIdx = state.columns.findIndex((c) => c.key === "invoice_line_ids/price_unit");
   const col = {
     key: SUBTOTAL_KEY,
     label: "Subtotal",
     type: "computed",
     editable: false,
   };
-  if (priceIdx >= 0) state.columns.splice(priceIdx + 1, 0, col);
+  const totalIdx = state.columns.findIndex((c) => c.key === "__total_linea");
+  if (totalIdx >= 0) state.columns.splice(totalIdx, 0, col);
   else state.columns.push(col);
 }
 
@@ -111,6 +112,7 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   if (Array.isArray(state.options.iva_options)) {
     state.options.iva_options = state.options.iva_options.map((o) => normalizeIvaPctValue(o));
   }
+  dropInvalidCatalogIds(state);
 }
 
 /** Claves de columnas OC; usadas también en procesoShared. */

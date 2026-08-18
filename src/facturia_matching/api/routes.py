@@ -28,11 +28,18 @@ from facturia_matching.export.csv_export import build_csv_response
 from facturia_matching.odoo.api import (
     _jsonrpc_url,
     get_odoo_import_config,
-    get_odoo_uid,
     is_odoo_config_ready,
     odoo_xmlrpc_version,
     verify_odoo_config_connection,
 )
+
+# No exponer uid Odoo en respuestas HTTP de health (dato interno de sesión XML-RPC).
+_HEALTH_PRIVATE_KEYS = ("uid", "auth_uid", "uid_source")
+
+
+def _public_health_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Copia de un dict de health sin campos de identidad Odoo."""
+    return {k: v for k, v in data.items() if k not in _HEALTH_PRIVATE_KEYS}
 from facturia_matching.odoo.import_ import import_rows_to_odoo
 from facturia_matching.core.options import build_metadata_payload, get_options
 from facturia_matching.padron.postgres import detect_padron_fields, get_table_columns
@@ -263,16 +270,16 @@ def odoo_health(
             }
         verified = verify_odoo_config_connection(cfg)
         if not verified.get("ok"):
-            return {
-                **verified,
-                "jsonrpc_url": _jsonrpc_url(),
-                "odoo_profile": current_odoo_profile(),
-                "credential_source": cfg.get("credential_source"),
-            }
+            return _public_health_payload(
+                {
+                    **verified,
+                    "jsonrpc_url": _jsonrpc_url(),
+                    "odoo_profile": current_odoo_profile(),
+                    "credential_source": cfg.get("credential_source"),
+                }
+            )
         return {
             "ok": True,
-            "uid": verified.get("auth_uid") or verified.get("uid") or get_odoo_uid(),
-            "uid_source": "ODOO_USER_ID" if cfg.get("uid") is not None else "ODOO_USER",
             "db": cfg.get("db"),
             "base_url": cfg.get("base_url"),
             "jsonrpc_url": _jsonrpc_url(),
@@ -341,7 +348,7 @@ def odoo_health_import(
         result["profile"] = current_odoo_profile()
         if config.get("company_id") is not None:
             result["company_id"] = config.get("company_id")
-        return result
+        return _public_health_payload(result)
 
     return _with_odoo_profile(odoo_profile, _health_import, empresa=empresa)
 
@@ -421,6 +428,73 @@ def odoo_health_credenciales_db(
     if len(results) == 1:
         return results[0]
     return {"ok": True, "count": len(results), "results": results}
+
+
+@router.post("/api/odoo/health/credenciales")
+def odoo_health_credenciales(payload: Dict[str, Any]):
+    """
+    Valida credenciales Odoo del body **antes de guardar** en MySQL.
+    No lee `company_erp_credentials` ni `.env`.
+
+    Body: keys `ODOO_*` (planas o en `config`), mismas que `company_erp_credential_configs`.
+    Errores: `{"ok": false, "error": "..."}`.
+    """
+    from facturia_matching.odoo.env import _config_from_credential_map
+    from facturia_matching.persistence.company_erp_credentials import ODOO_CONFIG_KEYS
+
+    def _err(msg: str) -> Dict[str, Any]:
+        return {"ok": False, "error": msg}
+
+    if not isinstance(payload, dict):
+        return _err("Body JSON inválido.")
+
+    raw = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+    kv: Dict[str, str] = {}
+    for key in ODOO_CONFIG_KEYS:
+        val = raw.get(key)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s:
+            kv[key] = s
+
+    if not kv:
+        return _err(
+            "Faltan credenciales en el body "
+            "(ODOO_BASE_URL, ODOO_USER_ID|ODOO_USER, ODOO_PASSWORD|ODOO_API_KEY; ODOO_DB opcional)."
+        )
+
+    company_id = payload.get("company_id") or payload.get("empresa") or raw.get("company_id")
+    cfg = _config_from_credential_map(kv, company_id=company_id if company_id is not None else 0)
+
+    missing = []
+    if not (cfg.get("base_url") or kv.get("ODOO_BASE_URL")):
+        missing.append("ODOO_BASE_URL")
+    if not (kv.get("ODOO_PASSWORD") or kv.get("ODOO_API_KEY")):
+        missing.append("ODOO_PASSWORD|ODOO_API_KEY")
+    if not (cfg.get("login") or cfg.get("uid") is not None):
+        missing.append("ODOO_USER_ID|ODOO_USER")
+    if not cfg.get("db"):
+        missing.append("ODOO_DB (no se pudo deducir)")
+    if missing:
+        return _err(f"Falta {', '.join(missing)}")
+
+    if not is_odoo_config_ready(cfg):
+        return _err("Credencial incompleta.")
+
+    verified = verify_odoo_config_connection(cfg)
+    if not verified.get("ok"):
+        detail = verified.get("error") or verified.get("hint") or "conexión fallida"
+        return _err(detail)
+
+    out: Dict[str, Any] = {"ok": True}
+    if company_id is not None and str(company_id).strip() != "":
+        out["company_id"] = (
+            int(company_id) if str(company_id).strip().isdigit() else company_id
+        )
+    if verified.get("db"):
+        out["db"] = verified.get("db")
+    return out
 
 
 @router.post("/api/odoo/import")
@@ -572,7 +646,12 @@ def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
         except (TypeError, ValueError) as e:
             raise ProcessConversionError("comprobante_idx inválido") from e
 
-        purchase_summary = apply_oc_selection(filas, comp_idx, int(order_raw))
+        purchase_summary = apply_oc_selection(
+            filas,
+            comp_idx,
+            int(order_raw),
+            company_id=process_row.get("company_id"),
+        )
         result = save_conversion(
             process_row["id"],
             process_row["company_id"],

@@ -29,9 +29,9 @@ Función central en `taxes.py`. Usada en:
 
 ### Reglas (resumen)
 
-| Modo comprobante | IVA numérico en línea | Exento / No Gravado | Otros (IIBB, interno, …) |
-|------------------|----------------------|---------------------|---------------------------|
-| `header` | No en `tax_ids` | Sí en línea | Los de **esa** fila; header-only → 1ª contenido |
+| Modo comprobante | IVA numérico en línea | Exento / No Gravado / No Corresponde | Otros (IIBB, interno, …) |
+|------------------|----------------------|--------------------------------------|---------------------------|
+| `header` | No en `tax_ids` | Sí en línea (monto 0) | Los de **esa** fila; header-only → 1ª contenido |
 | `line` | Sí si `iva_pct` lo requiere | Sí | Los de **esa** fila |
 | `mixed` | Por fila según `iva_pct` | Sí | Los de **esa** fila |
 
@@ -66,12 +66,17 @@ Por cada fila con contenido:
 
 - `fac_iva_montos(group)` — respeta pie `__fac_iva_montos` / `__fac_iva_monto`
 - Cada alícuota → `_iva_tax_id_for_rate(rate_key, _iva_tax_resolve_row(group))`
+- Si **ninguna** alícuota del pie sigue en las líneas (el operador cambió **Impuesto IVA**), el pie se re-etiqueta a las de las líneas conservando el monto: sin esto el import manda la alícuota vieja aunque la UI muestre otra ([detalle](../iva-y-import-odoo.md#cambiar-la-alícuota-en-la-línea-deja-la-vieja-en-el-pie-testing-elías-1382026))
 
 ### Otros impuestos (IIBB, percepciones)
 
 Por cada fila del grupo, slots `otros_impuestos_N` / `otros_impuestos_N_monto`:
 
-- `resolve_tax_label_to_id(label)` o fallback a ids no-IVA de la fila / `_padron_other_tax_ids`
+- Con **label** → `resolve_tax_label_to_id(label)` o fallback a ids no-IVA de la fila / `_padron_other_tax_ids`
+- Si el label mapea a **otro** `amount_key` que el slot FacturIA (Interno en el slot IIBB) → el monto sigue al key del slot, no al label
+- **Sin label** (montos FacturIA hidratados en la 1ª fila) → `amount_key` de `__fac_percepciones` (o slot 1/2/3 → IIBB / Perc IVA / Interno) y el tax id del **label asignado en cualquier línea** del comprobante
+
+Sin ese mapeo, slot 2 (Perc IVA) y slot 3 (Interno) de la 1ª fila caían al mismo `tax_id` que el IIBB de esa fila: Odoo Dinner mostraba IIBB = IIBB+Perc IVA y dejaba Perc IVA / Interno en el cálculo automático (FA-A 05215-00084885). Test: `test_collect_expected_otros_unlabeled_slots_map_to_line_labels`.
 
 ---
 
@@ -133,6 +138,8 @@ Los ids en filas UI deben corresponder al **perfil activo** (`odoo_profile` en U
 
 - IVA: `resolve_iva_tax_id_for_pct`, `tax_id_for_csv_export`
 - Padrón con ids Dinner en Aliare: `PADRON_TAX_SOURCE_PROFILE` + remapeo en `padron/taxes.py`
+- **Idioma del catálogo:** los nombres son traducibles. `resolve_odoo_lang` pide el primer idioma instalado (`es_AR`, si no `es_419`); con `lang` inválido Odoo devuelve el texto fuente en inglés (`VAT 21%`, `0% EXEMPT`, `Perc VAT`). La resolución acepta prefijos `IVA `/`VAT ` y alias EN de alícuotas cero; sin eso el catálogo IVA quedaba vacío y el 21 % caía al id fijo de Dinner (= 10,5 % en Sudata).
+- El fallback a ids fijos de Dinner corre **solo** con perfil `default` (`_legacy_dinner_fallback_allowed`); en otro tenant devuelve `None` en lugar de un impuesto ajeno.
 
 Ver [iva-y-import-odoo.md § Perfil Odoo](../iva-y-import-odoo.md#perfil-odoo-odoo_profile).
 

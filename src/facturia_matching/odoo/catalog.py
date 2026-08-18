@@ -14,6 +14,7 @@ from facturia_matching.odoo.api import (
     get_odoo_document_types,
     get_odoo_uid_from_config,
     is_odoo_config_ready,
+    odoo_available_fields,
     odoo_search_read,
     probe_odoo_db_exists,
 )
@@ -462,7 +463,11 @@ def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[D
     products = odoo_search_read(
         "product.product",
         [("active", "=", True)],
-        ["id", "name", "default_code", "uom_id", "uom_po_id"],
+        odoo_available_fields(
+            "product.product",
+            ["id", "name", "default_code", "uom_id", "uom_po_id"],
+            config,
+        ),
         limit=20000,
         order="name",
         config=config,

@@ -1083,6 +1083,392 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertEqual(ranked[0]["lines_matched"], 2)
         self.assertGreater(ranked[0]["basket_score"], ranked[1]["basket_score"])
 
+    def test_score_oc_candidates_ranks_higher_basket_score_first(self):
+        """El % del modal (basket_score) va primero: 91,7% arriba de 90% aunque la de 90% sea más nueva."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "SPRITE FX LS 500ML",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/product_id": "100",
+            },
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P04539",
+                "partner_ref": "pedido del 16-01",
+                "date_order": "2026-01-22",
+                "line_name": "OTRO PRODUCTO SIN AFINIDAD",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+                "product_id": 100,
+            },
+            {
+                "line_id": 2,
+                "order_id": 20,
+                "order_name": "P06931",
+                "partner_ref": "PEDIDO 5/08",
+                "date_order": "2026-01-05",
+                "line_name": "SPRITE FX LS 500ML",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+                "product_id": 100,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["order_name"], "P06931")
+        self.assertGreater(ranked[0]["basket_score"], ranked[1]["basket_score"])
+
+    def test_score_oc_candidates_boosts_matching_partner_ref(self):
+        """PDF Salta: misma canasta, gana la OC con partner_ref = PEDIDO de la factura."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "__fac_referencia": "PEDIDO 26.05",
+                "invoice_date": "27/05/2026",
+                "invoice_line_ids/name": "SPRITE FX LS 500ML",
+                "invoice_line_ids/quantity": "10",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "COCA COLA 1.5L",
+                "invoice_line_ids/quantity": "5",
+            },
+        ]
+        # Misma canasta (2/2); refs distintas.
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 100,
+                "order_name": "P06735",
+                "partner_ref": "PEDIDO 22.07",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+            },
+            {
+                "line_id": 2,
+                "order_id": 100,
+                "order_name": "P06735",
+                "partner_ref": "PEDIDO 22.07",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 5,
+                "qty_received": 5,
+                "qty_invoiced": 0,
+            },
+            {
+                "line_id": 3,
+                "order_id": 6041,
+                "order_name": "P06041",
+                "partner_ref": "PEDIDO 26.05",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+            },
+            {
+                "line_id": 4,
+                "order_id": 6041,
+                "order_name": "P06041",
+                "partner_ref": "PEDIDO 26.05",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 5,
+                "qty_received": 5,
+                "qty_invoiced": 0,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["order_id"], 6041)
+        self.assertEqual(ranked[0]["order_name"], "P06041")
+        self.assertGreaterEqual(ranked[0]["ref_score"], 85.0)
+        self.assertLess(ranked[1]["ref_score"], ranked[0]["ref_score"])
+
+    def test_score_oc_candidates_prefers_newer_date_on_tie(self):
+        """Mismo lines_matched → OC con date_order más reciente primero."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "BEB-GASEOSAS COCA",
+                "invoice_line_ids/quantity": "10",
+                "__item_codigo": "",
+            },
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P04243",
+                "partner_ref": "pedido 29/12",
+                "date_order": "2025-12-29",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 10,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+            },
+            {
+                "line_id": 2,
+                "order_id": 20,
+                "order_name": "P06273",
+                "partner_ref": "Pedido 11.06",
+                "date_order": "2026-06-12",
+                "line_name": "BEB-GASEOSAS",
+                "product_qty": 10,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["order_id"], 20)
+        self.assertEqual(ranked[0]["order_name"], "P06273")
+        self.assertEqual(ranked[0]["lines_matched"], ranked[1]["lines_matched"])
+
+    def test_score_oc_candidates_prefers_better_qty_fit(self):
+        """3 PICADAs: OC pedida=3 gana a pedida=4 aunque sea más vieja (ambos 4/4)."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": f'PICADA "C" ESP ({i})',
+                "invoice_line_ids/quantity": "14",
+                "invoice_line_ids/product_id": "563",
+            }
+            for i in range(3)
+        ] + [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "SALCHICHA CARCARAÑA",
+                "invoice_line_ids/quantity": "6.65",
+                "invoice_line_ids/product_id": "909",
+            },
+        ]
+
+        def _oc(order_id, name, date, carne_qty):
+            return [
+                {
+                    "line_id": order_id * 10,
+                    "order_id": order_id,
+                    "order_name": name,
+                    "partner_ref": f"PEDIDO {name}",
+                    "date_order": date,
+                    "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                    "product_qty": carne_qty,
+                    "qty_received": 40.0,
+                    "qty_invoiced": 40.0,
+                    "product_id": 563,
+                    "product_uom_name": "kg",
+                    "price_unit": 12257.92,
+                },
+                {
+                    "line_id": order_id * 10 + 1,
+                    "order_id": order_id,
+                    "order_name": name,
+                    "partner_ref": f"PEDIDO {name}",
+                    "date_order": date,
+                    "line_name": "FIA-SALCHICHAS",
+                    "product_qty": 1,
+                    "qty_received": 6.65,
+                    "qty_invoiced": 6.65,
+                    "product_id": 909,
+                    "product_uom_name": "kg",
+                    "price_unit": 5505.01,
+                },
+            ]
+
+        # Más nueva pero pedida=4; P06790 más vieja con pedida=3 exacta.
+        po_lines = _oc(100, "P06800", "2026-08-04", 4) + _oc(
+            790, "P06790", "2026-07-28", 3
+        )
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_matched"], 4)
+        self.assertEqual(ranked[1]["lines_matched"], 4)
+        self.assertEqual(ranked[0]["order_name"], "P06790")
+        self.assertGreater(ranked[0]["qty_fit_score"], ranked[1]["qty_fit_score"])
+        self.assertAlmostEqual(ranked[0]["qty_fit_score"], 100.0, places=0)
+
+    def test_ref_match_score_exact_and_date_proximity(self):
+        from facturia_matching.odoo.purchase_matching import _ref_match_score
+
+        self.assertEqual(
+            _ref_match_score("PEDIDO 26.05", ["PEDIDO 26.05"], ["27/05/2026"]),
+            100.0,
+        )
+        # Sin ref de factura: boost suave por DD.MM cercano a la fecha.
+        soft = _ref_match_score("PEDIDO 26.05", [], ["27/05/2026"])
+        self.assertGreaterEqual(soft, 50.0)
+        self.assertLess(soft, 85.0)
+
+    def test_dinner_note_zero_not_benedictino_and_agua_affinity(self):
+        """PDF Salta: zero↔Coca Zero; Benedictino↔AGUA; no ACUERDO≈ZERO."""
+        from facturia_matching.odoo.purchase_matching import (
+            _score_dinner_note,
+            score_oc_candidates,
+        )
+
+        self.assertEqual(_score_dinner_note("COCA-COLA ZERO 600*06 PET", "zero"), 100.0)
+        self.assertEqual(_score_dinner_note("COCA-COLA ZERO 600*06 PET", "coca"), 70.0)
+        self.assertEqual(
+            _score_dinner_note("BENEDICTINO SIN GAS 600*12 PET ACUERDO GCIA.", "zero"),
+            0.0,
+        )
+
+        po_lines = []
+        for note, qty, lid in [
+            ("coca", 12, 1),
+            ("sprite", 30, 2),
+            ("zero", 30, 3),
+            ("fanta", 30, 4),
+        ]:
+            po_lines.append(
+                {
+                    "line_id": lid,
+                    "order_id": 1,
+                    "order_name": "P06041",
+                    "partner_ref": "",
+                    "line_name": "[B0003] BEB-GASEOSAS",
+                    "note_labels": [note],
+                    "product_qty": qty,
+                    "qty_received": 0,
+                    "qty_invoiced": 0,
+                }
+            )
+        po_lines.append(
+            {
+                "line_id": 8,
+                "order_id": 1,
+                "order_name": "P06041",
+                "partner_ref": "",
+                "line_name": "[B0001] BEB-AGUA C/S GAS",
+                "note_labels": [],
+                "product_qty": 60,
+                "qty_received": 0,
+                "qty_invoiced": 0,
+            }
+        )
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": name,
+                "invoice_line_ids/quantity": "5",
+                "__item_codigo": "",
+            }
+            for name in (
+                "COCA-COLA 600*12 PET",
+                "SPRITE FX LS 500ML",
+                "COCA-COLA ZERO 600*06 PET",
+                "FANTA NARANJA 500*06 PET",
+                "BENEDICTINO SIN GAS 600*12 PET",
+            )
+        ]
+        ranked = score_oc_candidates(rows, po_lines)
+        by_lid = {ln["line_id"]: ln.get("invoice_match") for ln in ranked[0]["lines"]}
+        self.assertIn("ZERO", (by_lid[3] or {}).get("invoice_desc", "").upper())
+        self.assertIn("BENEDICTINO", (by_lid[8] or {}).get("invoice_desc", "").upper())
+        self.assertNotIn("BENEDICTINO", (by_lid[3] or {}).get("invoice_desc", "").upper())
+
+    def test_score_oc_candidates_fanta_not_saborizada_and_gas_notes(self):
+        """FANTA no pega a agua naranja; Benedictino sin gas no pega a nota con gas."""
+        from facturia_matching.odoo.purchase_matching import (
+            _line_match_score,
+            _score_dinner_note,
+            score_oc_candidates,
+        )
+
+        self.assertEqual(
+            _score_dinner_note("BENEDICTINO SIN GAS 600*12 PET", "agua con gas"),
+            0.0,
+        )
+        self.assertEqual(
+            _score_dinner_note("BENEDICTINO C/G 600*12 PET", "agua con gas"),
+            100.0,
+        )
+        self.assertEqual(
+            _line_match_score(
+                codigo="",
+                descripcion="FANTA NARANJA 500*06 PET 5548 ACUERDO GCIA.",
+                qty=30,
+                po_line={
+                    "line_name": "[B0002] BEB-AGUAS SABORIZADAS",
+                    "note_labels": ["naranja"],
+                    "product_qty": 18,
+                },
+            ),
+            0.0,
+        )
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": name,
+                "invoice_line_ids/quantity": "10",
+            }
+            for name in (
+                "COCA-COLA 600*12 PET 5548 ACUERDO GCIA.",
+                "SPRITE FX LS 500ML NR 06PET 5548 ACUERDO GCIA.",
+                "COCA-COLA ZERO 600*06 PET 5548 ACUERDO GCIA.",
+                "FANTA NARANJA 500*06 PET 5548 ACUERDO GCIA.",
+                "BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA.",
+                "BENEDICTINO C/G 600*12 PET 5548 ACUERDO GCIA.",
+            )
+        ]
+        po_specs = [
+            (1, "[B0003] BEB-GASEOSAS", ["coca cola"], 180),
+            (2, "[B0003] BEB-GASEOSAS", ["sprite"], 60),
+            (3, "[B0003] BEB-GASEOSAS", ["coca zero"], 60),
+            (4, "[B0001] BEB-AGUA C/S GAS", ["agua con gas"], 60),
+            (5, "[B0002] BEB-AGUAS SABORIZADAS", ["pomelo"], 30),
+            (6, "[B0002] BEB-AGUAS SABORIZADAS", ["naranja"], 18),
+            (7, "[B0002] BEB-AGUAS SABORIZADAS", ["pomelo rosa"], 30),
+            (8, "[B0003] BEB-GASEOSAS", ["fanta"], 30),
+            (9, "[B0001] BEB-AGUA C/S GAS", [], 120),
+        ]
+        po_lines = [
+            {
+                "line_id": lid,
+                "order_id": 1,
+                "order_name": "P1",
+                "partner_ref": "pedido del 09/01",
+                "date_order": "2026-01-10",
+                "line_name": name,
+                "note_labels": notes,
+                "product_qty": qty,
+                "qty_received": qty,
+                "qty_invoiced": qty,
+                "product_uom_name": "Unidades",
+                "price_unit": 1,
+            }
+            for lid, name, notes, qty in po_specs
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        by_lid = {ln["line_id"]: ln.get("invoice_match") for ln in ranked[0]["lines"]}
+
+        def desc(lid):
+            return ((by_lid.get(lid) or {}).get("invoice_desc") or "").upper()
+
+        self.assertIn("COCA-COLA", desc(1))
+        self.assertNotIn("ZERO", desc(1))
+        self.assertIn("SPRITE", desc(2))
+        self.assertIn("ZERO", desc(3))
+        self.assertIn("C/G", desc(4))
+        self.assertFalse(by_lid[5])
+        self.assertFalse(by_lid[6])
+        self.assertFalse(by_lid[7])
+        self.assertIn("FANTA", desc(8))
+        self.assertIn("SIN GAS", desc(9))
+        self.assertEqual(ranked[0]["lines_matched"], 6)
+        self.assertEqual(ranked[0]["lines_total"], 6)
+
     def test_resolve_selected_oc_prefers_saved(self):
         candidates = [
             {"order_id": 20, "order_name": "P002"},
@@ -1669,6 +2055,652 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertTrue(summary["oc_searched_by_comprobante"].get("0"))
         self.assertTrue(summary["oc_provider_has_ocs_by_comprobante"].get("0"))
         self.assertEqual(len(summary["oc_candidates_by_comprobante"].get("0") or []), 1)
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_apply_oc_selection_uses_product_memory(self, mock_uom, mock_fetch, _mock_odoo):
+        """Al elegir OC, memoria de producto gana al fuzzy de etiqueta OC (Gran Crianza)."""
+        from facturia_matching.persistence.product_label_memory import (
+            MemoryChoice,
+            normalize_label_key,
+        )
+
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        mock_fetch.return_value = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P06785",
+                "partner_ref": "",
+                "line_name": "SALCHICHA",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+                "product_id": 100,
+                "product_uom_id": None,
+                "product_uom_name": "kg",
+            },
+            {
+                "line_id": 2,
+                "order_id": 10,
+                "order_name": "P06785",
+                "partner_ref": "",
+                "line_name": "OTRO-PACK",
+                "product_qty": 5,
+                "qty_received": 5,
+                "qty_invoiced": 0,
+                "product_id": 200,
+                "product_uom_id": None,
+                "product_uom_name": "kg",
+            },
+        ]
+        label = "BIFE ANGUS X KG"
+        key = normalize_label_key(label)
+        memory = {(42, key): MemoryChoice(product_id=777, uom_id=None)}
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "invoice_line_ids/name": label,
+                "invoice_line_ids/quantity": "3",
+                "__um_proveedor": "kg",
+            }
+        ]
+        apply_oc_selection(rows, 0, 10, product_memory=memory)
+        self.assertEqual(rows[0]["invoice_line_ids/product_id"], "777")
+        # Tras enrich rematch el producto queda confirmado (sin flag suggested).
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_oc_collision_keeps_product_id(self, mock_uom, _mock_odoo):
+        """Colisión 1:1 de línea OC no debe borrar product_id del match."""
+        from facturia_matching.odoo.purchase_matching import _match_comprobante_rows
+
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 10,
+                "order_name": "P001",
+                "partner_ref": "",
+                "line_name": "COCA ZERO",
+                "product_qty": 10,
+                "qty_received": 10,
+                "qty_invoiced": 0,
+                "product_id": 50,
+                "product_uom_name": "Units",
+                "note_labels": ["zero"],
+            },
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "10",
+                "invoice_line_ids/name": "COCA COLA ZERO",
+                "invoice_line_ids/quantity": "5",
+            },
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "10",
+                "invoice_line_ids/name": "COCA COLA ZERO PACK",
+                "invoice_line_ids/quantity": "5",
+            },
+        ]
+        matched = _match_comprobante_rows(rows, po_lines, mock_uom.return_value, 10)
+        self.assertEqual(matched, 1)
+        self.assertEqual(rows[0]["invoice_line_ids/product_id"], "50")
+        # Segunda fila: misma línea OC reclamada → sin vínculo, pero conserva producto.
+        self.assertEqual(rows[1]["invoice_line_ids/product_id"], "50")
+        self.assertIn("ya asignada", (rows[1].get("__oc_match_note") or "").lower())
+        self.assertFalse(str(rows[1].get("__oc_line_id") or "").isdigit())
+
+    @patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+    @patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+    def test_same_product_oc_lines_distributed_one_each(self, mock_uom, _mock_odoo):
+        """Gran Crianza: 3× CAR-CARNE MOLIDA en OC → 3 filas PICADA con product 563."""
+        from facturia_matching.odoo.purchase_matching import _match_comprobante_rows
+
+        mock_uom.return_value = {"by_name": {}, "by_id": {}}
+        po_lines = [
+            {
+                "line_id": 10 + i,
+                "order_id": 85,
+                "order_name": "P06785",
+                "partner_ref": "",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 1,
+                "qty_received": 14.0 + i,
+                "qty_invoiced": 0,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 10000 + i,
+            }
+            for i in range(3)
+        ]
+        rows = [
+            {
+                "__comprobante_idx": 0,
+                "partner_id": "42",
+                "__selected_oc_order_id": "85",
+                "invoice_line_ids/name": f"PICADA {i}",
+                "invoice_line_ids/quantity": "15",
+                "invoice_line_ids/product_id": "563",
+                "__um_proveedor": "kg",
+            }
+            for i in range(3)
+        ]
+        matched = _match_comprobante_rows(rows, po_lines, mock_uom.return_value, 85)
+        self.assertEqual(matched, 3)
+        linked = {str(r.get("__oc_line_id")) for r in rows}
+        self.assertEqual(linked, {"10", "11", "12"})
+        for r in rows:
+            self.assertEqual(r["invoice_line_ids/product_id"], "563")
+            self.assertNotIn("ya asignada", (r.get("__oc_match_note") or "").lower())
+
+    def test_score_oc_candidates_matches_by_product_id(self):
+        """Preview: PICADA con product_id=563 matchea CAR-CARNE aunque el texto no."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "PICADA \\",
+                "invoice_line_ids/quantity": "14",
+                "invoice_line_ids/product_id": "563",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "PICADA \\",
+                "invoice_line_ids/quantity": "15",
+                "invoice_line_ids/product_id": "563",
+            },
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 85,
+                "order_name": "P06785",
+                "partner_ref": "",
+                "date_order": "2026-08-03",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 1,
+                "qty_received": 14.64,
+                "qty_invoiced": 0,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 10390,
+            },
+            {
+                "line_id": 2,
+                "order_id": 85,
+                "order_name": "P06785",
+                "partner_ref": "",
+                "date_order": "2026-08-03",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 1,
+                "qty_received": 15.2,
+                "qty_invoiced": 0,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 12257,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["lines_matched"], 2)
+        matched_details = [
+            d for d in ranked[0]["lines"] if d.get("invoice_match")
+        ]
+        self.assertEqual(len(matched_details), 2)
+
+    def test_score_oc_candidates_soft_counts_same_product_up_to_qty(self):
+        """1× CAR-CARNE product_qty=3 + 3 PICADA mismo product_id → 3/3 en ranking."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": f'PICADA "C" ESP ({i})',
+                "invoice_line_ids/quantity": str(14 + i),
+                "invoice_line_ids/product_id": "563",
+            }
+            for i in range(3)
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 790,
+                "order_name": "P06790",
+                "partner_ref": "PEDIDO 27.07",
+                "date_order": "2026-07-28",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 3,
+                "qty_received": 44.06,
+                "qty_invoiced": 44.06,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 12257.92,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["lines_matched"], 3)
+        self.assertEqual(ranked[0]["lines_total"], 3)
+        self.assertAlmostEqual(ranked[0]["basket_score"], 90.0, places=0)
+        # UI sigue mostrando un solo invoice_match primario.
+        matched_details = [
+            d for d in ranked[0]["lines"] if d.get("invoice_match")
+        ]
+        self.assertEqual(len(matched_details), 1)
+
+    def test_score_oc_candidates_soft_p06790_style_four_of_four(self):
+        """P06790: 3× PICADA + 1× SALCHICHA vs CARNE qty=3 + SALCHICHAS qty=1 → 4/4."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": f'PICADA "C" ESP ({i})',
+                "invoice_line_ids/quantity": "14",
+                "invoice_line_ids/product_id": "563",
+            }
+            for i in range(3)
+        ] + [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": "SALCHICHA CARCARAÑA 35X6 190GS (909)",
+                "invoice_line_ids/quantity": "6.65",
+                "invoice_line_ids/product_id": "909",
+            },
+        ]
+        po_lines = [
+            {
+                "line_id": 10,
+                "order_id": 790,
+                "order_name": "P06790",
+                "partner_ref": "PEDIDO 27.07",
+                "date_order": "2026-07-28",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 3,
+                "qty_received": 44.06,
+                "qty_invoiced": 44.06,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 12257.92,
+            },
+            {
+                "line_id": 11,
+                "order_id": 790,
+                "order_name": "P06790",
+                "partner_ref": "PEDIDO 27.07",
+                "date_order": "2026-07-28",
+                "line_name": "FIA-SALCHICHAS",
+                "product_qty": 1,
+                "qty_received": 6.65,
+                "qty_invoiced": 6.65,
+                "product_id": 909,
+                "product_uom_name": "kg",
+                "price_unit": 5505.01,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_matched"], 4)
+        self.assertEqual(ranked[0]["lines_total"], 4)
+        self.assertAlmostEqual(ranked[0]["basket_score"], 90.0, places=0)
+
+    def test_score_oc_candidates_soft_respects_product_qty_capacity(self):
+        """product_qty=1: solo 1 de 3 PICADA cuenta en el ranking."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": f"PICADA {i}",
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/product_id": "563",
+            }
+            for i in range(3)
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 1,
+                "order_name": "P1",
+                "partner_ref": "",
+                "date_order": "2026-07-28",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 1,
+                "qty_received": 30.0,
+                "qty_invoiced": 0,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 1000,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_matched"], 1)
+        self.assertEqual(ranked[0]["lines_total"], 3)
+        self.assertAlmostEqual(ranked[0]["basket_score"], 30.0, places=0)
+
+    def test_score_oc_candidates_soft_skips_zero_and_gas_variants(self):
+        """Coca/Sprite/Fanta/Benedictino s/gas = 4/6; Zero y C/G no inflan el basket."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": name,
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/product_id": pid,
+            }
+            for name, pid in (
+                ("COCA-COLA 600*12 PET 5548 ACUERDO GCIA.", "620"),
+                ("SPRITE FX LS 500ML NR 06PET 5548 ACUERDO GCIA.", "620"),
+                ("COCA-COLA ZERO 600*06 PET 5548 ACUERDO GCIA.", "620"),
+                ("FANTA NARANJA 500*06 PET 5548 ACUERDO GCIA.", "620"),
+                ("BENEDICTINO SIN GAS 600*12 PET 5548 ACUERDO GCIA.", "510"),
+                ("BENEDICTINO C/G 600*12 PET 5548 ACUERDO GCIA.", "510"),
+            )
+        ]
+        po_specs = [
+            (1, "[B0003] BEB-GASEOSAS", ["cocacola"], 120, 620),
+            (2, "[B0003] BEB-GASEOSAS", ["sprite"], 60, 620),
+            (3, "[B0002] BEB-AGUAS SABORIZADAS", ["pera"], 84, 621),
+            (4, "[B0001] BEB-AGUA C/S GAS", ["agua sin gas"], 48, 510),
+            (5, "[B0002] BEB-AGUAS SABORIZADAS", ["manzana"], 30, 621),
+            (6, "[B0003] BEB-GASEOSAS", ["fanta"], 60, 620),
+            (7, "[B0002] BEB-AGUAS SABORIZADAS", ["naranja"], 30, 621),
+        ]
+        po_lines = [
+            {
+                "line_id": lid,
+                "order_id": 1,
+                "order_name": "P1",
+                "partner_ref": "pedido del 09/01",
+                "date_order": "2026-01-10",
+                "line_name": name,
+                "note_labels": notes,
+                "product_qty": qty,
+                "qty_received": qty,
+                "qty_invoiced": qty,
+                "product_id": pid,
+                "product_uom_name": "Unidades",
+                "price_unit": 1,
+            }
+            for lid, name, notes, qty, pid in po_specs
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_total"], 6)
+        self.assertEqual(ranked[0]["lines_matched"], 4)
+        self.assertLess(ranked[0]["basket_score"], 80.0)
+        primary = [
+            (d["line_id"], (d.get("invoice_match") or {}).get("invoice_desc", ""))
+            for d in ranked[0]["lines"]
+            if d.get("invoice_match")
+        ]
+        self.assertEqual(len(primary), 4)
+        blob = " ".join(desc.upper() for _, desc in primary)
+        self.assertIn("COCA-COLA", blob)
+        self.assertNotIn("ZERO", blob)
+        self.assertIn("SPRITE", blob)
+        self.assertIn("FANTA", blob)
+        self.assertIn("BENEDICTINO", blob)
+        self.assertNotIn("C/G", blob)
+
+    def test_score_oc_candidates_soft_sibling_label_without_product_id(self):
+        """Sin product_id en extras: etiqueta hermana ≥88 hereda el hard-match."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": 'PICADA "C" ESP',
+                "invoice_line_ids/quantity": "14",
+                "invoice_line_ids/product_id": "563",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": 'PICADA "C" ESP (6214)',
+                "invoice_line_ids/quantity": "15",
+            },
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": 'PICADA "C" ESP 6215',
+                "invoice_line_ids/quantity": "15",
+            },
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 790,
+                "order_name": "P06790",
+                "partner_ref": "",
+                "date_order": "2026-07-28",
+                "line_name": "CAR-CARNE MOLIDA ESPECIAL",
+                "product_qty": 3,
+                "qty_received": 44.06,
+                "qty_invoiced": 0,
+                "product_id": 563,
+                "product_uom_name": "kg",
+                "price_unit": 12000,
+            },
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_matched"], 3)
+        self.assertAlmostEqual(ranked[0]["basket_score"], 90.0, places=0)
+
+    def test_resolve_target_uom_prefers_invoice_kg(self):
+        """FacturIA KG + producto con pack de peso → preferir kg (Gran Crianza)."""
+        from facturia_matching.odoo.purchase_matching import _resolve_target_uom_for_product
+
+        catalog = self._dinner_like_uom_catalog()
+        with patch(
+            "facturia_matching.odoo.purchase_matching._product_default_uom_id",
+            return_value=90,  # unidad de (2840g)
+        ):
+            to_uom = _resolve_target_uom_for_product(
+                555, catalog, invoice_um_raw="KG"
+            )
+        self.assertIsNotNone(to_uom)
+        self.assertEqual(int(to_uom["id"]), 12)  # kg en categoría Peso
+
+    def test_um_aliases_resolve_with_spanish_uom_catalog(self):
+        """Sudata en es_419 devuelve 'Unidades' / 'Tonelada': los alias UN/MES/TN siguen mapeando."""
+        es_rows = [
+            {"id": 1, "name": "Unidades", "uom_type": "reference", "factor": 1.0, "category_id": [1, "Unidad"]},
+            {"id": 15, "name": "kg", "uom_type": "reference", "factor": 1.0, "category_id": [2, "Peso"]},
+            {"id": 16, "name": "Tonelada", "uom_type": "bigger", "factor": 0.001, "category_id": [2, "Peso"]},
+        ]
+        catalog = _build_uom_catalog(es_rows, relative=False)
+
+        for raw in ("UN", "U", "UNIDAD", "UNIDADES", "PIEZA", "MES", "Units"):
+            with self.subTest(raw=raw):
+                uom = resolve_uom(raw, catalog)
+                self.assertIsNotNone(uom, f"{raw} no resolvió con catálogo en español")
+                self.assertEqual(int(uom["id"]), 1)
+        self.assertEqual(int(resolve_uom("KG", catalog)["id"]), 15)
+        self.assertEqual(int(resolve_uom("TN", catalog)["id"]), 16)
+
+    def test_um_aliases_still_resolve_with_english_uom_catalog(self):
+        en_rows = [
+            {"id": 1, "name": "Units", "uom_type": "reference", "factor": 1.0, "category_id": [1, "Unit"]},
+            {"id": 16, "name": "Ton", "uom_type": "bigger", "factor": 0.001, "category_id": [2, "Weight"]},
+        ]
+        catalog = _build_uom_catalog(en_rows, relative=False)
+
+        self.assertEqual(int(resolve_uom("UNIDAD", catalog)["id"]), 1)
+        self.assertEqual(int(resolve_uom("TONELADA", catalog)["id"]), 16)
+
+
+# uom.uom tal como responde Sudata (Odoo 19): árbol relative_uom_id, factor = razón a la raíz.
+ODOO19_UOM_ROWS = [
+    {"id": 1, "name": "Unidades", "factor": 1.0, "relative_factor": 1.0, "relative_uom_id": False},
+    {"id": 2, "name": "Paquete de 6", "factor": 6.0, "relative_factor": 6.0, "relative_uom_id": [1, "Unidades"]},
+    {"id": 8, "name": "m", "factor": 1000.0, "relative_factor": 100.0, "relative_uom_id": [7, "cm"]},
+    {"id": 11, "name": "ml", "factor": 1.0, "relative_factor": 1.0, "relative_uom_id": False},
+    {"id": 12, "name": "L", "factor": 1000.0, "relative_factor": 1000.0, "relative_uom_id": [11, "ml"]},
+    {"id": 14, "name": "g", "factor": 1.0, "relative_factor": 1.0, "relative_uom_id": False},
+    {"id": 15, "name": "kg", "factor": 1000.0, "relative_factor": 1000.0, "relative_uom_id": [14, "g"]},
+    {"id": 16, "name": "Tonelada", "factor": 1000000.0, "relative_factor": 1000.0, "relative_uom_id": [15, "kg"]},
+]
+# 'mm' y 'cm' archivados: search_read no los trae, cierran el árbol de 'm'.
+ODOO19_ARCHIVED_UOMS = [
+    {"id": 6, "name": "mm", "factor": 1.0, "relative_factor": 1.0, "relative_uom_id": False},
+    {"id": 7, "name": "cm", "factor": 10.0, "relative_factor": 10.0, "relative_uom_id": [6, "mm"]},
+]
+
+
+def _build_uom_catalog(rows, *, relative, archived=None):
+    """Arma el catálogo como en producción, con el modelo uom.uom indicado."""
+    from facturia_matching.odoo import purchase_matching as pm
+
+    def fake_search_read(model, domain=None, fields=None, limit=500, **kwargs):
+        wanted = None
+        for term in domain or []:
+            if isinstance(term, (list, tuple)) and len(term) == 3 and term[0] == "id":
+                wanted = set(term[2])
+        if wanted is not None:
+            return [r for r in (archived or []) if int(r["id"]) in wanted]
+        return list(rows)
+
+    with patch.object(pm, "odoo_search_read", side_effect=fake_search_read), patch.object(
+        pm, "_purchase_odoo_config", return_value={"base_url": "x", "db": "y"}
+    ), patch.object(pm, "_uom_model_is_relative", return_value=relative):
+        return pm._fetch_uom_catalog()
+
+
+class TestUomOdoo19Model(unittest.TestCase):
+    """Odoo 19: uom.uom sin category_id/uom_type (Sudata)."""
+
+    def setUp(self):
+        from facturia_matching.odoo.purchase_matching import clear_purchase_cache
+
+        clear_purchase_cache()
+        self.catalog = _build_uom_catalog(
+            ODOO19_UOM_ROWS, relative=True, archived=ODOO19_ARCHIVED_UOMS
+        )
+
+    def _uom(self, name_or_alias):
+        from facturia_matching.odoo.purchase_matching import resolve_uom
+
+        return resolve_uom(name_or_alias, self.catalog)
+
+    def test_detects_relative_model_by_fields(self):
+        from facturia_matching.odoo import purchase_matching as pm
+
+        with patch.object(
+            pm, "_purchase_odoo_config", return_value={"base_url": "x", "db": "y"}
+        ), patch.object(
+            pm,
+            "odoo_model_field_names",
+            return_value=frozenset({"name", "relative_factor", "relative_uom_id"}),
+        ):
+            self.assertTrue(pm._uom_model_is_relative())
+        pm.clear_purchase_cache()
+        with patch.object(
+            pm, "_purchase_odoo_config", return_value={"base_url": "x", "db": "y"}
+        ), patch.object(
+            pm,
+            "odoo_model_field_names",
+            return_value=frozenset({"name", "category_id", "uom_type", "factor"}),
+        ):
+            self.assertFalse(pm._uom_model_is_relative())
+
+    def test_unknown_fields_keep_legacy_model(self):
+        """Si el fields_get falla no se asume Odoo 19: se sigue con el catálogo histórico."""
+        from facturia_matching.odoo import purchase_matching as pm
+
+        with patch.object(
+            pm, "_purchase_odoo_config", return_value={"base_url": "x", "db": "y"}
+        ), patch.object(pm, "odoo_model_field_names", return_value=frozenset()):
+            self.assertFalse(pm._uom_model_is_relative())
+
+    def test_tree_root_becomes_category(self):
+        from facturia_matching.odoo.purchase_matching import _category_id
+
+        weight = {self._uom(n)["id"]: _category_id(self._uom(n)) for n in ("g", "kg", "Tonelada")}
+        self.assertEqual(set(weight.values()), {14})  # raíz g
+        self.assertEqual(_category_id(self._uom("L")), 11)  # raíz ml
+        self.assertEqual(_category_id(self._uom("Paquete de 6")), 1)  # raíz Unidades
+
+    def test_archived_parents_close_the_tree(self):
+        """'m' cuelga de cm (archivado): su categoría debe ser la raíz mm, no él mismo."""
+        from facturia_matching.odoo.purchase_matching import _category_id
+
+        self.assertEqual(_category_id(self._uom("m")), 6)
+
+    def test_convert_qty_weight(self):
+        from facturia_matching.odoo.purchase_matching import convert_qty
+
+        self.assertAlmostEqual(convert_qty(1000.0, self._uom("g"), self._uom("kg")), 1.0)
+        self.assertAlmostEqual(convert_qty(1.0, self._uom("kg"), self._uom("g")), 1000.0)
+        self.assertAlmostEqual(convert_qty(2.0, self._uom("Tonelada"), self._uom("kg")), 2000.0)
+
+    def test_convert_qty_units_and_packs(self):
+        from facturia_matching.odoo.purchase_matching import convert_qty
+
+        self.assertAlmostEqual(
+            convert_qty(12.0, self._uom("Unidades"), self._uom("Paquete de 6")), 2.0
+        )
+        self.assertAlmostEqual(
+            convert_qty(2.0, self._uom("Paquete de 6"), self._uom("Unidades")), 12.0
+        )
+
+    def test_convert_qty_across_trees_is_none(self):
+        from facturia_matching.odoo.purchase_matching import convert_qty
+
+        self.assertIsNone(convert_qty(1.0, self._uom("kg"), self._uom("L")))
+
+    def test_aliases_resolve_in_relative_model(self):
+        self.assertEqual(int(self._uom("UN")["id"]), 1)
+        self.assertEqual(int(self._uom("KG")["id"]), 15)
+        self.assertEqual(int(self._uom("LT")["id"]), 12)
+        self.assertEqual(int(self._uom("TN")["id"]), 16)
+
+    def test_scaling_uses_relative_catalog(self):
+        from facturia_matching.odoo.purchase_matching import _apply_uom_scaling
+
+        out = _apply_uom_scaling(
+            {},
+            invoice_qty=1000.0,
+            invoice_um_raw="g",
+            po_uom_id=15,
+            po_uom_name="kg",
+            uom_catalog=self.catalog,
+        )
+        self.assertEqual(out["um_empresa_id"], "15")
+        self.assertEqual(out["um_note"], "Re-escalado")
+        self.assertEqual(out["qty_escalada"], "1")
+
+    def test_product_default_uom_without_uom_po_id(self):
+        """Odoo 19 no tiene uom_po_id: pedirlo hacía fallar el search_read completo."""
+        from facturia_matching.odoo import purchase_matching as pm
+
+        captured = {}
+
+        def fake_search_read(model, domain=None, fields=None, limit=500, **kwargs):
+            captured["fields"] = list(fields or [])
+            return [{"id": 5, "uom_id": [15, "kg"]}]
+
+        with patch.object(pm, "odoo_search_read", side_effect=fake_search_read), patch.object(
+            pm, "_purchase_odoo_config", return_value={"base_url": "x", "db": "y"}
+        ), patch.object(pm, "is_purchase_odoo_configured", return_value=True), patch.object(
+            pm, "odoo_available_fields", return_value=["uom_id"]
+        ):
+            self.assertEqual(pm._product_default_uom_id(5), 15)
+        self.assertEqual(captured["fields"], ["uom_id"])
+
+    def test_list_uoms_for_product_uses_tree(self):
+        from facturia_matching.odoo import purchase_matching as pm
+
+        with patch.object(pm, "_product_default_uom_id", return_value=15), patch.object(
+            pm, "get_uom_catalog", return_value=self.catalog
+        ):
+            names = [u["name"] for u in pm.list_uoms_for_product(5)]
+        self.assertEqual(names, ["g", "kg", "Tonelada"])
 
 
 if __name__ == "__main__":

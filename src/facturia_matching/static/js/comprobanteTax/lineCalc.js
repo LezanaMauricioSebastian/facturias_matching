@@ -1,6 +1,6 @@
 import { toNumberLoose } from "../utils/index.js";
 
-const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado"]);
+const IVA_ATTACHABLE_ZERO = new Set(["IVA Exento", "IVA No Gravado", "IVA No Corresponde"]);
 /** Especiales que anulan pie 21 % (no incluir "0": es modo header FacturIA legítimo). */
 const EXPLICIT_ZERO_IVA = new Set(["IVA Exento", "IVA No Gravado", "IVA No Corresponde"]);
 

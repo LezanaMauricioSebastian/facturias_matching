@@ -4,7 +4,8 @@ import { lineBase, lineHasContent } from "./lineCalc.js";
 const FAC_AMOUNT_LABELS = {
   percepcion_iibb: "IIBB",
   percepcion_iva: "Percepción IVA",
-  otros_tributos: "Otros tributos",
+  // FacturIA manda el monto en `otros_tributos`; en Dinner/Odoo es Impuesto Interno.
+  otros_tributos: "Impuesto Interno",
 };
 
 const CLAIMED_KEY = "__fac_otros_claimed";
@@ -92,14 +93,88 @@ function amountKeyForFooterSlot(first, n) {
   return null;
 }
 
-function labelForFooterSlot(groupRows, n) {
+/** Label Odoo del slot N para el pie: 1ª fila (slot FacturIA) o fila con monto en ese slot. */
+function lineLabelForFooterSlot(groupRows, n) {
   const first = groupRows?.[0];
-  // Pie = FacturIA: label provisional / monto del slot, no nombres Odoo de líneas.
-  const fac = provisionalLabelForSlot(first, n);
-  if (fac) return fac;
-  let label = slotLabel(first, n);
-  if (label && !isPieMirrorSlot(first, n, groupRows)) return label;
+  if (first && !isPieMirrorSlot(first, n, groupRows)) {
+    const lab = slotLabel(first, n);
+    if (lab) return lab;
+  }
+  for (const row of groupRows || []) {
+    if (row === first) continue;
+    if (isPieMirrorSlot(row, n, groupRows)) continue;
+    const lab = slotLabel(row, n);
+    if (!lab) continue;
+    // Solo si esa fila tiene el monto del slot (asignación real, no otro impuesto en col 1).
+    if (slotMonto(row, n) > 0) return lab;
+  }
   return "";
+}
+
+function labelForFooterSlot(groupRows, n, { includeExtras = true } = {}) {
+  const first = groupRows?.[0];
+  const slotKey = amountKeyForFooterSlot(first, n);
+  // Si el usuario ya asignó impuesto Odoo en el slot → mostrar ese nombre.
+  // Si no, label provisional FacturIA (IIBB / Perc. IVA / Impuesto Interno).
+  const lineLab = lineLabelForFooterSlot(groupRows, n);
+  if (lineLab) {
+    const labKey = amountKeyForOdooLabel(lineLab);
+    // Interno en la 1ª fila (slot IIBB) es tax_ids de esa línea: no renombra el pie IIBB.
+    if (slotKey && labKey && labKey !== slotKey) {
+      const facLab = provisionalLabelForSlot(first, n) || "";
+      if (facLab) return facLab;
+    } else {
+      return lineLab;
+    }
+  } else {
+    const facLab = provisionalLabelForSlot(first, n) || "";
+    if (facLab) return facLab;
+  }
+  if (!includeExtras) return "";
+  const extras = extraPieLabels(groupRows);
+  const maxN = maxOtrosSlotN(groupRows);
+  const extraIdx = n - maxN - 1;
+  if (extraIdx >= 0 && extraIdx < extras.length) return extras[extraIdx];
+  return "";
+}
+
+/**
+ * Impuestos Odoo en líneas que no son un amount_key FacturIA ya listado
+ * (p.ej. IVA Adicional 20% en la 4ª fila). Van al pie para cargar el monto.
+ * Nunca re-lista IIBB / Perc. IVA / Interno: eso reabriría el pie duplicado.
+ */
+function extraPieLabels(groupRows) {
+  const first = groupRows?.[0];
+  const maxN = maxOtrosSlotN(groupRows);
+  const coveredLabels = new Set();
+  const coveredKeys = new Set();
+  for (const p of first?.__fac_percepciones || []) {
+    if (p?.amount_key) coveredKeys.add(p.amount_key);
+  }
+  for (let n = 1; n <= maxN; n++) {
+    const lab = labelForFooterSlot(groupRows, n, { includeExtras: false });
+    if (lab) {
+      coveredLabels.add(lab);
+      const k = amountKeyForOdooLabel(lab);
+      if (k) coveredKeys.add(k);
+    }
+    const slotKey = amountKeyForFooterSlot(first, n);
+    if (slotKey) coveredKeys.add(slotKey);
+  }
+  const extras = [];
+  const seen = new Set();
+  for (const row of groupRows || []) {
+    for (let n = 1; n <= 20; n++) {
+      if (isPieMirrorSlot(row, n, groupRows)) continue;
+      const lab = slotLabel(row, n);
+      if (!lab || coveredLabels.has(lab) || seen.has(lab)) continue;
+      const key = amountKeyForOdooLabel(lab);
+      if (key && coveredKeys.has(key)) continue;
+      seen.add(lab);
+      extras.push(lab);
+    }
+  }
+  return extras;
 }
 
 function findSlotWithLabel(row, lab, groupRows = null) {
@@ -154,21 +229,42 @@ export function stripPieMirrorLabelsFromFirstRow(groupRows) {
   return changed;
 }
 
-/** Suma montos del pie: por label (sin espejos), o por índice N. */
+/** Suma montos del pie: slot FacturIA por índice (+ montos repartidos); resto por label. */
 function sumAmountForFooterSlot(groupRows, n, label) {
+  const first = groupRows?.[0];
+  const amountKey = amountKeyForFooterSlot(first, n);
   let amount = 0;
+  for (const row of groupRows || []) {
+    amount += slotMonto(row, n);
+  }
+  if (amountKey) {
+    let moved = 0;
+    for (const row of groupRows || []) {
+      for (let k = 1; k <= 20; k++) {
+        if (k === n) continue;
+        if (isPieMirrorSlot(row, k, groupRows)) continue;
+        if (row === first) {
+          const kFac = amountKeyForFooterSlot(first, k);
+          if (kFac && kFac !== amountKey) continue;
+        }
+        const lab = slotLabel(row, k);
+        if (amountKeyForOdooLabel(lab) === amountKey) moved += slotMonto(row, k);
+      }
+    }
+    // Ya repartido a líneas asignadas: no sumar de nuevo el slot FacturIA (hydrate).
+    if (moved > 0) return moved;
+    return amount;
+  }
   if (label) {
+    let byLabel = 0;
     for (const row of groupRows || []) {
       for (let k = 1; k <= 20; k++) {
         if (slotLabel(row, k) !== label) continue;
         if (isPieMirrorSlot(row, k, groupRows)) continue;
-        amount += slotMonto(row, k);
+        byLabel += slotMonto(row, k);
       }
     }
-    if (amount > 0) return amount;
-  }
-  for (const row of groupRows || []) {
-    amount += slotMonto(row, n);
+    if (byLabel > 0) return byLabel;
   }
   return amount;
 }
@@ -311,29 +407,28 @@ export function maxOtrosSlotN(groupRows) {
 }
 
 /**
- * Desglose de otros impuestos para el pie = lo que trae FacturIA (labels provisionales + montos).
- * Las líneas se asignan a mano; no se renombra el pie con labels Odoo.
+ * Desglose de otros impuestos para el pie.
+ * Filas ancladas a amount_key FacturIA: un label Odoo en la 1ª fila solo
+ * renombra ese slot si mapea al mismo key (Interno en slot IIBB no oculta IIBB).
+ * Slots con label y monto 0 también van al pie (flujo «+»: elegir impuesto y cargar monto abajo).
+ * Un impuesto extra en otra línea (IVA Adicional 20%) también lista una fila, monto vacío.
  */
 export function computeOtrosBreakdown(groupRows) {
   if (!groupRows?.length) return [];
   hydrateOtrosSlotsFromFacPercepciones(groupRows);
   stripPieMirrorLabelsFromFirstRow(groupRows);
-  const first = groupRows[0];
   const maxN = maxOtrosSlotN(groupRows);
-  if (maxN < 1) return [];
+  const extraCount = extraPieLabels(groupRows).length;
+  if (maxN < 1 && extraCount < 1) return [];
 
   const rows = [];
-  for (let n = 1; n <= maxN; n++) {
-    const facLabel = provisionalLabelForSlot(first, n);
-    let label = facLabel;
-    if (!label) {
-      const cell = slotLabel(first, n);
-      if (cell && !isPieMirrorSlot(first, n, groupRows)) label = cell;
-    }
+  const lastN = maxN + extraCount;
+  for (let n = 1; n <= lastN; n++) {
+    let label = labelForFooterSlot(groupRows, n);
     const amount = sumAmountForFooterSlot(groupRows, n, label);
     if (!label && amount > 0) label = "Otros impuestos";
-    if (!label && amount <= 0) continue;
-    if (amount <= 0) continue;
+    // Sin label ni monto → no hay fila. Con label (aunque monto 0) sí, para poder editar en el pie.
+    if (!label) continue;
     rows.push({
       slotN: n,
       slotKey: String(n),
@@ -345,9 +440,22 @@ export function computeOtrosBreakdown(groupRows) {
   return rows;
 }
 
+function slotCoversFacAmountKey(groupRows, slotN, amountKey) {
+  for (const row of groupRows || []) {
+    if (isPieMirrorSlot(row, slotN, groupRows)) continue;
+    const lab = slotLabel(row, slotN);
+    if (!lab) continue;
+    const key = amountKeyForOdooLabel(lab);
+    if (!key || key === amountKey) return true;
+  }
+  return false;
+}
+
 /**
- * Impuestos FacturIA del pie que aún no tienen ningún label Odoo compatible en las líneas.
- * Ej.: FacturIA trajo IIBB + Otros tributos, pero en líneas solo hay Perc IIBB → falta Otros tributos.
+ * Impuestos FacturIA del pie que aún no tienen label Odoo en las líneas.
+ * Cubierto si algún label mapea al amount_key (IIBB / Perc. IVA / Interno),
+ * o si el slot FacturIA tiene un label que no pertenece a *otro* amount_key
+ * (p.ej. Ganancias en el slot IIBB sí cubre; Interno en el slot IIBB no).
  */
 export function missingFacOtrosAssignments(groupRows) {
   if (!groupRows?.length) return [];
@@ -373,6 +481,8 @@ export function missingFacOtrosAssignments(groupRows) {
     if (toNumberLoose(p?.monto) <= 0) continue;
     const key = p?.amount_key;
     if (!key || covered.has(key)) continue;
+    const slotN = slotNFromMontoKey(p?.ui_monto_key);
+    if (slotN && slotCoversFacAmountKey(groupRows, slotN, key)) continue;
     missing.push(FAC_AMOUNT_LABELS[key] || String(key));
   }
   return missing;

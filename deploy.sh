@@ -13,11 +13,13 @@ set -euo pipefail
 #   chmod +x deploy.sh
 #   ./deploy.sh --dev                 # deploy a odoo-dev (Dinner TEST + Aliare testct)
 #   ./deploy.sh --setup-secrets       # crea/actualiza secrets _DINNER (interactivo)
-#   ./deploy.sh                       # deploy prod matching-ui-odoo (Dinner prod + Central Ticket)
+#   ./deploy.sh                       # deploy prod matching-ui-odoo (Dinner prod + Central Ticket + Sudata)
 #   ./deploy.sh --check-secrets       # solo verifica que existan los secrets
 #
 # Config no sensible (hosts, URLs Odoo, DB names, user ids): copiá .env.dinner.example
 # a .env.dinner y completá. Ese archivo no se sube a git.
+# Sudata: defaults en deploy.sh + opcional .env.sudata (ver .env.sudata.example).
+# Secrets Odoo Sudata: ODOO_PASSWORD_SUDATA / ODOO_API_KEY_SUDATA en Secret Manager.
 #
 # Variables opcionales de entorno:
 #   PROJECT_ID          (default: fudo-481618)
@@ -547,6 +549,16 @@ default_dev_aliare_env_pairs() {
     "ODOO_USER_ALIARE=conexion@sudata.com.ar"
 }
 
+# matching-ui-odoo / odoo-dev: perfil Sudata → Odoo Cloud (mismas públicas).
+# Secrets ODOO_PASSWORD_SUDATA / ODOO_API_KEY_SUDATA se montan aparte.
+default_sudata_env_pairs() {
+  merge_env_pairs \
+    "ODOO_BASE_URL_SUDATA=https://sudata.odoo.com" \
+    "ODOO_ENDPOINT_SUDATA=/jsonrpc" \
+    "ODOO_DB_SUDATA=sudata" \
+    "ODOO_USER_SUDATA=jmfernandez@sudata.co"
+}
+
 load_env_vars_from_file() {
   local file="$1"
   if [[ ! -f "${file}" ]]; then
@@ -617,6 +629,33 @@ load_padron_env_pairs_from_file() {
   merge_env_pairs "${pairs[@]}"
 }
 
+# Solo ODOO_*_SUDATA / URL_SUDATA / … — no MySQL/Postgres (eso lo define Dinner en matching-ui-odoo).
+load_sudata_odoo_env_pairs_from_file() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo ""
+    return
+  fi
+  local pairs=()
+  local line key val
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%%#*}"
+    line="$(echo "${line}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "${line}" ]] && continue
+    [[ "${line}" != *=* ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="$(echo "${key}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    val="$(echo "${val}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    is_secret_env_key "${key}" && continue
+    is_sudata_odoo_public_env_key "${key}" || continue
+    if [[ "${val}" =~ ^\".*\"$ ]]; then val="${val:1:${#val}-2}"; fi
+    if [[ "${val}" =~ ^\'.*\'$ ]]; then val="${val:1:${#val}-2}"; fi
+    pairs+=("${key}=${val}")
+  done < "${file}"
+  merge_env_pairs "${pairs[@]}"
+}
+
 resolve_env_file() {
   if [[ -f "${ENV_DINNER_FILE}" ]]; then
     echo "${ENV_DINNER_FILE}"
@@ -654,6 +693,15 @@ build_deploy_env_vars() {
     fi
   fi
 
+  if [[ -f "${ENV_SUDATA_FILE:-.env.sudata}" ]]; then
+    loaded="$(load_sudata_odoo_env_pairs_from_file "${ENV_SUDATA_FILE:-.env.sudata}")"
+    if [[ -n "${loaded}" ]]; then
+      local -a sudata_file_pairs=()
+      IFS=',' read -r -a sudata_file_pairs <<< "${loaded}"
+      all_pairs+=("${sudata_file_pairs[@]}")
+    fi
+  fi
+
   if [[ "${DEV_MODE}" -eq 1 ]]; then
     IFS=',' read -r -a dev_dinner <<< "$(default_dev_dinner_env_pairs)"
     all_pairs+=("${dev_dinner[@]}")
@@ -661,6 +709,8 @@ build_deploy_env_vars() {
     all_pairs+=("${dev_aliare[@]}")
     IFS=',' read -r -a dev_mysql <<< "$(default_dev_mysql_env_pairs)"
     all_pairs+=("${dev_mysql[@]}")
+    IFS=',' read -r -a sudata_pairs <<< "$(default_sudata_env_pairs)"
+    all_pairs+=("${sudata_pairs[@]}")
   else
     IFS=',' read -r -a prod_dinner <<< "$(default_prod_dinner_env_pairs)"
     all_pairs+=("${prod_dinner[@]}")
@@ -668,6 +718,8 @@ build_deploy_env_vars() {
     all_pairs+=("${prod_aliare[@]}")
     IFS=',' read -r -a prod_mysql <<< "$(default_prod_mysql_env_pairs)"
     all_pairs+=("${prod_mysql[@]}")
+    IFS=',' read -r -a sudata_pairs <<< "$(default_sudata_env_pairs)"
+    all_pairs+=("${sudata_pairs[@]}")
   fi
 
   merge_env_pairs "${all_pairs[@]}"

@@ -21,7 +21,7 @@ https://odoo-dev-….run.app/?empresa=1&proceso=48&odoo_profile_test=aliare
 ## Flujo habitual
 
 1. Abrí la URL con empresa, proceso y perfil correctos.
-2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica). El **diario inicial** viene del padrón (puede no coincidir con Riccollini; ej. Salta Refrescos). Si lo corregís y esperás autosave, **F5 ya no lo revierte**.
+2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica). El **diario inicial** viene del padrón (puede no coincidir con Riccollini; ej. Salta Refrescos). Si lo corregís y esperás autosave, **F5 ya no lo revierte**. Además, la **próxima factura del mismo proveedor** (otro proceso) reusa el último diario/cuenta/rubro que guardaste en una conversión de esa empresa — no hace falta corregirlo otra vez.
 3. Editá lo necesario en la tabla o en el **pie del comprobante** (IVA, otros impuestos).
 4. Esperá el autosave (o guardá explícitamente si la UI lo indica).
 5. **Importar a Odoo** — crea o actualiza borradores y sincroniza impuestos + OC.
@@ -35,25 +35,25 @@ Cada factura tiene un bloque expandible con:
 | **Base imponible** | Subtotal FacturIA (`__fac_subtotal`) en modos header/mixed; suma de líneas en modo line (solo lectura) |
 | **IVA 21 % / 10,5 % / …** | Montos de IVA por alícuota (editables en el pie en todos los modos) |
 | **Otros impuestos** | IIBB, percepciones, etc. (editable) |
-| **Total** | Base + IVA + otros (solo lectura) |
+| **Total** (pie) | Base + IVA + otros (solo lectura) |
 
 ### Cuándo editar arriba vs abajo
 
 | Modo | Dónde editar IVA | Pie IVA |
 |------|------------------|---------|
-| **line** | Columna **IVA monto** en cada fila **o** el pie | Editable (si editás abajo un monto distinto al de las líneas, el comprobante puede pasar a modo **header** y el pie manda) |
-| **header** | Pie del comprobante | Editable |
-| **mixed** | Depende de la fila; totales en el pie | Editable por alícuota |
+| **line** / **header** / **mixed** | Solo el **pie** (montos). En la tabla queda **Impuesto IVA** (%) | Editable |
 
-Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea).
+Los montos de IVA y de otros impuestos **no** se editan en columnas de la tabla (mismo criterio que Odoo: impuestos en la línea, importes abajo). Si hay varias líneas con la misma alícuota, el pie muestra la suma / el encabezado FacturIA.
+
+Si corregís **Impuesto IVA** en la línea (p. ej. FacturIA leyó 21 % y era 10,5 %), el pie cambia de etiqueta y **conserva el monto**: no quedan las dos alícuotas y a Odoo va la nueva. Si el monto también estaba mal, editalo en el pie.
+
+Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea cuando marcás override).
 
 ### IVA fijo y cambio de Precio
 
-Si el **Monto IVA** de una línea ya está fijado (lo editaste vos o vino así de FacturIA y no es simplemente `precio × %`), al cambiar **Precio** o **Cantidad** el IVA del **pie no se recalcula**: se mantiene el monto fijo.
+Si el IVA del **pie** ya está fijado (editaste el pie o vino de FacturIA y no es simplemente `precio × %`), al cambiar **Precio** o **Cantidad** el pie **no se recalcula** solo: se mantiene el monto fijo cuando hay override / header.
 
-Ejemplo: base 344.760 con IVA 21 % = 72.399,60. Si cambiás el precio de la línea, el pie sigue mostrando 72.399,60 — no pasa a `nuevo precio × 21 %`.
-
-En modo **line**, por defecto el monto autoritativo es la columna **IVA monto**. Si editás el IVA en el **pie** con un valor distinto al de las líneas, el modo puede pasar a **header**: la columna se oculta y el pie queda como fuente de verdad para el import. En modo **header**, el monto autoritativo es siempre el pie (`__fac_iva_monto`).
+En modo **line** sin override de pie, al cambiar precio/cantidad se puede realinear el pie desde las líneas (`syncFacIvaMontosFromLines`).
 
 ### Formato de números
 
@@ -61,26 +61,24 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 
 ## Otros impuestos (IIBB / percepciones)
 
-- Solo deberías ver **una columna** “Otros impuestos” en la tabla (más slots extra solo si hay montos reales en `otros_impuestos_2`, `_3`, …).
-- Si ves muchas columnas vacías (legacy de versiones anteriores): **Restaurar original** y volver a guardar, o recargar el proceso tras un deploy nuevo.
-- El **pie** desglosa otros impuestos **como trae FacturIA** (labels provisionales: **IIBB** / **Percepción IVA** / **Otros tributos** + montos), **aunque todavía no hayas elegido impuesto en las líneas**.
+- En la tabla ves el **dropdown** “Otros impuestos” (y slots extra con +). Los **montos** se editan en el **pie**, no en columnas de monto.
+- El **pie** desglosa otros impuestos **como trae FacturIA** (labels: **IIBB** / **Percepción IVA** / **Impuesto Interno** + montos) mientras no hayas elegido impuesto en las líneas. El campo FacturIA `otros_tributos` se muestra como **Impuesto Interno** (no como “Otros tributos”).
   - En las **líneas**, el usuario asigna los impuestos Odoo a mano (col 2/3 solo si esa línea tiene más de uno con el +).
-  - Si FacturIA trajo montos y en las líneas no cubrís todos (p.ej. falta Impuesto Interno ↔ Otros tributos), el pie muestra un **aviso**: «No asignaste en las líneas todos los impuestos de la factura…».
-  - Si elegís el impuesto Odoo en el mismo slot del monto FacturIA, el pie **sigue** mostrando el nombre FacturIA; la línea guarda el label Odoo para el import.
-- Al editar un monto del pie, se **reparte** entre las filas que tienen ese impuesto asignado (proporcional a cantidad × precio). Si nadie lo tiene, queda en la primera fila con contenido. Así la columna **Total** de cada línea no se infla con todos los “otros” acumulados en la 1ª fila.
+  - Cuando asignás un impuesto Odoo **del mismo tipo** que el monto FacturIA de ese slot, el pie **pasa a mostrar ese nombre Odoo** (y el monto). Elegir **Impuesto Interno** en la 1ª línea no pisa la fila **IIBB** del pie ni duplica Interno.
+  - Si agregás columnas con **+** **o** elegís un impuesto extra en otra línea (p.ej. IVA Adicional 20%) y todavía no hay monto, el pie **igual muestra esa fila** (monto vacío) para que lo cargues ahí.
+  - Si FacturIA trajo montos y en las líneas no cubrís todos (p.ej. falta Impuesto Interno), el pie muestra un **aviso**: «No asignaste en las líneas todos los impuestos de la factura…».
+- Al editar un monto del pie, se **reparte** entre las filas que tienen ese impuesto asignado (proporcional a cantidad × precio). Si nadie lo tiene, el monto queda guardado en la primera fila para el pie, pero la columna **Total** de la línea **solo suma** los “otros” cuyo impuesto está **asignado en esa fila**.
 - Los montos (repartidos en las filas) al importar pisan las líneas tax de Odoo (junto con los `tax_ids` de IIBB del padrón).
-- El dropdown se arma **desde Odoo del perfil activo**: **todos** los impuestos del tenant (orden alfabético; p.ej. IVA 21 %, Impuestos internos, percepciones). No es una lista fija incompleta.
+- El dropdown se arma **desde Odoo del perfil activo**: **todos** los impuestos del tenant (orden alfabético).
 
 ## Solo encabezado
 
 Con el tilde **Solo encabezado** en la primera fila del comprobante:
 
 1. Si hay varias líneas, se colapsan a una sola (para deshacer: **Restaurar original**).
-2. Aparece la columna calculada **Subtotal** (siempre cantidad × precio; se actualiza al editar).
-3. Aparecen en la fila **Monto IVA** y **Monto Otros Impuestos** (editables; se copian desde el encabezado FacturIA si venían vacíos).
-4. Se **oculta el pie** del comprobante (base / IVA / otros / total).
+2. El **pie** del comprobante **sigue visible** (montos IVA / otros se editan ahí, igual que sin el tilde).
 
-Sin el tilde, la tabla y el pie se comportan como siempre. La lista de **Otros impuestos** (con IVAs) no depende de este tilde.
+La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**. No depende del tilde Solo encabezado.
 
 ## Import a Odoo — qué esperar
 
@@ -96,26 +94,30 @@ Al confirmar **Importar a Odoo**:
 
 Si el import dice “Actualizadas en Odoo” con “X impuestos”, los montos del pie se aplicaron. Si los montos en Odoo siguen siendo los calculados, revisá la sección [Problemas frecuentes](#problemas-frecuentes).
 
-## Aliare vs Dinner — ids de impuesto
+## Aliare vs Dinner vs Sudata — ids de impuesto
 
 Los **números de id** de `account.tax` no son iguales entre tenants:
 
-| Alícuota | Dinner | Aliare |
-|----------|--------|--------|
-| 21 %     | 63     | 65     |
-| 10,5 %   | 61     | 63     |
-| 27 %     | 65     | 67     |
+| Alícuota | Dinner | Aliare | Sudata |
+|----------|--------|--------|--------|
+| 21 %     | 63     | 65     | 65     |
+| 10,5 %   | 61     | 63     | 63     |
+| 27 %     | 65     | 67     | 67     |
 
 No hace falta memorizarlos: la app los resuelve sola **si el perfil en la URL es correcto**.
+
+Sudata no tiene instalado el español de Argentina (`es_AR`) sino el latinoamericano (`es_419`), así que la app pide ese idioma y los impuestos se ven como en Odoo (`IVA 21%`, `Perc IVA`). `Internal taxes` es la excepción: en Odoo no tiene traducción cargada, y el desplegable lo muestra como **Impuestos internos**.
 
 ## Variables de entorno relevantes (operaciones / deploy)
 
 | Variable | Uso |
 |----------|-----|
 | `ODOO_BASE_URL_ALIARE`, `ODOO_USER_ALIARE`, `ODOO_API_KEY_ALIARE` | Credenciales import Aliare |
+| `ODOO_BASE_URL_SUDATA`, `ODOO_USER_SUDATA`, `ODOO_API_KEY_SUDATA` / `ODOO_PASSWORD_SUDATA` | Credenciales Odoo Cloud Sudata (`?odoo_cloud=1`). En Cloud Run las públicas van como env; password/API key en Secret Manager |
 | `PADRON_TAX_SOURCE_PROFILE` | Tenant del que vienen los ids del padrón Postgres (default `default` = Dinner); se remapean al perfil activo |
+| `ODOO_LANG`, `ODOO_LANG_ALIARE`, `ODOO_LANG_SUDATA` | Fuerzan el idioma RPC. Sin setear, la app usa el primer idioma instalado en el tenant: `es_AR` y si no `es_419` |
 | `FACTURIA_ODOO_PROFILE` | Perfil por defecto en deploy si la URL no trae `odoo_profile_test` |
-| `PROCESS_SCHEMA` | Schema MySQL (`sudataco_staging` / `sudataco_facturia`) para process, conversiones y `product_label_memory` |
+| `PROCESS_SCHEMA` | Schema MySQL (`sudataco_staging` / `sudataco_facturia`) para process, conversiones, `product_label_memory` y memoria de diario/cuenta/rubro (desde conversiones) |
 
 Ver `.env.example` para la lista completa.
 
@@ -130,6 +132,7 @@ Ver `.env.example` para la lista completa.
 | Factura no está en borrador | Solo se actualizan facturas `draft` |
 | Proceso con conversión vieja corrupta | **Restaurar original** y repetir ediciones |
 | Elegiste Exento / No Gravado / No Corresponde pero Odoo sigue con IVA 21 % | Con la versión actual el pie se limpia solo; reimportá el borrador `draft`. Si el total en la UI aún incluye 21 %, recargá la página |
+| Mandás IVA 21 y en Odoo llega **IVA 10,5 %** (Sudata) | Bug corregido: el catálogo de Sudata está en inglés y la app caía a los ids de Dinner. Con el deploy actual, reimportar el borrador `draft` reemplaza el impuesto. Detalle: [iva-y-import-odoo.md](iva-y-import-odoo.md#iva-21--llega-como-iva-105--en-sudata-nombres-en) |
 
 ### El IVA del pie cambia al mover el Precio
 
@@ -165,6 +168,8 @@ Completar **fecha de vencimiento** en FacturIA. El import propaga `invoice_date_
 | Deploy viejo (montos tax antes de re-aplicar precio) | Actualizar servidor y reimportar borrador `draft` |
 | No hay línea tax en Odoo (sin etiqueta del impuesto) | Reimportar con versión actual; no debería borrarse el nombre del impuesto |
 | Monto solo en pie, sin selección en columna Otros impuestos | Seleccionar el impuesto en la tabla o verificar `otros_impuestos_monto` en el pie |
+| IIBB en Odoo Dinner = IIBB+Perc IVA del pie; Perc IVA e Interno quedan en el % de la línea | Varias líneas, cada impuesto en una distinta (no es falta de `odoo_profile`): reimportar el borrador `draft` |
+| Pie sin IIBB y dos filas Impuesto Interno; Odoo Interno = IIBB+Interno | Elegiste Interno en la 1ª línea: recargá / reimportá el `draft` (el pie no debe pisar IIBB) |
 
 ### El precio en Odoo es el de la OC, no el de la factura
 
@@ -176,7 +181,15 @@ Si elegís **Sin OC**, el selector no desaparece: queda **«OC: Sin OC ▾»** p
 
 ### La OC no aparece en el selector
 
-Se listan **todas** las órdenes de compra **confirmadas** del proveedor (`purchase` / `done`), incluidas las ya recepcionadas y las aún sin recepción. El score solo ordena el listado; no oculta OCs. Si no ves la OC correcta: verificá que el proveedor de la factura sea el mismo partner comercial en Odoo y que la OC no esté en borrador o cancelada. Tras **Buscar OCs similares**, hay que **elegir** la OC en el modal (no se auto-selecciona).
+Se listan **todas** las órdenes de compra **confirmadas** del proveedor (`purchase` / `done`), incluidas las ya recepcionadas y las aún sin recepción. El ranking prioriza el **% de matching** (Score de la tarjeta) y, a igualdad de %, coincidencia de **referencia de pedido** (`partner_ref` ↔ referencia FacturIA, p. ej. `PEDIDO 26.05`); no oculta OCs. Por defecto el modal filtra **Desde** ene-2026 (editable / vaciable). Si ya sabés cuál es, usá también el **buscador** (nombre, ref. proveedor, producto). Si no ves la OC correcta: verificá el filtro de fecha, que el proveedor de la factura sea el mismo partner comercial en Odoo y que la OC no esté en borrador o cancelada. Tras **Buscar OCs similares**, hay que **elegir** la OC en el modal (no se auto-selecciona).
+
+### Proveedor con id que Odoo rechaza (`res.partner(…)` no existe)
+
+El desplegable **solo** lista contactos del Odoo del perfil activo (`odoo_profile_test` / `odoo_cloud`). Si la conversión guardó un `partner_id` de otro tenant (Dinner vs Sudata), al recargar se **limpia** y hay que elegir el proveedor correcto del catálogo (o crearlo en ese Odoo). No uses ids viejos aunque el nombre se vea familiar.
+
+### En Sudata no aparecen productos (ni UM) en los desplegables
+
+Bug corregido. Sudata corre **Odoo 19**, que eliminó campos que la app pedía (`uom_po_id` en productos, `category_id` / `uom_type` en unidades de medida). Odoo no ignora un campo inexistente: rechaza la consulta entera, así que el catálogo de productos volvía **vacío** y el de UM también. Con el deploy actual ambos cargan y la columna **UM** vuelve a re-escalar cantidades (kg ↔ g, unidades ↔ packs). Detalle: [purchase-oc.md](import-odoo/purchase-oc.md#um-en-odoo-19-sudata).
 
 ### Proceso devuelve error 400 al cargar
 

@@ -45,12 +45,30 @@ _SPECIAL_IVA_LABELS: Dict[str, str] = {
     "IVA EXENTO": "IVA Exento",
 }
 _CANONICAL_SPECIAL_IVA_LABELS = frozenset(_SPECIAL_IVA_LABELS.values())
-_ATTACHABLE_ZERO_IVA_LABELS = frozenset({"IVA Exento", "IVA No Gravado"})
+_ATTACHABLE_ZERO_IVA_LABELS = frozenset(
+    {"IVA Exento", "IVA No Gravado", "IVA No Corresponde"}
+)
+# Nombres ES (Dinner/Aliare) y EN sin i18n (Sudata Cloud: '0% NA', '0% NT', '0% EXEMPT').
 _SPECIAL_IVA_NAME_KEYS: Dict[str, Tuple[str, ...]] = {
-    "IVA NO CORRESPONDE": ("IVA NO CORRESP", "IVA NO CORRESPONDE"),
-    "IVA NO GRAVADO": ("IVA NO GRAV", "IVA NO GRAVADO"),
-    "IVA EXENTO": ("IVA EXEN", "IVA EXENTO"),
+    "IVA NO CORRESPONDE": (
+        "IVA NO CORRESP",
+        "IVA NO CORRESPONDE",
+        "0% NA",
+        "VAT NA",
+        "NOT APPLICABLE",
+    ),
+    "IVA NO GRAVADO": (
+        "IVA NO GRAV",
+        "IVA NO GRAVADO",
+        "0% NT",
+        "VAT NT",
+        "NOT TAXED",
+        "UNTAXED",
+    ),
+    "IVA EXENTO": ("IVA EXEN", "IVA EXENTO", "0% EXEMPT", "VAT EXEMPT", "EXEMPT"),
 }
+# Prefijos de account.tax que son IVA (Sudata Cloud responde en inglés: 'VAT 21%').
+_IVA_TAX_NAME_PREFIXES: Tuple[str, ...] = ("IVA ", "VAT ")
 
 _TAX_PADRON_CACHE: Optional[List[Dict[str, Any]]] = None
 _TAX_PADRON_BY_CUIT: Optional[Dict[str, List[int]]] = None
@@ -291,10 +309,17 @@ def get_tax_id_by_name() -> Dict[str, int]:
 
 # Etiquetas UI → nombres abreviados en Odoo (ej. Aliare: Perc Gananc, Perc IVA).
 _UI_TAX_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
-    "PERCEPCION GANANCIAS SUFRIDA": ("PERC GANANC", "PERCEPCION GANANCIAS"),
-    "PERCEPCION GANANCIAS APLICADA": ("PERC GANANC", "PERCEPCION GANANCIAS"),
-    "PERCEPCION IVA SUFRIDA": ("PERC IVA", "PERCEPCION IVA"),
-    "PERCEPCION IVA APLICADA": ("PERC IVA", "PERCEPCION IVA"),
+    "PERCEPCION GANANCIAS SUFRIDA": ("PERC GANANC", "PERCEPCION GANANCIAS", "PERC PROFITS"),
+    "PERCEPCION GANANCIAS APLICADA": ("PERC GANANC", "PERCEPCION GANANCIAS", "PERC PROFITS"),
+    "PERCEPCION IVA SUFRIDA": ("PERC IVA", "PERCEPCION IVA", "PERC VAT"),
+    "PERCEPCION IVA APLICADA": ("PERC IVA", "PERCEPCION IVA", "PERC VAT"),
+    "PERC IVA": ("PERC VAT",),
+    "PERCEPCION IVA": ("PERC VAT",),
+    "PERC GANANC": ("PERC PROFITS",),
+    # Etiquetas guardadas cuando el catálogo llegaba en inglés (Sudata antes de es_419).
+    "PERC VAT": ("PERC IVA", "PERCEPCION IVA"),
+    "PERC PROFITS": ("PERC GANANC", "PERCEPCION GANANCIAS"),
+    "OTHER TAXES": ("OTROS IMPUESTOS",),
     "IVA ADICIONAL 20%": ("IVA ADIC 20%", "IVA ADICIONAL 20%"),
     # Nombres EN sin traducción en Odoo Aliare → etiqueta ES en UI.
     "IMPUESTOS INTERNOS": ("INTERNAL TAXES",),
@@ -409,16 +434,25 @@ def match_padron_taxes(nombre: str, cuit: str) -> Tuple[List[int], float]:
     return (list(names[idx][1]["tax_ids"]), float(best[1]))
 
 
+def _special_iva_label_from_name(name: Any) -> Optional[str]:
+    """Nombre de account.tax → etiqueta canónica Exento / No Gravado / No Corresponde."""
+    key = _ascii_upper(_normalize(name))
+    if not key:
+        return None
+    for canon_key, human in _SPECIAL_IVA_LABELS.items():
+        aliases = _SPECIAL_IVA_NAME_KEYS.get(canon_key, (canon_key,))
+        if key == canon_key or key in aliases or any(alias in key for alias in aliases):
+            return human
+    return None
+
+
 def _is_purchase_iva_tax_name(name: str) -> bool:
     key = _ascii_upper(_normalize(name))
     if not key:
         return False
-    if key in _SPECIAL_IVA_NAME_KEYS:
+    if _special_iva_label_from_name(key):
         return True
-    for aliases in _SPECIAL_IVA_NAME_KEYS.values():
-        if key in aliases:
-            return True
-    return key.startswith("IVA ")
+    return key.startswith(_IVA_TAX_NAME_PREFIXES)
 
 
 def _iva_pct_to_float(iva_pct: str) -> Optional[float]:
@@ -445,7 +479,7 @@ def _format_iva_pct_from_amount(amount: float) -> str:
 
 def _rate_matches_iva_tax_name(name: str, rate: float) -> bool:
     key = _ascii_upper(_normalize(name))
-    if not key.startswith("IVA "):
+    if not key.startswith(_IVA_TAX_NAME_PREFIXES):
         return False
     compact = re.sub(r"[^0-9.,]", "", key).replace(",", ".")
     if not compact:
@@ -477,14 +511,7 @@ def _canonical_iva_label_from_tax(tax: Dict[str, Any]) -> Optional[str]:
     if amount_f > 0:
         return _format_iva_pct_from_amount(amount_f)
 
-    key = _ascii_upper(_normalize(tax.get("name") or ""))
-    if not key:
-        return None
-    for canon_key, human in _SPECIAL_IVA_LABELS.items():
-        aliases = _SPECIAL_IVA_NAME_KEYS.get(canon_key, (canon_key,))
-        if key == canon_key or key in aliases or any(alias in key for alias in aliases):
-            return human
-    return None
+    return _special_iva_label_from_name(tax.get("name") or "")
 
 
 def _parse_odoo_purchase_iva_rows(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -629,7 +656,16 @@ def is_iva_tax_id(tax_id: int) -> bool:
     return int(tax_id) in get_iva_tax_ids()
 
 
+def _legacy_dinner_fallback_allowed() -> bool:
+    """Los ids fijos son de Dinner: en otro tenant el mismo id es otra alícuota."""
+    from facturia_matching.odoo.env import current_odoo_profile
+
+    return current_odoo_profile() == "default"
+
+
 def _legacy_dinner_tax_id_for_rate(rate: float) -> Optional[int]:
+    if not _legacy_dinner_fallback_allowed():
+        return None
     for known_rate, tid in _LEGACY_DINNER_IVA_BY_RATE.items():
         if abs(known_rate - rate) < 1e-6:
             return tid
@@ -637,6 +673,8 @@ def _legacy_dinner_tax_id_for_rate(rate: float) -> Optional[int]:
 
 
 def _legacy_dinner_tax_id_for_special(label: str) -> Optional[int]:
+    if not _legacy_dinner_fallback_allowed():
+        return None
     return _LEGACY_DINNER_SPECIAL_IVA.get(_normalize(label))
 
 
@@ -655,7 +693,7 @@ def _resolve_special_iva_tax_id(label: str) -> Optional[int]:
 
 
 def iva_pct_requires_line_tax(iva_pct: Any) -> bool:
-    """True si la fila debe llevar account.tax IVA en Odoo (incl. Exento / No Gravado)."""
+    """True si la fila debe llevar account.tax IVA en Odoo (incl. Exento / No Gravado / No Corresponde)."""
     from facturia_matching.core.comprobante_tax import iva_pct_to_rate
 
     label = _normalize(iva_pct)
@@ -777,10 +815,7 @@ def iva_pct_from_tax_id(tax_id: int) -> str:
         amount = tax.get("amount")
         if amount is not None and float(amount) > 0:
             return _format_iva_pct_from_amount(float(amount))
-        name_key = _ascii_upper(tax.get("name") or "")
-        for label, aliases in _SPECIAL_IVA_NAME_KEYS.items():
-            if name_key in aliases or name_key == label:
-                return _SPECIAL_IVA_LABELS.get(label, "")
+        return _special_iva_label_from_name(tax.get("name")) or ""
     return _padron_source_iva_semantics_by_id().get(int(tax_id), "")
 
 

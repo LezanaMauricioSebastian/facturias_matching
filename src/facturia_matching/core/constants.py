@@ -109,6 +109,9 @@ PURCHASE_UI_COLUMNS = [
     "__um_empresa",  # UM elegible (categoría del producto); default = uom_po
     "__oc_match_note",
 ]
+# En la tabla, UM va entre Cantidad y Precio; el resto de purchase queda al final.
+PURCHASE_UM_KEY = "__um_empresa"
+PURCHASE_TRAILING_COLUMNS = ["__qty_pedido", "__qty_recibido", "__oc_match_note"]
 
 COLUMN_LABELS = {
     "l10n_latam_document_number": "Número de Documento",
@@ -160,30 +163,38 @@ def purchase_numeric_keys() -> set:
     return {"__qty_pedido", "__qty_recibido"}
 
 
-def append_purchase_columns(columns: List[Dict[str, Any]], readonly_cols: set) -> None:
+def _purchase_column_def(key: str, readonly_cols: set) -> Dict[str, Any]:
+    if key == PURCHASE_UM_KEY:
+        return {
+            "key": key,
+            "label": COLUMN_LABELS.get(key, key),
+            "type": "selection",
+            "options_key": None,
+            "readonly": False,
+            "editable": True,
+        }
     numeric_cols = purchase_numeric_keys()
-    for key in PURCHASE_UI_COLUMNS:
-        if key == "__um_empresa":
-            columns.append(
-                {
-                    "key": key,
-                    "label": COLUMN_LABELS.get(key, key),
-                    "type": "selection",
-                    "options_key": None,
-                    "readonly": False,
-                    "editable": True,
-                }
-            )
-            continue
-        col_type = "numeric" if key in numeric_cols else "text"
-        columns.append(
-            {
-                "key": key,
-                "label": COLUMN_LABELS.get(key, key),
-                "type": col_type,
-                "options_key": None,
-                "readonly": True,
-                "editable": False,
-            }
-        )
-        readonly_cols.add(key)
+    col_type = "numeric" if key in numeric_cols else "text"
+    readonly_cols.add(key)
+    return {
+        "key": key,
+        "label": COLUMN_LABELS.get(key, key),
+        "type": col_type,
+        "options_key": None,
+        "readonly": True,
+        "editable": False,
+    }
+
+
+def append_purchase_columns(columns: List[Dict[str, Any]], readonly_cols: set) -> None:
+    um_def = _purchase_column_def(PURCHASE_UM_KEY, readonly_cols)
+    qty_idx = next((i for i, c in enumerate(columns) if c.get("key") == "invoice_line_ids/quantity"), -1)
+    price_idx = next((i for i, c in enumerate(columns) if c.get("key") == "invoice_line_ids/price_unit"), -1)
+    if qty_idx >= 0:
+        columns.insert(qty_idx + 1, um_def)
+    elif price_idx >= 0:
+        columns.insert(price_idx, um_def)
+    else:
+        columns.append(um_def)
+    for key in PURCHASE_TRAILING_COLUMNS:
+        columns.append(_purchase_column_def(key, readonly_cols))

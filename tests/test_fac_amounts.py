@@ -71,6 +71,17 @@ class TestFacAmounts(unittest.TestCase):
         self.assertEqual(row["otros_impuestos"], "")
         self.assertEqual(len(row["__fac_percepciones"]), 1)
 
+    def test_amount_key_for_odoo_label(self):
+        from facturia_matching.core.amounts import amount_key_for_odoo_label
+
+        self.assertEqual(
+            amount_key_for_odoo_label("Percepción IIBB Chaco Sufrida"), "percepcion_iibb"
+        )
+        self.assertEqual(amount_key_for_odoo_label("Percepción IVA Sufrida"), "percepcion_iva")
+        self.assertEqual(amount_key_for_odoo_label("Perc IVA"), "percepcion_iva")
+        self.assertEqual(amount_key_for_odoo_label("Impuesto Interno"), "otros_tributos")
+        self.assertIsNone(amount_key_for_odoo_label(""))
+
     def test_build_csv_tax_ids_iva_only(self):
         row = {"iva_pct": "21"}
         self.assertEqual(build_csv_tax_ids_dot_id(row), "63")

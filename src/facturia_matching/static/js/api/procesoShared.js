@@ -3,6 +3,7 @@ import {
   mergeProductOptions,
   normalizeDateFieldsInRows,
   normalizeNumericFieldsInRows,
+  dropInvalidCatalogIds,
 } from "../utils/index.js";
 import {
   migrateRowKeys,
@@ -28,6 +29,35 @@ function cachePurchaseColumnDefs(state) {
   );
 }
 
+const QTY_KEY = "invoice_line_ids/quantity";
+const PRICE_KEY = "invoice_line_ids/price_unit";
+const UM_KEY = "__um_empresa";
+const TRAILING_PURCHASE_KEYS = ["__qty_pedido", "__qty_recibido", "__oc_match_note"];
+
+function defForKey(state, key) {
+  return (state.purchaseColumnDefs || []).find((c) => c.key === key);
+}
+
+function insertUmBetweenQtyAndPrice(state, umDef) {
+  if (!umDef) return;
+  const qtyIdx = state.columns.findIndex((c) => c.key === QTY_KEY);
+  if (qtyIdx >= 0) {
+    state.columns.splice(qtyIdx + 1, 0, umDef);
+    return;
+  }
+  const priceIdx = state.columns.findIndex((c) => c.key === PRICE_KEY);
+  const at = priceIdx >= 0 ? priceIdx : state.columns.length;
+  state.columns.splice(at, 0, umDef);
+}
+
+function insertTrailingPurchaseColumns(state, trailingDefs) {
+  if (!trailingDefs.length) return;
+  const subIdx = state.columns.findIndex((c) => c.key === "__subtotal");
+  const totalIdx = state.columns.findIndex((c) => c.key === "__total_linea");
+  const insertAt = subIdx >= 0 ? subIdx : totalIdx >= 0 ? totalIdx : state.columns.length;
+  state.columns.splice(insertAt, 0, ...trailingDefs);
+}
+
 export function syncPurchaseColumns(state, purchaseMatching = {}) {
   cachePurchaseColumnDefs(state);
   const fromFlag = !!(purchaseMatching.enabled && purchaseMatching.show_purchase_columns);
@@ -42,19 +72,14 @@ export function syncPurchaseColumns(state, purchaseMatching = {}) {
         String(r?.__oc_match_note || "").trim().startsWith("OC ")
     );
   const showCols = fromFlag || fromRows;
-  const hadPurchase = state.columns.some((c) => PURCHASE_COLUMN_KEYS.includes(c.key));
 
+  state.columns = state.columns.filter((c) => !PURCHASE_COLUMN_KEYS.includes(c.key));
   if (showCols) {
-    const missing = (state.purchaseColumnDefs || []).filter(
-      (def) => !state.columns.some((c) => c.key === def.key)
+    insertUmBetweenQtyAndPrice(state, defForKey(state, UM_KEY));
+    insertTrailingPurchaseColumns(
+      state,
+      TRAILING_PURCHASE_KEYS.map((k) => defForKey(state, k)).filter(Boolean)
     );
-    if (missing.length) {
-      const totalIdx = state.columns.findIndex((c) => c.key === "__total_linea");
-      const insertAt = totalIdx >= 0 ? totalIdx : state.columns.length;
-      state.columns.splice(insertAt, 0, ...missing);
-    }
-  } else if (hadPurchase) {
-    state.columns = state.columns.filter((c) => !PURCHASE_COLUMN_KEYS.includes(c.key));
   }
 
   ensureAddOtroImpuestoActionColumn(state);
@@ -99,6 +124,7 @@ export function applyProcesoPayload(state, refs, data, pn, empresa) {
   restoreExtraOtroImpuestoColumns(state, data.extra_tax_indices);
   state.purchaseMatching = data.purchase_matching || {};
   syncPurchaseColumns(state, state.purchaseMatching);
+  dropInvalidCatalogIds(state);
 }
 
 /** Handlers mínimos cuando buscarProceso se invoca sin el objeto completo de main. */

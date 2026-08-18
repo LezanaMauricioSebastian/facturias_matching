@@ -3,6 +3,7 @@ import {
   allContentLinesExplicitZeroIva,
   classifyComprobanteTaxMode,
   clearFacIvaFooter,
+  persistRealignedFooterRates,
 } from "../comprobanteTax/index.js";
 import { syncOtrosFooterFromRowSelection } from "../comprobanteView/footer.js";
 import {
@@ -14,12 +15,15 @@ import { updateRowTotals } from "./totals.js";
 import { DOC_NUM_KEY } from "./constants.js";
 import { comprobanteDigitUiHint } from "../validation/index.js";
 
-function clearStaleFacIvaIfExplicitZero(state, rowIdx) {
+function syncFacIvaFooterAfterIvaChange(state, rowIdx) {
   const [s, e] = groupBounds(state.rows, rowIdx);
   const groupRows = state.rows.slice(s, e);
   if (allContentLinesExplicitZeroIva(groupRows)) {
     clearFacIvaFooter(groupRows);
+    return;
   }
+  // Cambió la alícuota: el pie no puede seguir guardando la vieja (iría a Odoo).
+  persistRealignedFooterRates(groupRows);
 }
 
 export function isTotalAffectingKey(k) {
@@ -116,7 +120,7 @@ export function handleSelectionChange(state, r, k, ctx) {
     if (isFacturaC) {
       state.rows[r][ivaKey] = "IVA No Corresponde";
       state.rows[r].__iva_monto_manual = false;
-      clearStaleFacIvaIfExplicitZero(state, r);
+      syncFacIvaFooterAfterIvaChange(state, r);
       const ivaSel = tableWrap?.querySelector(`select[data-r="${r}"][data-k="${ivaKey}"]`);
       if (ivaSel) ivaSel.value = "IVA No Corresponde";
       handlers.onRerender?.();
@@ -125,7 +129,8 @@ export function handleSelectionChange(state, r, k, ctx) {
   }
   if (k === "iva_pct") {
     state.rows[r].__iva_monto_manual = false;
-    clearStaleFacIvaIfExplicitZero(state, r);
+    syncFacIvaFooterAfterIvaChange(state, r);
+    updateRowTotals(state, refs, r);
     if (!maybeRerenderOnTaxModeChange(state, r, handlers)) {
       handlers.onUpdateComprobanteFooters?.();
     }

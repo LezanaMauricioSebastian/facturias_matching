@@ -3,7 +3,10 @@ import {
   allContentLinesExplicitZeroIva,
   facIvaMonto,
   facIvaMontoManual,
+  facSubtotal,
+  isExplicitZeroIvaPct,
   lineHasContent,
+  sumLineBases,
   lineIvaMonto,
   lineIvaSuggested,
   ivaPctToRate,
@@ -29,12 +32,76 @@ export function normalizeIvaRateKey(ivaPct) {
   return Number.isInteger(rate) ? String(rate) : String(rate);
 }
 
+/**
+ * Alícuotas que declaran las líneas con contenido (IVA cero explícito no declara
+ * ninguna). null si alguna línea no declara nada: ahí el pie FacturIA sigue siendo
+ * autoritativo (modo header sin `iva_pct` por línea).
+ */
+function lineDeclaredRateKeys(groupRows) {
+  const content = (groupRows || []).filter(lineHasContent);
+  if (!content.length) return null;
+  const keys = new Set();
+  for (const row of content) {
+    if (isExplicitZeroIvaPct(row?.iva_pct)) continue;
+    const key = normalizeIvaRateKey(row?.iva_pct);
+    if (!key) return null;
+    keys.add(key);
+  }
+  return keys;
+}
+
+/**
+ * Las líneas suman el subtotal FacturIA, o sea que desglosan todo el comprobante.
+ * Si cubren menos, el pie puede tener alícuotas de la parte no desglosada.
+ */
+function linesCoverFacSubtotal(groupRows) {
+  const subtotal = facSubtotal(groupRows);
+  if (subtotal == null) return true;
+  return Math.abs(sumLineBases(groupRows) - subtotal) <= Math.max(0.02, subtotal * 0.001);
+}
+
+/**
+ * Re-etiqueta el pie cuando **ninguna** de sus alícuotas sigue en las líneas
+ * (el operador corrigió Impuesto IVA, p. ej. 21 → 10,5): el monto se conserva y
+ * pasa a la alícuota declarada, así el pie no muestra la alícuota vieja.
+ *
+ * No se toca nada si alguna alícuota del pie sigue en las líneas o si las líneas no
+ * cubren el subtotal FacturIA: ahí el pie multi-alícuota puede tener montos que
+ * ninguna línea desglosa. Paridad con `_realign_footer_rates`.
+ */
+function realignFooterRates(montos, groupRows) {
+  const declared = lineDeclaredRateKeys(groupRows);
+  if (!declared || !declared.size) return montos;
+  const entries = Object.entries(montos).filter(([k]) => k !== "_total");
+  if (entries.some(([k]) => declared.has(k))) return montos;
+  if (!linesCoverFacSubtotal(groupRows)) return montos;
+  const suggested = suggestedByRate(groupRows, "header");
+  const weights = new Map(
+    [...suggested].filter(([k, v]) => declared.has(k) && v > 0)
+  );
+  const total = Math.round(entries.reduce((acc, [, v]) => acc + toNumberLoose(v), 0) * 100) / 100;
+  if (!weights.size || total <= 0) return {};
+  const keys = sortRateKeys([...weights.keys()]);
+  const weightSum = [...weights.values()].reduce((acc, v) => acc + v, 0);
+  const out = {};
+  let assigned = 0;
+  for (const key of keys.slice(0, -1)) {
+    const amt = Math.round((total * weights.get(key)) / weightSum * 100) / 100;
+    out[key] = amt;
+    assigned += amt;
+  }
+  out[keys[keys.length - 1]] = Math.round((total - assigned) * 100) / 100;
+  return out;
+}
+
+/** Montos vigentes del pie: JSON guardado, re-etiquetado si cambió el IVA de las líneas. */
 export function parseFacIvaMontos(groupRows) {
   const raw = firstRow(groupRows).__fac_iva_montos;
   if (!raw) return {};
   try {
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    return realignFooterRates(parsed, groupRows);
   } catch {
     return {};
   }
@@ -141,6 +208,32 @@ export function computeIvaBreakdown(groupRows, totals) {
       editable: footerIvaEditableForBreakdown(mode, groupRows),
     };
   });
+}
+
+/**
+ * Guarda el pie re-etiquetado (tras cambiar Impuesto IVA) para que el autosave no
+ * deje la alícuota vieja en el JSON. Paridad con `_persist_realigned_footer_rates`.
+ * @returns {boolean} true si el pie cambió.
+ */
+export function persistRealignedFooterRates(groupRows) {
+  const raw = firstRow(groupRows).__fac_iva_montos;
+  if (!raw) return false;
+  let parsed;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const realigned = realignFooterRates(parsed, groupRows);
+  const rateKeys = (obj) =>
+    Object.keys(obj)
+      .filter((k) => k !== "_total")
+      .sort()
+      .join("|");
+  if (rateKeys(parsed) === rateKeys(realigned)) return false;
+  serializeFacIvaMontos(groupRows, realigned);
+  return true;
 }
 
 export function syncFacIvaMontosFromLines(groupRows, mode) {

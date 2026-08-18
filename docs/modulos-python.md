@@ -31,7 +31,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 
 | Archivo | Rol |
 |---------|-----|
-| `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
+| `process.py` | **`parse_process_json`**: JSON FacturIA → filas; matching proveedor/cuenta/diario/tipo doc; aplica **memoria de cabecera** (diario/cuenta/rubro desde conversiones pasadas del mismo partner) sobre el fuzzy del padrón; aplica impuestos padrón; enriquece OC. **`build_output_rows`**: ordena columnas para UI. **`attach_facturia_item_quantities`**, **`backfill_fac_iva_montos_from_process`**. |
 | `comprobante_tax.py` | Modos `line` / `header` / `mixed`; totales por comprobante; **`fac_iva_montos`** / **`_explicit_fac_iva_montos`** (parseo es-AR del JSON del pie; en `header` con una alícuota usa `__fac_iva_monto` aunque el precio de línea no cierre con el %); `sanitize_inflated_line_amounts`; **`propagate_single_footer_iva_to_lines`** (un solo IVA en el pie → `iva_pct` en líneas vacías); **`reconcile_fac_iva_for_import`** (no recalcula desde líneas si hay pie en header/mixed). **Debe parity con JS** (`ivaBreakdown.js`, `rows/totals.js`, `migration.js`). |
 | `amounts.py` | Parseo de montos FacturIA (`parse_amount_loose`, `_sanitize_hybrid_amount_string` para híbridos tipo `350.0,00`); **`format_fac_amount_for_ui`** (coma decimal sin miles, evita que `15.175` se lea como 15175); `fac_header_amount_str`, percepciones, qty/price. |
 | `options.py` | Opciones para comboboxes: desde Odoo catalog y/o Postgres (`get_options`, `build_metadata_payload`). **`otros_impuestos_options_from_odoo`**: **todos** los `account.tax` del tenant (orden alfabético; EN→ES para Internal/Other taxes). |
@@ -55,9 +55,9 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 
 | Archivo | Rol |
 |---------|-----|
-| `env.py` | Perfiles, URLs, DB name resolution, `build_odoo_*_config`, `get_conversion_template_id`, flags `is_odoo_aliare_profile`, `uses_odoo_padron_first`. |
+| `env.py` | Perfiles, URLs, DB name resolution, `build_odoo_*_config`, `get_conversion_template_id`, flags `is_odoo_aliare_profile`, `uses_odoo_padron_first`, idioma RPC `resolve_odoo_lang` (env → primer idioma instalado de `ODOO_LANG_CANDIDATES` → default por perfil). |
 | `request_context.py` | `contextvars` para `odoo_profile` del request actual. |
-| `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks. |
+| `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks, `odoo_model_field_names` / `odoo_available_fields` (campos existentes por tenant+modelo: pedir uno inexistente falla el `search_read` completo). |
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
@@ -70,9 +70,10 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 
 | Archivo | Rol |
 |---------|-----|
-| `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
+| `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`); **ignora bajas lógicas** (`deleted_at IS NULL`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
 | `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
-| `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod). **`MemoryChoice`**, **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada de producto + UM por `partner_id` + etiqueta. Seed lazy si la tabla está vacía. |
+| `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod). **`MemoryChoice`**, **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada de producto + UM por `partner_id` + etiqueta. Seed / `fetch_recent_conversion_row_lists` **excluye** procesos con `deleted_at` (baja lógica). |
+| `partner_header_memory.py` | **Sin tabla nueva.** Índice diario/cuenta/rubro por `partner_id` desde las últimas ~100 `process_conversions` vía `fetch_recent_conversion_row_lists` (también excluye bajas lógicas). `apply_learned_header_ids` en `parse_process_json` (prioridad sobre padrón; ids deben existir en el catálogo del perfil). |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
 | `__init__.py` | Marcador. |
 

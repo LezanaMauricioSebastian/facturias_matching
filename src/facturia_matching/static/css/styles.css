@@ -621,6 +621,49 @@ select.selectLoading {
   max-height: 70vh;
   overflow: auto;
 }
+.ocPickerSearchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.ocPickerSearchFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.ocPickerSearchField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+}
+.ocPickerSearchFieldGrow {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.ocPickerSearchLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.ocPickerSearchInput,
+.ocPickerDateFrom {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.ocPickerSearchInput:focus,
+.ocPickerDateFrom:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
 .ocCandidateList {
   display: flex;
   flex-direction: column;

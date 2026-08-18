@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from facturia_matching.core.amounts import (
+    amount_key_for_odoo_label,
+    default_fac_amount_key_for_slot,
+)
 from facturia_matching.core.comprobante_tax import (
     classify_comprobante_tax_mode,
     fac_iva_monto_manual,
@@ -244,6 +248,114 @@ def _iva_tax_resolve_row(group: List[Dict[str, Any]]) -> Dict[str, Any]:
     return group[0] if group else {}
 
 
+def _fac_percepciones_from_group(group: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        percs = row.get("__fac_percepciones")
+        if isinstance(percs, list) and percs:
+            return [p for p in percs if isinstance(p, dict)]
+    return []
+
+
+def _fac_amount_key_for_monto_key(group: List[Dict[str, Any]], monto_key: str) -> Optional[str]:
+    for perc in _fac_percepciones_from_group(group):
+        if perc.get("ui_monto_key") == monto_key:
+            key = perc.get("amount_key")
+            return str(key) if key else None
+    return None
+
+
+def _tax_id_for_fac_amount_key(group: List[Dict[str, Any]], amount_key: str) -> Optional[int]:
+    """Tax id Odoo de un amount_key FacturIA, buscando el label asignado en cualquier fila."""
+    if not amount_key:
+        return None
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        for _n, label_key, _monto_key in _iter_otros_impuesto_slots(row):
+            label = _normalize(row.get(label_key))
+            if not label:
+                continue
+            if amount_key_for_odoo_label(label) != amount_key:
+                continue
+            tid = resolve_tax_label_to_id(label)
+            if tid is not None and not is_iva_tax_id(tid):
+                return int(tid)
+    return None
+
+
+def _row_non_iva_tax_ids(row: Dict[str, Any]) -> List[int]:
+    other_ids = [tid for tid in _tax_ids_from_row(row) if not is_iva_tax_id(tid)]
+    for tid in _padron_other_tax_ids_from_row(row):
+        if tid not in other_ids:
+            other_ids.append(tid)
+    return other_ids
+
+
+def _collect_otros_tax_amounts(
+    group: List[Dict[str, Any]],
+    amounts: Dict[int, float],
+) -> None:
+    """
+    IIBB / percepciones / interno.
+
+    FacturIA hidrata montos en slots de la 1ª fila; el usuario puede asignar cada
+    impuesto Odoo en *otra* línea (col Otros). Los slots 2/3 de la 1ª fila suelen
+    ir sin label: no deben caer al tax id del slot 1 (IIBB + Perc IVA = IIBB en Odoo).
+    """
+    claimed: set = set()
+    unlabeled: List[Tuple[Dict[str, Any], int, str, float, List[int]]] = []
+
+    for row in group:
+        if not isinstance(row, dict):
+            continue
+        other_ids = _row_non_iva_tax_ids(row)
+        for n, label_key, monto_key in _iter_otros_impuesto_slots(row):
+            monto = _parse_amount_loose(row.get(monto_key))
+            if monto is None or monto <= 0:
+                continue
+            label = _normalize(row.get(label_key))
+            if not label:
+                unlabeled.append((row, n, monto_key, monto, other_ids))
+                continue
+            slot_key = _fac_amount_key_for_monto_key(group, monto_key) or default_fac_amount_key_for_slot(
+                n
+            )
+            lab_key = amount_key_for_odoo_label(label)
+            # Interno en el slot FacturIA de IIBB es tax_ids de la línea: el monto
+            # sigue siendo IIBB (si no, Odoo suma Interno = Interno + IIBB).
+            if slot_key and lab_key and lab_key != slot_key:
+                tid = _tax_id_for_fac_amount_key(group, slot_key)
+                if tid is not None and not is_iva_tax_id(tid):
+                    amounts[int(tid)] += monto
+                    claimed.add(int(tid))
+                continue
+            tid = resolve_tax_label_to_id(label)
+            if tid is None:
+                for cand in other_ids:
+                    if cand not in claimed:
+                        tid = cand
+                        break
+            if tid is None or is_iva_tax_id(tid):
+                continue
+            amounts[int(tid)] += monto
+            claimed.add(int(tid))
+
+    for _row, n, monto_key, monto, other_ids in unlabeled:
+        amount_key = _fac_amount_key_for_monto_key(group, monto_key) or default_fac_amount_key_for_slot(n)
+        tid = _tax_id_for_fac_amount_key(group, amount_key) if amount_key else None
+        if tid is None:
+            for cand in other_ids:
+                if cand not in claimed and not is_iva_tax_id(cand):
+                    tid = cand
+                    break
+        if tid is None or is_iva_tax_id(tid):
+            continue
+        amounts[int(tid)] += monto
+        claimed.add(int(tid))
+
+
 def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict[int, float]:
     """
     Montos de impuesto esperados desde FacturIA (filas UI), indexados por account.tax id.
@@ -280,27 +392,7 @@ def collect_expected_tax_amounts_from_group(group: List[Dict[str, Any]]) -> Dict
             if iva_tid is not None and amt > 0:
                 amounts[iva_tid] += amt
 
-    for row in group:
-        if not isinstance(row, dict):
-            continue
-
-        other_ids = [tid for tid in _tax_ids_from_row(row) if not is_iva_tax_id(tid)]
-        for tid in _padron_other_tax_ids_from_row(row):
-            if tid not in other_ids:
-                other_ids.append(tid)
-
-        other_idx = 0
-        for _n, label_key, monto_key in _iter_otros_impuesto_slots(row):
-            monto = _parse_amount_loose(row.get(monto_key))
-            if monto is None or monto <= 0:
-                continue
-            label = _normalize(row.get(label_key))
-            tid = resolve_tax_label_to_id(label) if label else None
-            if tid is None and other_idx < len(other_ids):
-                tid = other_ids[other_idx]
-                other_idx += 1
-            if tid is not None:
-                amounts[int(tid)] += monto
+    _collect_otros_tax_amounts(group, amounts)
 
     return {tid: round(amt, 2) for tid, amt in amounts.items() if amt > 0}
 

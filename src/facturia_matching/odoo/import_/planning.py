@@ -131,12 +131,14 @@ def plan_product_line_content_updates(
     for i in range(n):
         line = product_lines[i]
         row = rows[i]
-        defer_product = bool(_purchase_line_id_from_row(row))
+        # Antes se difería product_id cuando había OC (se escribía en el write del
+        # vínculo). Si el vínculo se omite (dedupe / fallido), la línea quedaba
+        # sin producto en Odoo. Siempre escribir product_id/UM desde la UI.
         _cmd, _zero, expected = _build_line_command(
             row,
             content_rows,
             include_purchase_link=False,
-            include_product_id=not defer_product,
+            include_product_id=True,
         )
         write_vals: Dict[str, Any] = {}
 
@@ -162,16 +164,13 @@ def plan_product_line_content_updates(
 
         exp_product = expected.get("product_id")
         cur_product = _m2o_id(line.get("product_id"))
-        if not defer_product and exp_product is not None and exp_product != cur_product:
+        if exp_product is not None and exp_product != cur_product:
             write_vals["product_id"] = exp_product
 
-        # UM matcheada: solo si el producto va en este write o ya está en la línea
-        # (con OC, producto y UM se escriben juntos en _po_link_write_vals).
-        if not defer_product:
-            exp_uom = _row_matched_uom_id(row)
-            cur_uom = _m2o_id(line.get("product_uom_id"))
-            if exp_uom is not None and exp_uom != cur_uom:
-                write_vals["product_uom_id"] = exp_uom
+        exp_uom = _row_matched_uom_id(row)
+        cur_uom = _m2o_id(line.get("product_uom_id"))
+        if exp_uom is not None and exp_uom != cur_uom:
+            write_vals["product_uom_id"] = exp_uom
 
         if not write_vals:
             continue

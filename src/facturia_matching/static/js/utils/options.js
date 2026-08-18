@@ -64,6 +64,58 @@ export function findOptionLabel(opts, value) {
   return v;
 }
 
+/** True si value está en la lista de opciones del catálogo Odoo activo. */
+export function optionValueInList(opts, value) {
+  const v = String(value ?? "").trim();
+  if (!v || !Array.isArray(opts) || !opts.length) return false;
+  return opts.some((o) => optionValue(o) === v);
+}
+
+/**
+ * Campos cuyo valor debe existir en options del tenant activo.
+ * No incluye productos: pueden venir de OC / memoria sin estar en el top del catálogo.
+ */
+const CATALOG_ID_FIELDS = [
+  ["partner_id", "proveedores"],
+  ["journal_id", "journals"],
+  ["x_studio_category", "rubros"],
+  ["invoice_line_ids/account_id", "cuentas"],
+  ["l10n_latam_document_type_id", "document_types"],
+];
+
+/**
+ * Vacía IDs Odoo que no están en el catálogo del perfil activo (huérfanos de otro tenant).
+ * Así el combobox no muestra "Nombre (id)" inventado ni se importa un res.partner inexistente.
+ */
+export function dropInvalidCatalogIds(state) {
+  const rows = state?.rows;
+  const options = state?.options;
+  if (!Array.isArray(rows) || !options) return false;
+  let changed = false;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    for (const [field, optKey] of CATALOG_ID_FIELDS) {
+      const raw = String(row[field] ?? "").trim();
+      if (!raw) continue;
+      const opts = options[optKey];
+      if (!Array.isArray(opts) || !opts.length) continue;
+      if (!optionValueInList(opts, raw)) {
+        row[field] = "";
+        changed = true;
+        if (field === "partner_id") {
+          // Sin proveedor válido no tiene sentido conservar vínculo OC / UM aprendida.
+          row.__oc_line_id = "";
+          row.__oc_order_id = "";
+          row.__oc_match_note = "";
+          row.__selected_oc_order_id = "";
+          row.__selected_oc_name = "";
+        }
+      }
+    }
+  }
+  return changed;
+}
+
 export function mergeProductOptions(prev, incoming) {
   const a = Array.isArray(prev) ? prev : [];
   const b = Array.isArray(incoming) ? incoming : [];

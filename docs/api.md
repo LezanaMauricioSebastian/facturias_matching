@@ -56,36 +56,9 @@ Opciones para comboboxes.
 
 ## Odoo
 
-### `GET /api/odoo/health`
+### Health checks
 
-Conexión al tenant del perfil activo. Con `?empresa=N` prefiere `company_erp_credentials`; si no hay fila, usa `.env`.
-
-### `GET /api/odoo/health/import`
-
-Conexión al tenant de **import** (misma resolución que health: MySQL por empresa → `.env`).
-
-### `GET /api/odoo/health/credenciales_db`
-
-Solo tablas MySQL (`company_erp_credentials` + configs). **No usa `.env`.** El `ODOO_DB` de la tabla se pasa a `resolve_odoo_db_name` (si existe en el host se usa; si está stale se deduce por list/auth/hostname).
-
-**Query**: `empresa` opcional (si se omite, prueba todas las activas del `PROCESS_SCHEMA`).
-
-**Respuesta OK** (una empresa):
-```json
-{
-  "ok": true,
-  "company_id": 1,
-  "company_name": "Dinner"
-}
-```
-
-**Respuesta error** (mínima):
-```json
-{
-  "ok": false,
-  "error": "Dinner: No se pudo obtener uid (authenticate falló y no hay uid fijo)."
-}
-```
+`GET /api/odoo/health`, `…/health/import`, `…/health/credenciales_db` y `POST …/health/credenciales`: ver **[api-health.md](api-health.md)** (respuestas **sin** `uid`).
 
 ### `POST /api/odoo/import`
 
