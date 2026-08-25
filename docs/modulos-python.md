@@ -17,13 +17,18 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 
 | Archivo | Rol |
 |---------|-----|
-| `routes.py` | Todos los endpoints. Helpers `_resolve_request_odoo_profile`, `_build_proceso_response`, manejo de errores MySQL/conversión. |
+| `routes.py` | Facade: compone `route_meta` + `route_odoo` + `route_proceso`. |
+| `profile.py` | `_resolve_request_odoo_profile`, `_with_odoo_profile`, `_public_health_payload`. |
+| `proceso_response.py` | `_build_proceso_response`, `_handle_process_load_errors` (MySQL→503 / conversión→400). |
+| `route_meta.py` | `/`, metadata, bootstrap, options, padrón, CSV. |
+| `route_odoo.py` | Health Odoo + `POST /api/odoo/import`. |
+| `route_proceso.py` | `/api/proceso/*` (load, OC, UM, conversion, revert). |
 | `__init__.py` | Vacío / export mínimo. |
 
-**Funciones clave en `routes.py`:**
+**Funciones clave:**
 
-- `_with_odoo_profile()` — context manager por request.
-- `_build_proceso_response()` — envuelve filas con `build_output_rows`, metadata de conversión y purchase matching.
+- `_with_odoo_profile()` (`profile.py`) — context manager por request.
+- `_build_proceso_response()` (`proceso_response.py`) — envuelve filas con `build_output_rows`, metadata de conversión y purchase matching.
 
 ---
 
@@ -61,7 +66,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching.py` | **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM (default o elegida) + aprendizaje de producto desde procesos pasados (`company_id`). Candidatos bajo demanda (también sin líneas de producto), OCs no recepcionadas, conservar selección ante fetch vacío, Sin OC mantiene candidatos y rematch dinámico al cambiar proveedor. |
+| `purchase_matching/` | Paquete (antes un solo `.py`). **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM + aprendizaje (`company_id`). Submódulos: `_util`, `uom`, `scoring`, `oc`, `match`. Docs: [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [purchase-matching-modulos.md](import-odoo/purchase-matching-modulos.md). |
 | `__init__.py` | Marcador. |
 
 ---
@@ -109,7 +114,7 @@ parse_process_json (core/process.py)
   ├── get_catalog (odoo/catalog)
   ├── match_proveedor (padron/postgres)
   ├── apply_padron_taxes_to_row (padron/taxes)
-  ├── enrich_rows_with_purchase_data (odoo/purchase_matching)
+  ├── enrich_rows_with_purchase_data (odoo/purchase_matching/)
   └── sanitize_inflated_line_amounts (core/comprobante_tax)
 
 load_process_rows (persistence/process_conversions)

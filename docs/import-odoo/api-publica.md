@@ -122,7 +122,7 @@ def import_rows_to_odoo(
 | Archivo | Imports |
 |---------|---------|
 | `api/routes.py` | `import_rows_to_odoo` |
-| `tests/test_odoo_import.py` | ~30 símbolos (públicos y `_` helpers) |
+| `tests/test_odoo_import_*.py` | ~30 símbolos (públicos y `_` helpers) |
 | `tests/test_iva_tax_resolve.py` | `_tax_ids_for_odoo_line`, `collect_expected_*`, `group_*`, `propagate_*` |
 | `tests/test_comprobante_tax.py` | `_tax_ids_for_odoo_line`, `collect_expected_*` |
 | `tests/test_tax_pipeline.py` | `collect_expected_tax_amounts_from_group` |

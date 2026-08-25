@@ -173,9 +173,9 @@ Cuando una fila tiene match de OC (`__oc_line_id`), el import:
 3. **Re-aplica** precio y cantidad con `plan_product_price_quantity_reapply` — Odoo puede resetear `price_unit` al vincular OC.
 4. Re-aplica montos de impuesto en líneas `display_type=tax` (**último paso**) — IVA e IIBB del pie sobreescriben el recálculo de Odoo.
 
-La UI y el matching OC (`purchase_matching.py`) **no** pisan `invoice_line_ids/price_unit`: solo asignan `product_id`, metadata de OC y, si aplica, cantidad re-escalada por UM. La fuente de verdad del precio al importar sigue siendo la columna **Precio** de la tabla (origen FacturIA o edición manual).
+La UI y el matching OC (`odoo/purchase_matching/`) **no** pisan `invoice_line_ids/price_unit`: solo asignan `product_id`, metadata de OC y, si aplica, cantidad re-escalada por UM. La fuente de verdad del precio al importar sigue siendo la columna **Precio** de la tabla (origen FacturIA o edición manual).
 
-**Regresión corregida:** tras vincular OC, el borrador en Odoo quedaba con el precio de la línea de compra aunque FacturIA hubiera enviado otro `precio_unitario`. Tests: `test_plan_product_price_quantity_reapply_po_price_differs`, `test_plan_product_price_quantity_reapply_salta_pack_lines_ui_vs_po`, `test_plan_product_price_quantity_reapply_shared_oc_line_falls_back_to_index`, `test_plan_product_price_quantity_reapply_skips_unchanged` en `tests/test_odoo_import.py`. El empareje evita omitir filas cuando varias UI comparten el mismo `purchase_line_id` (cae a índice).
+**Regresión corregida:** tras vincular OC, el borrador en Odoo quedaba con el precio de la línea de compra aunque FacturIA hubiera enviado otro `precio_unitario`. Tests: `test_plan_product_price_quantity_reapply_po_price_differs`, `test_plan_product_price_quantity_reapply_salta_pack_lines_ui_vs_po`, `test_plan_product_price_quantity_reapply_shared_oc_line_falls_back_to_index`, `test_plan_product_price_quantity_reapply_skips_unchanged` en `tests/test_odoo_import_purchase.py`. El empareje evita omitir filas cuando varias UI comparten el mismo `purchase_line_id` (cae a índice).
 
 ### Padrón fiscal y remapeo de tax ids
 
@@ -355,7 +355,7 @@ Archivos clave:
 - `tests/fixtures/tax_scenarios.json` — escenarios compartidos JS/Python
 - `tests/test_comprobante_tax.py` — clasificación, totales, reconcile del pie, JSON es-AR en `__fac_iva_montos`
 - `tests/test_process_conversions.py` — slots otros impuestos, strip legacy al cargar
-- `tests/test_odoo_import.py` — import, fechas, tax_ids, IIBB, montos esperados, re-aplicar precio/cantidad tras vínculo OC
+- `tests/test_odoo_import_*.py` — import, fechas, tax_ids, IIBB, montos esperados, re-aplicar precio/cantidad tras vínculo OC
 - `tests/test_iva_tax_resolve.py` — resolución IVA y remapeo padrón Aliare
 - `tests/test_tax_pipeline.py` — pipeline end-to-end sobre fixtures
 

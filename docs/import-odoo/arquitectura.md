@@ -16,7 +16,7 @@ Antes todo vivía en `odoo/import_.py` (~1.817 líneas, ~70 funciones). Mezclaba
 - orquestación RPC,
 - y el entrypoint `import_rows_to_odoo`.
 
-El subpaquete separa **por etapa del pipeline** y por **tipo de operación** (planificar vs ejecutar vs RPC), alineado con cómo están documentados otros lados del repo (`modulos-frontend.md` por carpeta JS, `odoo/purchase_matching.py` aparte del import).
+El subpaquete separa **por etapa del pipeline** y por **tipo de operación** (planificar vs ejecutar vs RPC), alineado con cómo están documentados otros lados del repo (`modulos-frontend.md` por carpeta JS, paquete `odoo/purchase_matching/` — ver [purchase-matching.md](purchase-matching.md)).
 
 ---
 
@@ -115,7 +115,7 @@ Invalidar en tests con `_MOVE_LINE_PURCHASE_LINK_CACHE.clear()` cuando se mockea
 1. Si solo calcula diff → nueva `plan_*` en `planning.py` (o `taxes.py` si es solo impuestos).
 2. Si escribe en Odoo → usar `_batch_write_move_lines` o `odoo_execute_kw_with_config` en `move_lines.py` / `taxes.py`.
 3. Documentar orden respecto a OC y re-aplicación de precio (Odoo recalcula al vincular OC).
-4. Añadir test en `tests/test_odoo_import.py`.
+4. Añadir test en `tests/test_odoo_import_{grouping,taxes,purchase}.py` según el dominio.
 5. Actualizar [pipeline.md](pipeline.md).
 
 ### Exportar un símbolo nuevo a callers externos

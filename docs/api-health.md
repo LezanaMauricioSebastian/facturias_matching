@@ -1,6 +1,6 @@
 # Health checks Odoo
 
-Endpoints de diagnóstico de conexión. Router: `api/routes.py`.
+Endpoints de diagnóstico de conexión. Handlers: `api/route_odoo.py` (facade `api/routes.py`).
 
 Índice general de la API: [api.md](api.md).
 

@@ -5,8 +5,6 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import HTTPException
-
 from facturia_matching.core.amounts import (
     apply_fac_percepciones_to_row,
     fac_header_amount_str,
@@ -41,6 +39,15 @@ from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_d
 from facturia_matching.infra.normalization import doc_type_label, normalize, normalize_comprobante_number, normalize_date_ddmmyyyy, pick
 
 logger = logging.getLogger(__name__)
+
+
+class ProcessParseError(Exception):
+    """Error de dominio al parsear json_data del proceso FacturIA."""
+
+    def __init__(self, message: str, *, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = int(status_code)
+
 
 _FAC_SUBTOTAL_KEYS = [
     "subtotal",
@@ -95,30 +102,25 @@ def parse_process_json(
 
     json_data = row.get("json_data")
     if json_data is None:
-        raise HTTPException(status_code=500, detail="El proceso no tiene json_data.")
+        raise ProcessParseError("El proceso no tiene json_data.", status_code=500)
     try:
         obj = json.loads(json_data)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo parsear json_data del proceso: {e}")
+        raise ProcessParseError(
+            f"No se pudo parsear json_data del proceso: {e}", status_code=500
+        ) from e
 
     if isinstance(obj, str):
         if not obj.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="El proceso tiene json_data vacío o corrupto.",
-            )
+            raise ProcessParseError("El proceso tiene json_data vacío o corrupto.")
         try:
             obj = json.loads(obj)
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"json_data no es un objeto JSON válido: {e}",
-            )
+            raise ProcessParseError(
+                f"json_data no es un objeto JSON válido: {e}"
+            ) from e
     if not isinstance(obj, dict):
-        raise HTTPException(
-            status_code=400,
-            detail="json_data del proceso debe ser un objeto JSON.",
-        )
+        raise ProcessParseError("json_data del proceso debe ser un objeto JSON.")
 
     facturas = obj.get("facturas") or []
     out_rows: List[Dict[str, Any]] = []

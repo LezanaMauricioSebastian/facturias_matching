@@ -40,7 +40,7 @@ Lógica independiente de HTTP y de drivers concretos (salvo imports puntuales a 
 - **api.py**: autenticación, `search_read`, helpers XML-RPC.
 - **catalog.py**: proveedores (Dinner/Sudata: `supplier_rank > 0`; Aliare: todos los contactos), diarios, cuentas, rubros, tipos de documento (cache TTL).
 - **import_/**: agrupar filas en facturas, crear/actualizar `account.move`, sync de impuestos y OC. Ver [import-odoo/](import-odoo/README.md).
-- **purchase_matching.py**: sugerir y aplicar órdenes de compra.
+- **purchase_matching/**: sugerir y aplicar órdenes de compra + UM ([import-odoo/purchase-matching.md](import-odoo/purchase-matching.md)).
 
 ### `persistence/` — Estado editado
 

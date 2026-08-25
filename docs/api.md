@@ -1,6 +1,6 @@
 # API REST
 
-Base URL local: `http://localhost:8080`. Router: `api/routes.py`.
+Base URL local: `http://localhost:8080`. Router compuesto: `api/routes.py` (`route_meta` + `route_odoo` + `route_proceso`).
 
 ## Parámetros comunes
 
@@ -245,7 +245,7 @@ POST /api/odoo/import                     (o POST /api/csv)
 
 ## Extender la API
 
-1. Agregar handler en `api/routes.py`.
+1. Agregar handler en `api/route_meta.py`, `route_odoo.py` o `route_proceso.py` (facade `routes.py`).
 2. Si usa Odoo: envolver con `_with_odoo_profile`.
 3. Errores de dominio: `ProcessConversionError` → 400; `MySQLUnavailableError` → 503.
 4. Documentar payload aquí y en el módulo de dominio que implementa la lógica.

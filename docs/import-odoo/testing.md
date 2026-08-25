@@ -11,7 +11,7 @@ Mapa general de tests: [tests-y-scripts.md](../tests-y-scripts.md).
 ```bash
 cd facturia-matching-ui
 PYTHONPATH=src python -m pytest \
-  tests/test_odoo_import.py \
+  tests/test_odoo_import_*.py \
   tests/test_iva_tax_resolve.py \
   tests/test_comprobante_tax.py \
   tests/test_tax_pipeline.py \
@@ -32,8 +32,13 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
-| `test_odoo_import.py` | Agrupación, validación, planes, batch write, OC, precio reapply, sobreescritura opcional de `purchase.order.line.price_unit`, duplicados, **NC → `in_refund`** |
-| `test_purchase_matching.py` | Candidatos OC bajo demanda (**todas** las OC del partner, sin tope 12), notas Dinner qty=0 bajo `[CÓDIGO]`, factura sin líneas, conservar OC ante fetch vacío / tras reload (pastilla searched), solo encabezado con OC guardada, Sin OC sin perder selector, rematch dinámico por proveedor |
+| `test_odoo_import_grouping.py` | Agrupación, validación, `build_move_vals`, NC → `in_refund`, due date / maturity |
+| `test_odoo_import_taxes.py` | `tax_ids`, montos esperados, IIBB, reapply de tax amounts, `ensure_missing_tax_lines` |
+| `test_odoo_import_purchase.py` | Vínculo OC, sanitize/dedupe, planes product/purchase, reapply precio/cantidad, overwrite precio OC, batch write |
+| `test_purchase_matching_uom.py` | Qty/UM, scaling, aliases, `TestUomOdoo19Model` |
+| `test_purchase_matching_oc.py` | Candidatos OC bajo demanda (**todas** las OC del partner), enrich/select/rematch, Sin OC, score soft |
+| `test_purchase_matching_match.py` | Scoring de línea / fuzzy / Dinner notes / OCR / sugerencia producto |
+| `test_purchase_matching_package.py` | Humo del paquete `odoo/purchase_matching/` (imports, `__all__`, `clear_purchase_cache`, sin monolito `.py`) |
 | `test_comprobante_tax.py` | `collect_expected_*`, `_tax_ids_for_odoo_line` con modos IVA |
 | `test_iva_tax_resolve.py` | Resolución tax id Dinner vs Aliare |
 | `test_tax_pipeline.py` | Pipeline fiscal → montos esperados |
@@ -68,6 +73,46 @@ from facturia_matching.odoo.import_ import _MOVE_LINE_PURCHASE_LINK_CACHE
 
 def setUp(self):
     _MOVE_LINE_PURCHASE_LINK_CACHE.clear()
+```
+
+---
+
+## `purchase_matching` (paquete)
+
+Arquitectura: [purchase-matching.md](purchase-matching.md).
+
+Tras el split de `purchase_matching.py` → `purchase_matching/`, los tests históricos siguen parchando el **root** del paquete:
+
+```python
+@patch("facturia_matching.odoo.purchase_matching.is_purchase_odoo_configured", return_value=True)
+@patch("facturia_matching.odoo.purchase_matching.fetch_partner_po_lines")
+@patch("facturia_matching.odoo.purchase_matching.get_uom_catalog")
+```
+
+Funciona porque enrich / fetch / UM resuelven esos nombres vía `_pkg()` en runtime. También:
+
+```python
+from facturia_matching.odoo import purchase_matching as pm
+with patch.object(pm, "odoo_search_read", ...):
+    pm._fetch_uom_catalog()
+```
+
+Humo de estructura (sin tocar reglas):
+
+```bash
+PYTHONPATH=src python3 -m unittest tests.test_purchase_matching_package -q
+```
+
+Suite matching + memoria:
+
+```bash
+PYTHONPATH=src python3 -m unittest \
+  tests.test_purchase_matching_uom \
+  tests.test_purchase_matching_oc \
+  tests.test_purchase_matching_match \
+  tests.test_product_label_memory \
+  tests.test_purchase_matching_package \
+  -q
 ```
 
 ---
@@ -134,7 +179,7 @@ assert updates[0]["new_tax_ids"] == [63, 27]
 | IVA 21 → 10,5 en Sudata (catálogo EN) | `test_sudata_english_names_21_maps_to_65_not_63`, `test_sudata_english_zero_rate_labels`, `test_no_dinner_fallback_when_profile_is_not_default`, `test_sudata_english_percepcion_labels_resolve`, `test_saved_english_labels_resolve_against_spanish_catalog` | [iva-y-import-odoo.md](../iva-y-import-odoo.md#iva-21--llega-como-iva-105--en-sudata-nombres-en) |
 | Idioma RPC por tenant (es_AR → es_419) | `test_sudata_falls_back_to_es_419`, `test_prefers_es_ar_over_es_419_when_both_installed`, `test_unreachable_tenant_keeps_previous_defaults`, `test_lang_probe_runs_once_per_tenant` en `tests/test_odoo_api.py` | [iva-y-import-odoo.md](../iva-y-import-odoo.md#idioma-del-catálogo-resolve_odoo_lang) |
 | Alias UM con catálogo traducido | `test_um_aliases_resolve_with_spanish_uom_catalog`, `test_um_aliases_still_resolve_with_english_uom_catalog` | [purchase-oc.md](purchase-oc.md#unidad-de-medida-um) |
-| UM en Odoo 19 (árbol `relative_uom_id`) | clase `TestUomOdoo19Model` en `tests/test_purchase_matching.py`: `test_tree_root_becomes_category`, `test_archived_parents_close_the_tree`, `test_convert_qty_weight`, `test_convert_qty_units_and_packs`, `test_product_default_uom_without_uom_po_id`, `test_unknown_fields_keep_legacy_model` | [purchase-oc.md](purchase-oc.md#um-en-odoo-19-sudata) |
+| UM en Odoo 19 (árbol `relative_uom_id`) | clase `TestUomOdoo19Model` en `tests/test_purchase_matching_uom.py`: `test_tree_root_becomes_category`, `test_archived_parents_close_the_tree`, `test_convert_qty_weight`, `test_convert_qty_units_and_packs`, `test_product_default_uom_without_uom_po_id`, `test_unknown_fields_keep_legacy_model` | [purchase-oc.md](purchase-oc.md#um-en-odoo-19-sudata) |
 | Campos inexistentes vacían el catálogo | clase `TestModelFieldsByVersion` en `tests/test_odoo_catalog.py` | [purchase-oc.md](purchase-oc.md#soporte-por-tenant) |
 | Cambiar alícuota en la línea re-etiqueta el pie | `test_switching_line_rate_relabels_footer_iva`, `test_switching_line_rate_persists_relabeled_footer`, `test_footer_rate_not_covered_by_lines_is_kept`, `test_switching_line_rate_sends_new_iva_tax_id`, `cambio de alícuota en la línea (Sudata 13/8/2026)` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md#cambiar-la-alícuota-en-la-línea-deja-la-vieja-en-el-pie-testing-elías-1382026) |
 | Monto IVA sobrevive F5 (no migración legacy) | `migrateLegacyComprobanteIva keeps modern line Monto IVA (PDF Salta reload)` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
@@ -176,4 +221,22 @@ Scripts relacionados: ver `scripts/` en [tests-y-scripts.md](../tests-y-scripts.
 
 ## CI
 
-Si el proyecto corre pytest en CI, el job debe incluir `PYTHONPATH=src` o `pip install -e .` para resolver `facturia_matching`.
+GitHub Actions (`.github/workflows/test.yml`) corre:
+
+- `pip install -e . && python -m unittest discover -s tests -p 'test_*.py'`
+- `npm run test:js`
+
+---
+
+## Frontend (JS)
+
+Los tests JS viven en `tests/js/` y se documentan en [tests-y-scripts.md](../tests-y-scripts.md).
+
+| Área | Cobertura actual | Huecos |
+|------|------------------|--------|
+| Impuestos / pie | `comprobante_tax.test.mjs` + fixtures compartidos | — |
+| Solo encabezado | `solo_encabezado.test.mjs` | — |
+| Validación pre-export | `validateRows.test.mjs` | combobox / OC picker UI |
+| Autosave / API client | — | sin tests automatizados |
+
+Cambios en `static/js/validation/` o `comprobanteTax/` deben actualizar fixtures o tests JS correspondientes.

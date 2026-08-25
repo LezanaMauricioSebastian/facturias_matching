@@ -27,6 +27,8 @@ Documentación del paquete que convierte filas de la UI en facturas o notas de c
 | [pipeline.md](pipeline.md) | Flujo paso a paso: `import_rows_to_odoo` y `sync_move_taxes_from_group` |
 | [impuestos.md](impuestos.md) | `tax_ids`, montos esperados, sobreescritura en líneas tax, IIBB |
 | [purchase-oc.md](purchase-oc.md) | Refresh OC, sanitize, dedupe, `purchase_line_id`, precio tras vínculo; matching producto (OC / memoria / fuzzy) |
+| [purchase-matching.md](purchase-matching.md) | Subpaquete `odoo/purchase_matching/`: arquitectura, grafo, prioridad UM, caches |
+| [purchase-matching-modulos.md](purchase-matching-modulos.md) | Referencia archivo por archivo del matching OC/UM |
 | [api-publica.md](api-publica.md) | Símbolos exportados, quién importa qué, contrato de respuesta |
 | [testing.md](testing.md) | Tests, `mock.patch` por submódulo, comandos útiles |
 
@@ -57,7 +59,7 @@ src/facturia_matching/odoo/import_/
 flowchart TB
   subgraph entry [Entrada]
     api[routes.py POST /api/odoo/import]
-    tests[tests/test_odoo_import.py]
+    tests[tests/test_odoo_import_*.py]
   end
 
   subgraph create_mod [create.py]
@@ -117,7 +119,7 @@ flowchart TB
 |---------|----------------|
 | `odoo/api.py` | XML-RPC: `get_odoo_import_config`, `odoo_execute_kw_with_config` |
 | `odoo/env.py` | Perfil activo, `supports_rubro_field` |
-| `odoo/purchase_matching.py` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` (candidatos bajo demanda; incluye OCs no recepcionadas) |
+| `odoo/purchase_matching/` | `_refresh_purchase_links` → `enrich_rows_with_purchase_data` (candidatos bajo demanda; incluye OCs no recepcionadas). Ver [purchase-matching.md](purchase-matching.md) |
 | `core/comprobante_tax.py` | `reconcile_fac_iva_for_import`, modos line/header/mixed |
 | `padron/taxes.py` | Resolución `account.tax` id, IVA, IIBB, `build_csv_tax_ids_dot_id` |
 

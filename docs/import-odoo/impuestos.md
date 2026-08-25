@@ -173,10 +173,11 @@ Si el padrón o la UI asignan `otros_impuestos` distintos por fila, `_tax_ids_fo
 | `test_iva_tax_resolve.py` | Resolución IVA Dinner vs Aliare |
 | `test_tax_pipeline.py` | Pipeline fiscal end-to-end |
 | `test_padron_taxes_iibb.py` | IIBB en montos esperados |
-| `test_odoo_import.py` | tax_ids, IIBB primera línea, montos, maturity |
+| `test_odoo_import_taxes.py` | tax_ids, IIBB primera línea, montos, maturity |
+| `test_odoo_import_grouping.py` | due date / maturity en tax lines |
 
 Comando:
 
 ```bash
-PYTHONPATH=src python -m pytest tests/test_odoo_import.py tests/test_comprobante_tax.py tests/test_iva_tax_resolve.py -q
+PYTHONPATH=src python -m pytest tests/test_odoo_import_*.py tests/test_comprobante_tax.py tests/test_iva_tax_resolve.py -q
 ```

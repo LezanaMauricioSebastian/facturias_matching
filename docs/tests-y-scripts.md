@@ -30,8 +30,14 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
-| `test_odoo_import.py` | Agrupación, validación, planes de import, IIBB, reapply de precio/cantidad y sobreescritura opcional del precio en la OC. Ver [import-odoo/testing.md](import-odoo/testing.md). |
-| `test_purchase_matching.py` | Matching OC, UM, fuzzy; búsqueda bajo demanda; facturas sin líneas; conservar OC ante fetch vacío; Sin OC mantiene selector; rematch por proveedor |
+| `test_odoo_import_grouping.py` | Agrupación, validación, `build_move_vals`, NC → `in_refund`, due date. Ver [import-odoo/testing.md](import-odoo/testing.md). |
+| `test_odoo_import_taxes.py` | tax_ids, IIBB, montos esperados, reapply tax amounts |
+| `test_odoo_import_purchase.py` | Vínculo OC, reapply precio/cantidad, overwrite precio OC, batch write |
+| `test_purchase_matching_uom.py` | Qty/UM, scaling, aliases, modelo Odoo 19 |
+| `test_purchase_matching_oc.py` | Matching OC, búsqueda bajo demanda, enrich/select/rematch, Sin OC |
+| `test_purchase_matching_match.py` | Scoring línea / fuzzy / Dinner / OCR / sugerencia producto |
+| `test_purchase_matching_package.py` | Humo del paquete `odoo/purchase_matching/` (imports, caches, sin monolito) |
+| `test_product_label_memory.py` | Aprendizaje producto + UM |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
 | `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo (filtro + extras dinámicos purchase incl. IVA; alias Perc Gananc/IVA) |
 | `test_db_resolve.py` / `test_infra_db_resolve.py` | Resolución nombre DB Postgres/MySQL |
@@ -63,11 +69,16 @@ npm run test:js
 | Archivo | Qué cubre |
 |---------|-----------|
 | `tests/js/comprobante_tax.test.mjs` | Paridad lógica tax en browser |
+| `tests/js/solo_encabezado.test.mjs` | Flag Solo encabezado, columnas, colapso |
 | `tests/js/rows_migration.test.mjs` | Migración de filas (cuenta, proveedor) |
+| `tests/js/numbers.test.mjs` | Parseo de montos |
+| `tests/js/validateRows.test.mjs` | Validación pre-export (partner, journal, IVA por modo, cuenta, fechas) |
 | `tests/js/loadFixtures.mjs` | Carga `tax_scenarios.json` (helper, no test) |
 | `tests/js/exportTotals.mjs` | Script CLI para paridad Python/JS (`node tests/js/exportTotals.mjs`) |
 
 Los módulos bajo test importan desde `src/facturia_matching/static/js/...` vía rutas relativas en los tests.
+
+CI corre `npm run test:js` junto a los unit tests Python (ver `.github/workflows/test.yml`).
 
 ---
 
@@ -95,8 +106,8 @@ Uso típico de diagnóstico cuando el matching falla en un proveedor o rubro.
 | Fórmula IVA | `tax_scenarios.json` + test JS (`comprobante_tax.test.mjs`, incl. `header footer IVA fixed when price changes`) + `test_comprobante_tax.py` + `test_js_python_parity.py` |
 | Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, columna Subtotal, collapse) |
 | Nueva columna UI/CSV | `test` de `constants` o snapshot headers en export |
-| Import Odoo | `test_odoo_import.py` con filas mínimas agrupadas |
-| Matching OC | `test_purchase_matching.py` |
+| Import Odoo | `test_odoo_import_*.py` con filas mínimas agrupadas |
+| Matching OC | `test_purchase_matching_{uom,oc,match}.py` |
 | Nueva ruta API | `test_routes_odoo_cloud.py` o test dedicado con `TestClient` |
 | Remap conversión | `test_saved_row_remap.py` |
 

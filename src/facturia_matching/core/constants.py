@@ -127,7 +127,7 @@ COLUMN_LABELS = {
     "invoice_line_ids/account_id": "Cuenta",
     "invoice_line_ids/quantity": "Cantidad",
     "invoice_line_ids/price_unit": "Precio",
-    "iva_pct": "Impuesto IVA",
+    "iva_pct": "IVA",
     "iva_monto": "Monto IVA",
     "otros_impuestos": "Otros Impuestos",
     "otros_impuestos_monto": "Monto Otros Impuestos",

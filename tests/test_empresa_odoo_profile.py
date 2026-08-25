@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from facturia_matching.api.routes import _resolve_request_odoo_profile
+from facturia_matching.api.profile import _resolve_request_odoo_profile
 from facturia_matching.odoo.empresa_profile import (
     empresa_odoo_profile_map,
     resolve_odoo_display_label,

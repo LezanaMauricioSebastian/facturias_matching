@@ -1,6 +1,6 @@
 import unittest
 
-from facturia_matching.api.routes import _resolve_request_odoo_profile
+from facturia_matching.api.profile import _resolve_request_odoo_profile
 from facturia_matching.odoo.env import resolve_odoo_profile
 from facturia_matching.odoo.request_context import odoo_profile_context
 

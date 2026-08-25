@@ -163,12 +163,12 @@ class TestListActiveCredentials(unittest.TestCase):
 
 
 class TestHealthCredencialesDbRoute(unittest.TestCase):
-    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    @patch("facturia_matching.api.route_odoo.verify_odoo_config_connection")
     @patch(
         "facturia_matching.persistence.company_erp_credentials.list_active_company_odoo_credentials"
     )
     def test_health_credenciales_db_ok(self, mock_list, mock_verify):
-        from facturia_matching.api.routes import odoo_health_credenciales_db
+        from facturia_matching.api.route_odoo import odoo_health_credenciales_db
 
         mock_list.return_value = [
             {
@@ -202,19 +202,19 @@ class TestHealthCredencialesDbRoute(unittest.TestCase):
         return_value=[],
     )
     def test_health_credenciales_db_empty(self, _mock_list):
-        from facturia_matching.api.routes import odoo_health_credenciales_db
+        from facturia_matching.api.route_odoo import odoo_health_credenciales_db
 
         out = odoo_health_credenciales_db(empresa=None)
         self.assertEqual(set(out.keys()), {"ok", "error"})
         self.assertFalse(out["ok"])
         self.assertIn("No hay credenciales", out["error"])
 
-    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    @patch("facturia_matching.api.route_odoo.verify_odoo_config_connection")
     @patch(
         "facturia_matching.persistence.company_erp_credentials.list_active_company_odoo_credentials"
     )
     def test_health_credenciales_db_auth_error_minimal(self, mock_list, mock_verify):
-        from facturia_matching.api.routes import odoo_health_credenciales_db
+        from facturia_matching.api.route_odoo import odoo_health_credenciales_db
 
         mock_list.return_value = [
             {
@@ -246,9 +246,9 @@ class TestHealthCredencialesDbRoute(unittest.TestCase):
 
 
 class TestHealthCredencialesParamsRoute(unittest.TestCase):
-    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    @patch("facturia_matching.api.route_odoo.verify_odoo_config_connection")
     def test_health_credenciales_ok_from_body(self, mock_verify):
-        from facturia_matching.api.routes import odoo_health_credenciales
+        from facturia_matching.api.route_odoo import odoo_health_credenciales
 
         mock_verify.return_value = {"ok": True, "uid": 10, "db": "resolved-db"}
         with patch(
@@ -272,9 +272,9 @@ class TestHealthCredencialesParamsRoute(unittest.TestCase):
         self.assertNotIn("uid_source", out)
         mock_verify.assert_called_once()
 
-    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    @patch("facturia_matching.api.route_odoo.verify_odoo_config_connection")
     def test_health_credenciales_nested_config(self, mock_verify):
-        from facturia_matching.api.routes import odoo_health_credenciales
+        from facturia_matching.api.route_odoo import odoo_health_credenciales
 
         mock_verify.return_value = {"ok": True, "uid": 2, "db": "db1"}
         with patch(
@@ -295,16 +295,16 @@ class TestHealthCredencialesParamsRoute(unittest.TestCase):
         self.assertNotIn("uid", out)
 
     def test_health_credenciales_empty_body(self):
-        from facturia_matching.api.routes import odoo_health_credenciales
+        from facturia_matching.api.route_odoo import odoo_health_credenciales
 
         out = odoo_health_credenciales({})
         self.assertEqual(set(out.keys()), {"ok", "error"})
         self.assertFalse(out["ok"])
         self.assertIn("Faltan credenciales", out["error"])
 
-    @patch("facturia_matching.api.routes.verify_odoo_config_connection")
+    @patch("facturia_matching.api.route_odoo.verify_odoo_config_connection")
     def test_health_credenciales_auth_error_minimal(self, mock_verify):
-        from facturia_matching.api.routes import odoo_health_credenciales
+        from facturia_matching.api.route_odoo import odoo_health_credenciales
 
         mock_verify.return_value = {
             "ok": False,

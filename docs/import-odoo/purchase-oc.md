@@ -4,13 +4,13 @@ Vínculo entre filas UI y `purchase.order.line` en Odoo (`purchase_line_id`).
 
 **Código:** `purchase.py`, `planning._po_link_write_vals`, `planning.plan_product_price_quantity_reapply`
 
-**Matching previo (enriquecer filas):** `odoo/purchase_matching.py`
+**Matching previo (enriquecer filas):** paquete `odoo/purchase_matching/` — arquitectura en [purchase-matching.md](purchase-matching.md)
 
 ---
 
 ## Filtro de OCs en matching
 
-`fetch_partner_po_lines` (`purchase_matching.py`) trae **todas** las órdenes de compra **confirmadas** del proveedor (`limit=False` en Odoo), **incluyendo recepcionadas y no recepcionadas**. Ya no hay tope de 12 OCs recientes (PDF Salta Refresco: la OC correcta quedaba fuera del listado).
+`fetch_partner_po_lines` (`purchase_matching/oc.py`) trae **todas** las órdenes de compra **confirmadas** del proveedor (`limit=False` en Odoo), **incluyendo recepcionadas y no recepcionadas**. Ya no hay tope de 12 OCs recientes (PDF Salta Refresco: la OC correcta quedaba fuera del listado).
 
 | Odoo (`purchase.order`) | UI (español) | ¿Se considera? |
 |-------------------------|--------------|----------------|
@@ -96,7 +96,7 @@ No todas las líneas de factura terminan vinculadas a una línea de OC (proveedo
 
 **UI:** la celda de producto sugerida se muestra **resaltada en naranja** (`combobox-suggested`) con tooltip de revisión. Al elegir/borrar el producto manualmente se limpia el flag; al elegir producto se llama `rematch-uom` para inferir UM (`combobox/attach.js` + `purchase.js`).
 
-Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_match_invoice_row_no_suggestion_below_threshold`, `test_line_match_score_rejects_tomate_seco_vs_triturado`, `test_suggest_product_does_not_rescale_pack_qty_as_kg` en `tests/test_purchase_matching.py`.
+Tests: `test_match_invoice_row_suggests_product_from_pool_without_oc`, `test_match_invoice_row_no_suggestion_below_threshold`, `test_line_match_score_rejects_tomate_seco_vs_triturado`, `test_suggest_product_does_not_rescale_pack_qty_as_kg` en `tests/test_purchase_matching_match.py`.
 
 ## Aprendizaje de producto (procesos pasados)
 
@@ -137,7 +137,7 @@ El soft **no** recuenta variantes incompatibles: Coca Zero no suma sobre la lín
 
 **Limitaciones:** etiqueta **normalizada** + fuzzy RapidFuzz (`token_set_ratio` ≥ 88) sobre keys del mismo proveedor; exacto gana primero. Rechaza conflictos obvios (sin gas vs con gas, ZERO vs no-ZERO). No busca en todo el catálogo Odoo.
 
-Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_picks_best_label_among_same_product`, `test_match_invoice_row_learned_applies_uom`, `test_match_invoice_row_learned_no_oc_when_product_absent` en `tests/test_product_label_memory.py`; `test_apply_oc_selection_uses_product_memory`, `test_oc_collision_keeps_product_id` en `tests/test_purchase_matching.py`; `test_plan_product_line_content_updates_writes_product_even_with_oc` en `tests/test_odoo_import.py`.
+Tests: `test_product_label_memory_*`, `test_match_invoice_row_prefers_learned_over_fuzzy`, `test_match_invoice_row_learned_beats_oc`, `test_match_invoice_row_learned_keeps_oc_when_same_product`, `test_match_invoice_row_learned_links_oc_by_product_despite_label`, `test_match_invoice_row_learned_picks_best_label_among_same_product`, `test_match_invoice_row_learned_applies_uom`, `test_match_invoice_row_learned_no_oc_when_product_absent` en `tests/test_product_label_memory.py`; `test_apply_oc_selection_uses_product_memory`, `test_oc_collision_keeps_product_id` en `tests/test_purchase_matching_oc.py`; `test_plan_product_line_content_updates_writes_product_even_with_oc` en `tests/test_odoo_import_purchase.py`.
 
 ### Unidad de medida — envase en descripción
 
@@ -145,7 +145,7 @@ La descripción suele traer el **tamaño del envase** (`X 500 G`, `X 2 KG`), no 
 
 Tests: `test_resolve_invoice_qty_ignores_package_um_when_qty_present`, `test_resolve_invoice_qty_prefers_facturia_over_package_size`.
 
-Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetch_partner_po_lines_includes_receipt_and_deliver_fields`, `test_search_oc_candidates_for_comprobante`, `test_enrich_restores_saved_oc_and_marks_searched`, `test_enrich_restores_saved_oc_on_solo_encabezado`, `test_apply_oc_selection_sin_oc_clears_match` en `tests/test_purchase_matching.py`.
+Tests: `test_partner_po_search_domain_includes_all_receipt_statuses`, `test_fetch_partner_po_lines_includes_receipt_and_deliver_fields`, `test_search_oc_candidates_for_comprobante`, `test_enrich_restores_saved_oc_and_marks_searched`, `test_enrich_restores_saved_oc_on_solo_encabezado`, `test_apply_oc_selection_sin_oc_clears_match` en `tests/test_purchase_matching_oc.py`.
 
 ---
 
@@ -388,7 +388,7 @@ flowchart TD
 
 ## Tests
 
-`tests/test_odoo_import.py`:
+`tests/test_odoo_import_purchase.py`:
 
 - `test_sanitize_group_purchase_lines_clears_missing_ids`
 - `test_prepare_rows_for_import_refreshes_oc_before_grouping`
@@ -398,7 +398,7 @@ flowchart TD
 - `test_apply_purchase_order_price_overwrites_*`
 - `test_group_wants_overwrite_oc_price`
 
-`tests/test_purchase_matching.py`:
+`tests/test_purchase_matching_oc.py`:
 
 - `test_search_oc_candidates_for_comprobante`
 - `test_score_oc_candidates_lists_ocs_without_content_rows`

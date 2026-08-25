@@ -9,6 +9,7 @@ import {
 } from "../comprobanteTax/index.js";
 import { formatMoney, formatNumericForDisplay } from "../utils/index.js";
 import { isSoloEncabezado } from "../singleLine/index.js";
+import { refreshFitColWidths } from "./colWidths.js";
 
 /** Subtotal de fila: siempre cantidad × precio (respeta edición del usuario). */
 function rowSubtotal(row) {
@@ -56,6 +57,7 @@ export function updateRowTotals(state, refs, rIdx) {
   state.rowTotals[rIdx] = computeRowTotal(state.rows[rIdx], mode);
   applyRowTotalToDom(state, rIdx);
   updateProcessTotals(state, refs);
+  refreshFitColWidths(refs?.tableWrap);
 }
 
 export function updateProcessTotals(state, refs) {
@@ -92,4 +94,5 @@ export function updateTotals(state, refs) {
     }
   }
   updateProcessTotals(state, refs);
+  refreshFitColWidths(refs?.tableWrap);
 }

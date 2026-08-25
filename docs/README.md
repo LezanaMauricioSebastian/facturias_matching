@@ -23,7 +23,7 @@ flowchart TB
     api_js[api/]
   end
 
-  subgraph API["FastAPI (api/routes.py)"]
+  subgraph API["FastAPI (api/routes.py facade)"]
     routes[/api/*]
   end
 
@@ -76,7 +76,7 @@ Usuario ingresa process_number
         → get_catalog() [odoo/catalog.py]
         → match_proveedor() [padron/postgres.py]
         → apply_padron_taxes_to_row() [padron/taxes.py]
-        → enrich_rows_with_purchase_data() [odoo/purchase_matching.py]
+        → enrich_rows_with_purchase_data() [odoo/purchase_matching/]
     → build_output_rows() [core/process.py]
   → UI renderiza tabla + pies de comprobante
   → autosave PUT /api/proceso/{n}/conversion
@@ -172,9 +172,9 @@ facturia-matching-ui/
 | Arreglar matching de proveedor | `padron/postgres.py`, `odoo/catalog.py` |
 | Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, [import-odoo/](import-odoo/README.md), [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
 | Import a Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
-| Matching con OC / producto / aprendizaje | `odoo/purchase_matching.py`, [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md), diagrama en esta página |
+| Matching con OC / producto / aprendizaje | `odoo/purchase_matching/`, [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md), diagrama en esta página |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |
-| Nuevo endpoint | `api/routes.py` |
+| Nuevo endpoint | `api/route_meta.py` / `route_odoo.py` / `route_proceso.py` (+ facade `routes.py`) |
 | Variables de entorno | `.env.example`, `infra/config.py`, `odoo/env.py` |
 | Paridad JS ↔ Python en taxes | `tests/fixtures/tax_scenarios.json`, `tests/test_js_python_parity.py` |
 
