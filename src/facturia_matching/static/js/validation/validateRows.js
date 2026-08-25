@@ -4,20 +4,51 @@ import {
   parseDateLoose,
   tryParseNumericString,
 } from "../utils/index.js";
+import { classifyComprobanteTaxMode } from "../comprobanteTax/totals.js";
+import { groupBounds, isFirstRowOfComprobante } from "../singleLine/index.js";
 import { normalizeComprobanteNumber } from "./documentNumber.js";
 
 const INV_KEY = "l10n_latam_document_number";
 
+function rowHasLineContent(row) {
+  return (
+    !!String(row?.["invoice_line_ids/name"] ?? "").trim() ||
+    !!String(row?.["invoice_line_ids/quantity"] ?? "").trim() ||
+    !!String(row?.["invoice_line_ids/price_unit"] ?? "").trim()
+  );
+}
+
 export function validateRows(state) {
-  const ivaKey = "iva_pct";
-  for (let idx = 0; idx < state.rows.length; idx++) {
-    const row = state.rows[idx];
-    const v = String(row?.[ivaKey] ?? "").trim();
-    if (!v) return `Impuesto IVA vacío en ${ivaKey} (fila ${idx + 1}).`;
+  const rows = state.rows || [];
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    if (!isFirstRowOfComprobante(rows, idx)) continue;
+    const row = rows[idx];
+    if (!String(row?.partner_id ?? "").trim()) {
+      return `Proveedor vacío en partner_id (fila ${idx + 1}).`;
+    }
+    if (!String(row?.journal_id ?? "").trim()) {
+      return `Diario vacío en journal_id (fila ${idx + 1}).`;
+    }
   }
 
-  for (let idx = 0; idx < state.rows.length; idx++) {
-    const row = state.rows[idx];
+  // En header/mixed el IVA vive en el pie; solo exigir iva_pct en modo line.
+  for (let idx = 0; idx < rows.length; idx++) {
+    if (!isFirstRowOfComprobante(rows, idx)) continue;
+    const [s, e] = groupBounds(rows, idx);
+    const groupRows = rows.slice(s, e);
+    const mode = classifyComprobanteTaxMode(groupRows);
+    if (mode === "header" || mode === "mixed") continue;
+    for (let i = s; i < e; i++) {
+      const row = rows[i];
+      if (!rowHasLineContent(row)) continue;
+      const v = String(row?.iva_pct ?? "").trim();
+      if (!v) return `IVA vacío en iva_pct (fila ${i + 1}).`;
+    }
+  }
+
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
     let v = String(row?.[INV_KEY] ?? "").trim();
     if (!v) continue;
     v = normalizeComprobanteNumber(v);
@@ -37,8 +68,8 @@ export function validateRows(state) {
     return { ok: true, num };
   };
 
-  for (let idx = 0; idx < state.rows.length; idx++) {
-    const row = state.rows[idx];
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
     for (const k of numericKeys) {
       const v = (row?.[k] ?? "").toString().trim();
       if (!v) continue;
@@ -49,21 +80,17 @@ export function validateRows(state) {
   }
 
   const accountKey = "invoice_line_ids/account_id";
-  for (let idx = 0; idx < state.rows.length; idx++) {
-    const row = state.rows[idx];
-    const hasLine =
-      !!String(row?.["invoice_line_ids/name"] ?? "").trim() ||
-      !!String(row?.["invoice_line_ids/quantity"] ?? "").trim() ||
-      !!String(row?.["invoice_line_ids/price_unit"] ?? "").trim();
-    if (!hasLine) continue;
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    if (!rowHasLineContent(row)) continue;
     const acc = String(row?.[accountKey] ?? "").trim();
     if (!acc) return `Cuenta contable vacía en ${accountKey} (fila ${idx + 1}).`;
   }
 
   const requiredDateFormat = "DD/MM/YYYY";
 
-  for (let idx = 0; idx < state.rows.length; idx++) {
-    const row = state.rows[idx];
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
     for (const k of ["invoice_date", "invoice_date_due"]) {
       const v0 = String(row?.[k] ?? "").trim();
       if (!v0) continue;

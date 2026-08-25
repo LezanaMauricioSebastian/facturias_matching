@@ -367,16 +367,12 @@ def import_rows_to_odoo(
 
     had_work = bool(created) or bool(updated_taxes)
     ok = had_work and not errors
-    if had_work and errors:
-        ok = False
-    if not had_work and errors:
-        ok = False
     if not had_work and not errors and not skipped:
         return {"ok": False, "error": "No se creó ni actualizó ningún comprobante."}
 
+    # ok is False when errors mixed with success (or only errors). Do not OR with had_work.
     return {
-        "ok": ok or had_work,
-        "uid": uid,
+        "ok": ok,
         "db": config.get("db"),
         "base_url": config.get("base_url"),
         "created": created,

@@ -84,8 +84,8 @@ export function handleSelectionChange(state, r, k, ctx) {
       if (state.rows[i]) state.rows[i].partner_id = partner;
     }
     // Siempre rematchear: aparece/desaparece «Buscar OCs» según el nuevo proveedor.
+    // skipAutoSave lo setea rematchPurchase tras sus guards (evita quedar trabado).
     if (handlers.onRematchPurchase) {
-      state.skipAutoSave = true;
       handlers.onRematchPurchase(r);
       return;
     }

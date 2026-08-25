@@ -1,10 +1,5 @@
 # FacturIA → Odoo (matching UI)
 
-> ⚡ **Actualización 2026-07-20**: Se aplicaron correcciones críticas de rendimiento y estabilidad. Ver [EXECUTIVE_SUMMARY.md](EXECUTIVE_SUMMARY.md) para detalles.
-> - **-40% latencia** en imports (25s → 15s para 10 facturas)
-> - **Thread-safe** para multi-worker en producción
-> - **6 bugs críticos** corregidos
-
 Pantalla web para cargar un proceso de FacturIA, revisar el matching contra el padrón y Odoo, editar filas y exportar CSV para importación en Odoo. También permite importar borradores a Odoo (Dinner TEST, Aliare, Sudata según perfil).
 
 **Perfil Odoo:** agregar `?odoo_profile_test=aliare` (o `sudata` / `odoo_cloud=1`) a la URL cuando el tenant no es Dinner. Guía operativa: [docs/guia-usuario.md](docs/guia-usuario.md). Detalle técnico: [docs/iva-y-import-odoo.md](docs/iva-y-import-odoo.md).
@@ -56,9 +51,10 @@ uvicorn facturia_matching.main:app --reload --port 8080
 ```bash
 pip install -e .
 python -m unittest discover -s tests -p 'test_*.py'
+npm run test:js
 ```
 
-Los tests de integración (requieren BD) están en `tests/integration/` y se omiten si no hay credenciales.
+Los tests de integración (requieren BD) están en `tests/integration/` y se omiten si no hay credenciales. CI: [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
 ## Deploy (Cloud Run)
 

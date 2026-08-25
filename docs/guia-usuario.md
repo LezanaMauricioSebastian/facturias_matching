@@ -41,11 +41,11 @@ Cada factura tiene un bloque expandible con:
 
 | Modo | Dónde editar IVA | Pie IVA |
 |------|------------------|---------|
-| **line** / **header** / **mixed** | Solo el **pie** (montos). En la tabla queda **Impuesto IVA** (%) | Editable |
+| **line** / **header** / **mixed** | Solo el **pie** (montos). En la tabla queda **IVA** (%) | Editable |
 
 Los montos de IVA y de otros impuestos **no** se editan en columnas de la tabla (mismo criterio que Odoo: impuestos en la línea, importes abajo). Si hay varias líneas con la misma alícuota, el pie muestra la suma / el encabezado FacturIA.
 
-Si corregís **Impuesto IVA** en la línea (p. ej. FacturIA leyó 21 % y era 10,5 %), el pie cambia de etiqueta y **conserva el monto**: no quedan las dos alícuotas y a Odoo va la nueva. Si el monto también estaba mal, editalo en el pie.
+Si corregís **IVA** en la línea (p. ej. FacturIA leyó 21 % y era 10,5 %), el pie cambia de etiqueta y **conserva el monto**: no quedan las dos alícuotas y a Odoo va la nueva. Si el monto también estaba mal, editalo en el pie.
 
 Si editás el IVA en el **pie**, esos montos son los que se envían a Odoo al importar (no el cálculo automático por línea cuando marcás override).
 

@@ -80,6 +80,17 @@ export function resolveOdooProfileParam(raw, odooCloud) {
   return "default";
 }
 
+/** true si ?debug=1 (o true/yes/on) para logs de timing en consola. */
+export function isDebugMode() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const v = String(params.get("debug") || "").trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  } catch {
+    return false;
+  }
+}
+
 /** true si la URL trae perfil Odoo explícito (no inferido por empresa). */
 export function hasExplicitOdooProfileInUrl() {
   const url = getUrlParams();

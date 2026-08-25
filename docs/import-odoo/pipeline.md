@@ -77,18 +77,27 @@ Una sola vez por request. Ver [\_prepare_rows_for_import](#_prepare_rows_for_imp
 
 ```python
 {
-  "ok": bool,
-  "uid": int,
-  "db": str,
-  "base_url": str,
-  "created": [...],
-  "updated_taxes": [...],  # _tax_sync_summary por comprobante
-  "skipped": [...],
-  "errors": [...],
+    "ok": bool,
+    "db": str,
+    "base_url": str,
+    "created": [...],
+    "updated_taxes": [...],  # _tax_sync_summary por comprobante
+    "skipped": [...],
+    "errors": [...],
 }
 ```
 
-`ok` es false si hubo errores mezclados con trabajo exitoso, o si no se hizo nada.
+`ok` es **false** si hubo errores mezclados con trabajo exitoso, si solo hubo errores, o si no se hizo nada. No se fuerza `ok=true` solo porque `created`/`updated_taxes` no estén vacíos.
+
+### Fallo parcial (borrador creado + error de sync)
+
+Si `account.move.create` OK pero `sync_move_taxes_from_group` falla:
+
+- El comprobante queda en Odoo en **draft**.
+- Entra en `errors[]` con mensaje *“Factura creada pero falló sync…”* y `move_id`.
+- `ok` es **false** aunque haya otros comprobantes OK en `created`/`updated_taxes`.
+
+**Qué hacer el operador:** abrir el borrador en Odoo, corregir impuestos/OC, o re-importar con `update_taxes_if_exists` tras arreglar la UI. No asumir que “ok en UI” = sync completo si el status muestra errores.
 
 ---
 
@@ -226,7 +235,7 @@ No filtra por `l10n_latam_document_number` en domain (campo computed sin store e
 | 4 | Re-aplicar tax_ids | Pisa stomp de impuestos post-OC/precio (otros **por línea** + header-only → 1ª) |
 | 5 | Montos líneas tax | Pisa recálculo de Odoo (IVA + IIBB); **último paso** |
 
-Tests de regresión: `test_plan_product_price_quantity_reapply_*`, `test_tax_ids_otros_respected_per_line`, `test_plan_line_tax_updates_salta_stomped_restores_otros_per_line`, `test_sync_applies_tax_amounts_after_all_line_writes` en `tests/test_odoo_import.py`.
+Tests de regresión: `test_plan_product_price_quantity_reapply_*` en `tests/test_odoo_import_purchase.py`; `test_tax_ids_otros_respected_per_line`, `test_plan_line_tax_updates_salta_stomped_restores_otros_per_line`, `test_sync_applies_tax_amounts_after_all_line_writes` en `tests/test_odoo_import_taxes.py`.
 
 ---
 

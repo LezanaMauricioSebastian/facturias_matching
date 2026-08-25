@@ -38,7 +38,8 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 |---------|-----|
 | `index.js` | Orquesta render + handlers de tabla. |
 | `columns.js` | Definición de columnas visibles (alineado con `core/constants.py`). |
-| `constants.js` | Keys readonly, clases CSS, índices. |
+| `constants.js` | Re-export de keys / anchos (`colWidths.js`). |
+| `colWidths.js` | Anchos dinámicos por contenido (fit vs flex, clamp min/max). |
 | `render.js` | Pinta `<table>`: celdas editables, combobox attach, selector UM por producto (**prefetch** de opciones + fill in-place), agrupación visual por comprobante. **No inyecta** `<option>` huérfanas para ids de catálogo Odoo (proveedor/diario/cuenta/…) que no estén en `options` del tenant activo. |
 | `handlers.js` | Eventos input/blur/change en celdas; sincroniza `state.rows`; llama tax sync y autosave. |
 | `totals.js` | Fila de totales globales si aplica. |
@@ -127,7 +128,7 @@ Con el tilde activo: colapsa líneas a una; el **pie sigue visible** (montos sol
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | **`validateRows`** antes de CSV/Odoo. |
-| `validateRows.js` | Reglas por fila: partner, fechas, montos, documento. |
+| `validateRows.js` | Antes de CSV/Odoo: `partner_id` y `journal_id` (1ª fila del comprobante); `iva_pct` solo en modo **line** (en header/mixed el IVA está en el pie); número de documento, cuenta si hay línea, fechas y numéricos. |
 | `documentNumber.js` | Formato número latam. |
 
 ---
@@ -137,7 +138,7 @@ Con el tilde activo: colapsa líneas a una; el **pie sigue visible** (montos sol
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | Re-exports. |
-| `url.js` | **`getUrlParams`**, `isEmbedMode`, query `proceso`, `empresa`, `odoo_profile`. |
+| `url.js` | **`getUrlParams`**, `isEmbedMode`, `isDebugMode` (`?debug=1` para timing en consola), query `proceso`, `empresa`, `odoo_profile`. |
 | `numbers.js` | Parse/format montos AR (`2.500,50`); **`sanitizeNumericString`** para híbridos (`350.0,00`); **`toNumberLoose`** no colapsa decimales US con parte entera >3 dígitos (`1457.256`); usado en pie IVA y otros impuestos. |
 | `dates.js` | Parse/format fechas. |
 | `html.js` | Escape HTML, helpers DOM. |

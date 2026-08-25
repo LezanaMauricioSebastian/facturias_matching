@@ -5,6 +5,7 @@ import {
   hasExplicitOdooProfileOverride,
   activeOdooProfile,
   dropInvalidCatalogIds,
+  isDebugMode,
 } from "../utils/index.js";
 import {
   ensureOtroImpuestoColumns,
@@ -83,10 +84,12 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   const url = `/api/bootstrap${buildApiQuery({ empresa, odoo_profile, odoo_cloud })}`;
   const t0 = performance.now();
   const boot = await fetch(url).then((r) => r.json());
-  console.log(
-    `[timing] GET /api/bootstrap ${(performance.now() - t0).toFixed(0)}ms`,
-    { empresa: empresa || null, odoo_profile: odoo_profile || null }
-  );
+  if (isDebugMode()) {
+    console.log(
+      `[timing] GET /api/bootstrap ${(performance.now() - t0).toFixed(0)}ms`,
+      { empresa: empresa || null, odoo_profile: odoo_profile || null }
+    );
+  }
   const meta = boot?.metadata || {};
   const options = boot?.options || {};
   state.empresaOdooProfiles = boot?.empresa_odoo_profiles || {};

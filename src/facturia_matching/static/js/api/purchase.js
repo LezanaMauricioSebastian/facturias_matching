@@ -146,6 +146,7 @@ export async function searchOc(state, refs, setStatusFn, handlers, comprobanteId
   } finally {
     delete state._ocSearching[compKey];
     state.skipAutoSave = false;
+    setOcSearchButtonLoading(comprobanteIdx, false);
   }
 }
 

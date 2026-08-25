@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "fix/**", "feature/**"]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: JS tests
+        run: npm run test:js

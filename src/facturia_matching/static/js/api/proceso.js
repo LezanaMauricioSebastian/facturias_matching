@@ -4,6 +4,7 @@ import {
   mergeProductOptions,
   syncOdooProfileState,
   apiOdooQueryParams,
+  isDebugMode,
 } from "../utils/index.js";
 import { renderComprobantes } from "../comprobanteView/index.js";
 import { clearAutoSaveTimer } from "./autoSave.js";
@@ -29,10 +30,12 @@ export async function fetchProcesoPayload(state, pn, empresa, urlOverrides = {})
   const t0 = performance.now();
   const res = await fetch(apiUrl);
   const data = await res.json();
-  console.log(
-    `[timing] GET /api/proceso/${pn} ${(performance.now() - t0).toFixed(0)}ms`,
-    { empresa: empresa || null, ok: res.ok, rows: data?.rows?.length ?? null, source: data?.source || null }
-  );
+  if (isDebugMode()) {
+    console.log(
+      `[timing] GET /api/proceso/${pn} ${(performance.now() - t0).toFixed(0)}ms`,
+      { empresa: empresa || null, ok: res.ok, rows: data?.rows?.length ?? null, source: data?.source || null }
+    );
+  }
   return { res, data };
 }
 

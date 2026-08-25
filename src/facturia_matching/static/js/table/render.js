@@ -26,7 +26,7 @@ import {
   renderComboboxCellHtml,
 } from "../combobox/index.js";
 import { fetchProductUoms } from "../api/purchase.js";
-import { buildColMinWidth, DOC_NUM_KEY } from "./constants.js";
+import { buildColWidths, colCellAttrs, DOC_NUM_KEY } from "./constants.js";
 import { columnsForTaxMode, otroImpuestoNFromNameKey, otrosImpuestoKey } from "./columns.js";
 import { mergeDomRefs, updateRowTotals } from "./totals.js";
 import {
@@ -161,18 +161,17 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
   const firstRow = rowIndices.length ? state.rows[rowIndices[0]] : null;
   const soloEncabezado = isSoloEncabezado(firstRow);
   const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado });
-  const colMinWidth = buildColMinWidth(cols);
+  const colWidths = buildColWidths(cols, state, rowIndices);
   const actionDisabled = !(state.rows && state.rows.length);
 
   const html = [];
   html.push("<table><thead><tr>");
   for (const c of cols) {
-    const mw = colMinWidth[c.key] || colMinWidth[c.label];
-    const style = mw ? ` style="min-width:${mw}px"` : "";
     if (c.type === "header_action" && c.key === ADD_OTRO_IMPUESTO_KEY) {
       const dis = actionDisabled ? " disabled" : "";
+      const attrs = colCellAttrs(colWidths, c.key, c.label, "headerActionCell headerAddTaxCell");
       html.push(
-        `<th class="headerActionCell headerAddTaxCell"${style}>` +
+        `<th${attrs}>` +
           `<button type="button" class="headerActionBtn secondary" data-add-otro-impuesto${dis} title="Agregar impuesto" aria-label="Agregar impuesto">+</button>` +
           `</th>`
       );
@@ -181,8 +180,9 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     const taxN = otroImpuestoNFromNameKey(c.key);
     if (taxN >= 2 && c.type === "selection" && c.key === otrosImpuestoKey(taxN)) {
       const dis = actionDisabled ? " disabled" : "";
+      const attrs = colCellAttrs(colWidths, c.key, c.label, "headerActionCell headerTaxCell");
       html.push(
-        `<th class="headerActionCell headerTaxCell"${style}>` +
+        `<th${attrs}>` +
           `<div class="headerTaxHead">` +
           `<span class="headerTaxLabel">${c.label}</span>` +
           `<button type="button" class="headerActionBtn secondary headerRemoveTaxBtn" data-remove-otro-impuesto="${taxN}"${dis} title="Quitar impuesto" aria-label="Quitar impuesto">×</button>` +
@@ -190,9 +190,9 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       );
       continue;
     }
-    html.push(`<th${style}>${c.label}</th>`);
+    html.push(`<th${colCellAttrs(colWidths, c.key, c.label)}>${c.label}</th>`);
   }
-  html.push(`<th style="min-width:120px">Acciones</th>`);
+  html.push(`<th style="min-width:90px">Acciones</th>`);
   html.push("</tr></thead><tbody>");
 
   for (const rIdx of rowIndices) {
@@ -206,32 +206,33 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       const key = c.key;
       const rawVal = r[key];
       const val = (rawVal ?? "").toString();
-      const mw = colMinWidth[key] || colMinWidth[c.label];
-      const tdStyle = mw ? ` style="min-width:${mw}px"` : "";
+      const tdAttrs = colCellAttrs(colWidths, key, c.label);
       if (c.type === "header_action") {
-        html.push(`<td class="headerActionBodyCell"${tdStyle}></td>`);
+        html.push(`<td${colCellAttrs(colWidths, key, c.label, "headerActionBodyCell")}></td>`);
       } else if (c.type === "checkbox") {
         if (isFirstRowOfComprobante(state.rows, rIdx)) {
           const checked = isSoloEncabezado(r) ? " checked" : "";
           const multi = comprobanteHasMultipleLines(state.rows, rIdx);
           const title = multi
-            ? "Solo encabezado: una línea (elimina líneas extra) y oculta el pie"
-            : "Solo encabezado: muestra Monto IVA / Otros en la fila y oculta el pie del comprobante";
+            ? "Solo encabezado: colapsa a una línea (elimina líneas extra); el pie del comprobante sigue visible"
+            : "Solo encabezado: montos IVA/Otros en el pie del comprobante (sigue visible)";
           html.push(
-            `<td class="soloEncabezadoCell"${tdStyle}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
+            `<td${colCellAttrs(colWidths, key, c.label, "soloEncabezadoCell")}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
           );
         } else {
-          html.push(`<td${tdStyle}></td>`);
+          html.push(`<td${tdAttrs}></td>`);
         }
       } else if (c.type === "computed") {
         const n = key === "__subtotal" ? computeSubtotalCell(r) : computeRowTotal(r, taxMode);
         const dataAttr =
           key === "__subtotal" ? ` data-subtotal-r="${rIdx}"` : ` data-total-r="${rIdx}"`;
-        html.push(`<td class="readonly"${tdStyle}${dataAttr}>${formatMoney(n)}</td>`);
+        html.push(
+          `<td${colCellAttrs(colWidths, key, c.label, "readonly")}${dataAttr}>${formatMoney(n)}</td>`
+        );
       } else if (key === "__um_empresa") {
-        html.push(renderUmSelectHtml(state, r, rIdx, tdStyle));
+        html.push(renderUmSelectHtml(state, r, rIdx, tdAttrs));
       } else if (c.readonly) {
-        html.push(`<td class="readonly"${tdStyle}>${val}</td>`);
+        html.push(`<td${colCellAttrs(colWidths, key, c.label, "readonly")}>${val}</td>`);
       } else if (c.type === "selection") {
         const optKey = c.options_key;
         const opts = state.options && state.options[optKey] ? state.options[optKey] : [];
@@ -241,7 +242,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
         if (isComboboxOptionKey(optKey)) {
           const suggested = optKey === "productos" && !!r.__product_suggested;
           html.push(
-            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, loading, state, suggested })
+            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle: tdAttrs, loading, state, suggested })
           );
         } else {
           const selectLoading =
@@ -249,7 +250,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
             (optKey === "productos" && state.productosLoading && (!opts || opts.length === 0));
           const dis = selectLoading ? " disabled" : "";
           const cls = selectLoading ? ' class="selectLoading"' : "";
-          html.push(`<td${tdStyle}><select${cls}${dis} data-r="${rIdx}" data-k="${key}">`);
+          html.push(`<td${tdAttrs}><select${cls}${dis} data-r="${rIdx}" data-k="${key}">`);
           if (selectLoading) {
             html.push(`<option value="" selected disabled>Cargando…</option>`);
           } else {
@@ -279,16 +280,16 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       } else if (c.type === "numeric") {
         const shown = formatNumericForDisplay(rawVal, key);
         html.push(
-          `<td${tdStyle}><input inputmode="decimal" data-r="${rIdx}" data-k="${key}" value="${shown.replaceAll('"', "&quot;")}" /></td>`
+          `<td${tdAttrs}><input inputmode="decimal" data-r="${rIdx}" data-k="${key}" value="${shown.replaceAll('"', "&quot;")}" /></td>`
         );
       } else if (c.type === "text" && c.editable && key === DOC_NUM_KEY) {
         html.push(
-          `<td class="cellWithHint"${tdStyle}><div class="cellStack"><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /><div class="fieldHint" data-doc-hint-row="${rIdx}" aria-live="polite" hidden></div></div></td>`
+          `<td${colCellAttrs(colWidths, key, c.label, "cellWithHint")}><div class="cellStack"><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /><div class="fieldHint" data-doc-hint-row="${rIdx}" aria-live="polite" hidden></div></div></td>`
         );
       } else if (c.type === "text" && c.editable) {
-        html.push(`<td${tdStyle}><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /></td>`);
+        html.push(`<td${tdAttrs}><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /></td>`);
       } else {
-        html.push(`<td class="readonly"${tdStyle}>${val}</td>`);
+        html.push(`<td${colCellAttrs(colWidths, key, c.label, "readonly")}>${val}</td>`);
       }
     }
     html.push(
