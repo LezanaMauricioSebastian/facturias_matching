@@ -40,6 +40,7 @@ src/facturia_matching/odoo/purchase_matching/
 ├── __init__.py   # Reexporta API pública + privados usados por tests
 ├── _util.py      # normalize, parse_amount, config, _pkg, _is_content_row
 ├── uom.py        # Catálogo UM, Odoo 19, convert, apply_product_uom_to_row
+├── uom_ai.py     # Sugerencia Claude antes del fallback a Unidades
 ├── scoring.py    # Tokens, Dinner notes, _line_match_score
 ├── oc.py         # fetch_partner_po_lines, score_oc_candidates
 └── match.py      # match_invoice_row, enrich, select-oc, rematch, clear cache
@@ -52,8 +53,10 @@ src/facturia_matching/odoo/purchase_matching/
 ```
 _util.py
     ↑
-uom.py          scoring.py
-    ↑               ↑
+uom.py ←── uom_ai.py (lazy)
+    ↑
+scoring.py
+    ↑
     └───── oc.py ───┘
               ↑
            match.py
@@ -62,8 +65,9 @@ uom.py          scoring.py
 ```
 
 - `oc` usa `scoring` (notas / line score) y `uom._resolve_invoice_qty_um` (contexto qty).
-- `match` orquesta todo.
+- `match` orquesta todo; `clear_purchase_cache` también limpia `uom_ai`.
 - `_is_content_row` vive en `_util` (lo usan `oc.score_oc_candidates` y `match`).
+- `uom_ai` solo se importa cuando el fallback a default está por ocurrir (lazy).
 
 ---
 
@@ -75,12 +79,13 @@ uom.py          scoring.py
 2. **UM de memoria** (`product_label_memory.uom_id`) — mismo proveedor + etiqueta; no re-escala qty.
 3. **UM elegida a mano** (`POST rematch-uom` con `uom_id`) — misma categoría; re-escala desde qty/UM original.
 4. **Excepción peso FacturIA** — `unidad_medida` `KG`/`g` y existe en la categoría del producto → preferir **kg** sobre pack/`uom_po`.
-5. **Default de compra del producto** (`uom_po_id` / `uom_id`) — **no** la UM de la línea OC.
-6. **Fallback raro** — match OC sin `product_id` → UM de la línea OC.
+5. **Sugerencia Claude** (`uom_ai`) — si `FACTURIA_UOM_AI_ENABLED=1` + `ANTHROPIC_API_KEY`, hay descripción de ítem y **>1 UM** en la categoría del producto → Claude elige el ID; stamp `__um_note` con `UM sugerida por IA`. Reemplaza el fallback a Unidades cuando el default de compra suele ser incorrecto (packs / kg / litros en gastronomía).
+6. **Default de compra del producto** (`uom_po_id` / `uom_id`) — **no** la UM de la línea OC (solo si la IA está off, falla o no hay opciones).
+7. **Fallback raro** — match OC sin `product_id` → UM de la línea OC.
 
-FacturIA (`__um_proveedor`) no elige la UM de empresa: solo sirve para re-escalar cuando hay mapeo. Sin UM de factura → stamp del default (`Sin UM en factura`).
+FacturIA (`__um_proveedor`) no elige la UM de empresa: solo sirve para re-escalar cuando hay mapeo. Sin UM de factura → stamp del destino (IA o default) con nota `Sin UM en factura` (y/o `UM sugerida por IA`).
 
-Código: `match.match_invoice_row` + `uom._resolve_target_uom_for_product`.
+Código: `match.match_invoice_row` + `uom._resolve_target_uom_for_product` + `uom_ai.suggest_uom`.
 
 ---
 
@@ -92,8 +97,9 @@ Código: `match.match_invoice_row` + `uom._resolve_target_uom_for_product`.
 | `_uom_cache` | `uom.py` | tenant → catálogo UM (TTL 600s) |
 | `_product_uom_cache` | `uom.py` | tenant → product_id → uom default |
 | `_uom_model_relative_cache` | `uom.py` | tenant → ¿Odoo 19 relative? |
+| `_CACHE` | `uom_ai.py` | `(product_id, label_key)` → id UM sugerido |
 
-`clear_purchase_cache()` (en `match.py`) limpia las cuatro + `clear_odoo_model_fields_cache()`.
+`clear_purchase_cache()` (en `match.py`) limpia las de PO/UM + `clear_uom_ai_cache()` + `clear_odoo_model_fields_cache()`.
 
 ---
 

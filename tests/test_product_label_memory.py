@@ -6,9 +6,11 @@ from facturia_matching.odoo.purchase_matching import match_invoice_row
 from facturia_matching.persistence.product_label_memory import (
     MemoryChoice,
     build_product_memory_index,
+    extract_pack_counts,
     is_confirmed_product_choice,
     lookup_in_index,
     normalize_label_key,
+    pack_counts_conflict,
 )
 from unittest.mock import MagicMock, patch
 
@@ -57,6 +59,49 @@ class TestProductLabelMemory(unittest.TestCase):
             lookup_in_index(
                 index, 1582, "COCA-COLA ZERO 600*06 PET 5548 ACUERDO GCIA."
             )
+        )
+
+    def test_extract_pack_counts_generic(self):
+        self.assertEqual(extract_pack_counts("COCA-COLA 600*06 PET"), frozenset({6}))
+        self.assertEqual(extract_pack_counts("COCA-COLA 600*08 PET"), frozenset({8}))
+        self.assertEqual(extract_pack_counts("SPRITE X 12 500ML"), frozenset({12}))
+        self.assertEqual(extract_pack_counts("SALCHICHA 35X6 190GS"), frozenset({6}))
+        self.assertEqual(extract_pack_counts("ACEITE PACK 6"), frozenset({6}))
+        self.assertEqual(extract_pack_counts("Aquarius 0,5L*06PET"), frozenset({6}))
+        # Sin señal de pack: no inventar a partir de volumen/código.
+        self.assertEqual(extract_pack_counts("TOMATE SECO 500G"), frozenset())
+        self.assertEqual(extract_pack_counts("SPRITE 2L"), frozenset())
+
+    def test_pack_counts_conflict_6_vs_8(self):
+        self.assertTrue(
+            pack_counts_conflict("COCA-COLA 600*06 PET", "COCA-COLA 600*08 PET")
+        )
+        self.assertTrue(pack_counts_conflict("SPRITE X6", "SPRITE X8"))
+        self.assertFalse(
+            pack_counts_conflict("COCA-COLA 600*06 PET", "COCA-COLA 600*06 PET")
+        )
+        # Una sin pack claro: no bloquea.
+        self.assertFalse(pack_counts_conflict("COCA-COLA 600*06 PET", "COCA-COLA"))
+
+    def test_lookup_fuzzy_rejects_pack_6_vs_8(self):
+        key = normalize_label_key("SPRITE FX LS 500ML NR 06PET 5548 ACUERDO GCIA.")
+        index = {(1582, key): 620}
+        self.assertIsNone(
+            lookup_in_index(
+                index, 1582, "SPRITE FX LS 500ML NR 08PET 5548 ACUERDO GCIA."
+            )
+        )
+        # Mismo pack (formato distinto) sigue matcheando.
+        self.assertEqual(
+            lookup_in_index(index, 1582, "SPRITE FX LS 500ML NR 6*6PET"),
+            MemoryChoice(product_id=620),
+        )
+
+    def test_lookup_fuzzy_rejects_pack_x6_vs_x8(self):
+        key = normalize_label_key("AGUA SABORIZADA X6 500ML")
+        index = {(1582, key): 510}
+        self.assertIsNone(
+            lookup_in_index(index, 1582, "AGUA SABORIZADA X8 500ML")
         )
 
     def test_skips_fuzzy_suggested_rows(self):

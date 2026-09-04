@@ -1567,6 +1567,43 @@ class TestPurchaseMatching(unittest.TestCase):
         self.assertIn("BENEDICTINO", blob)
         self.assertNotIn("C/G", blob)
 
+    def test_score_oc_candidates_soft_skips_pack_count_mismatch(self):
+        """Soft recount: SPRITE pack 6 hard-match no arrastra pack 8 (mismo product_id)."""
+        from facturia_matching.odoo.purchase_matching import score_oc_candidates
+
+        invoice_rows = [
+            {
+                "__comprobante_idx": 0,
+                "invoice_line_ids/name": name,
+                "invoice_line_ids/quantity": "10",
+                "invoice_line_ids/product_id": "620",
+            }
+            for name in (
+                "SPRITE FX LS 500ML NR 06PET 5548 ACUERDO GCIA.",
+                "SPRITE FX LS 500ML NR 08PET 5548 ACUERDO GCIA.",
+            )
+        ]
+        po_lines = [
+            {
+                "line_id": 1,
+                "order_id": 1,
+                "order_name": "P1",
+                "partner_ref": "",
+                "date_order": "2026-01-10",
+                "line_name": "[B0003] BEB-GASEOSAS",
+                "note_labels": ["sprite"],
+                "product_qty": 2,
+                "qty_received": 2,
+                "qty_invoiced": 0,
+                "product_id": 620,
+                "product_uom_name": "Unidades",
+                "price_unit": 1,
+            }
+        ]
+        ranked = score_oc_candidates(invoice_rows, po_lines)
+        self.assertEqual(ranked[0]["lines_total"], 2)
+        self.assertEqual(ranked[0]["lines_matched"], 1)
+
     def test_score_oc_candidates_soft_sibling_label_without_product_id(self):
         """Sin product_id en extras: etiqueta hermana ≥88 hereda el hard-match."""
         from facturia_matching.odoo.purchase_matching import score_oc_candidates

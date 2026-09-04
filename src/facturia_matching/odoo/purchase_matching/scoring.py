@@ -130,12 +130,16 @@ def _invoice_gas_flags(descripcion: str) -> Tuple[bool, bool]:
 
 
 def _invoice_variant_conflict(a: str, b: str) -> bool:
-    """ZERO vs no-ZERO, agua sin gas vs con gas (misma idea que memoria de producto)."""
+    """ZERO vs no-ZERO, sin/con gas, pack 6 vs 8 (misma idea que memoria de producto)."""
     if (_invoice_has_zero_token(a)) != (_invoice_has_zero_token(b)):
         return True
     a_still, a_spark = _invoice_gas_flags(a)
     b_still, b_spark = _invoice_gas_flags(b)
-    return (a_still and b_spark) or (b_still and a_spark)
+    if (a_still and b_spark) or (b_still and a_spark):
+        return True
+    from facturia_matching.persistence.product_label_memory import pack_counts_conflict
+
+    return pack_counts_conflict(a, b)
 
 
 def _soft_recount_allowed(

@@ -949,4 +949,7 @@ def clear_purchase_cache() -> None:
     _uom_cache.clear()
     _uom_model_relative_cache.clear()
     _pkg().clear_odoo_model_fields_cache()
+    from facturia_matching.odoo.purchase_matching.uom_ai import clear_uom_ai_cache
+
+    clear_uom_ai_cache()
 

@@ -44,13 +44,32 @@ Catálogo UM, Odoo 19 (árbol `relative_uom_id`), conversión y re-escalado.
 | `_uom_model_is_relative`, `_relative_uom_items` | Normalización Odoo 19 → shape ≤ 18 |
 | `resolve_uom`, `convert_qty`, `_find_uom_in_category` | Resolve category-aware |
 | `_product_default_uom_id`, `list_uoms_for_product` | Default compra + lista misma categoría |
-| `_resolve_target_uom_for_product` | Prioridad destino (manual / kg / uom_po) |
+| `_resolve_target_uom_for_product` | Prioridad destino (manual / kg / **Claude** / uom_po) |
 | `_apply_uom_scaling*`, `apply_product_uom_to_row` | Re-escalado + API rematch-uom |
 | `_compose_match_note`, `_stamp_target_uom` | Notas / stamp `__um_empresa*` |
 
 Caches: `_uom_cache`, `_product_uom_cache`, `_uom_model_relative_cache`.
 
-**Depende de:** `_util`, `odoo.api`.
+**Depende de:** `_util`, `odoo.api`, `uom_ai` (lazy).
+
+---
+
+## `uom_ai.py`
+
+Sugerencia de UM vía Anthropic Claude cuando el default de compra (típicamente Unidades) sería incorrecto.
+
+| Símbolo | Rol |
+|---------|-----|
+| `is_uom_ai_enabled` | `FACTURIA_UOM_AI_ENABLED` + `ANTHROPIC_API_KEY` |
+| `suggest_uom` | Prompt + parseo de ID; cache `(product_id, label)`; fallback `None` |
+| `clear_uom_ai_cache` | Limpia cache (también desde `clear_purchase_cache`) |
+| `_build_prompt` / `_parse_uom_id` | Prompt gastronómico + extracción de ID |
+
+Env: `FACTURIA_UOM_AI_ENABLED`, `ANTHROPIC_API_KEY`, opcional `FACTURIA_UOM_AI_MODEL`.
+
+Tests: `tests/test_uom_ai.py`.
+
+**Depende de:** `_util`, `infra.env`, `anthropic` (lazy import).
 
 ---
 

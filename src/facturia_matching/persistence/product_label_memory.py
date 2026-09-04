@@ -13,8 +13,11 @@ import logging
 import re
 import threading
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
+
+from rapidfuzz import fuzz
 
 from facturia_matching.infra.config import PROCESS_SCHEMA, _mysql_table_ref, get_mysql_connection
 from facturia_matching.odoo.env import get_conversion_template_id
@@ -38,9 +41,24 @@ _PUNCT_RE = re.compile(r"[^\w.\s]+", re.UNICODE)
 _LEADING_ZERO_RE = re.compile(r"\b0+(\d+)(?=[A-Z]|\b)")
 _WS_RE = re.compile(r"\s+")
 
-from dataclasses import dataclass
-
-from rapidfuzz import fuzz
+# Multiplicidad de envase (pack), no volumen/peso. Sobre label ya normalizada.
+_PACK_COUNT_MIN = 2
+_PACK_COUNT_MAX = 48
+_PACK_PATTERNS: Tuple[re.Pattern[str], ...] = (
+    # X6 / X 12
+    re.compile(r"\bX\s*(\d{1,2})\b"),
+    # 35X6 (fiambres, etc.): el 2.º número es el pack
+    re.compile(r"\b\d{1,4}X(\d{1,2})\b"),
+    re.compile(r"\bPACK(?:\s*DE)?\s*(\d{1,2})\b"),
+    re.compile(r"\bPQT[EA]?(?:\s*DE)?\s*(\d{1,2})\b"),
+    re.compile(r"\b(\d{1,2})\s*(?:UN(?:ID(?:ADES)?)?|UDS?)\b"),
+    # 6PET / 12PET (bebidas tras quitar ceros: 06PET → 6PET)
+    re.compile(r"\b(\d{1,2})PET\b"),
+    # 600*06 / 500×12 / 0.5L*06 → tras normalize: 600 6, 500 12, 0.5L 6
+    re.compile(
+        r"(?:(?<!\d)\d{3,4}|(?:\d+\.\d+|\d+)L)\s+(\d{1,2})(?=\s|$|PET|LATA|NR)"
+    ),
+)
 
 # partner_id + label_key → MemoryChoice
 ProductMemoryIndex = Dict[Tuple[int, str], "MemoryChoice"]
@@ -174,6 +192,35 @@ def build_product_memory_index(
     return index
 
 
+def extract_pack_counts(raw: Any) -> FrozenSet[int]:
+    """Enteros que actúan como multiplicidad de envase/pack en la etiqueta.
+
+    Genérico (no solo bebidas): ``600*06``, ``X12``, ``35X6``, ``PACK 6``,
+    ``6PET``, etc. Ignora volúmenes/pesos (``500ML``, ``2L``, ``1KG``) y
+    códigos largos. Sobre texto crudo o ya normalizado.
+    """
+    key = normalize_label_key(raw)
+    if not key:
+        return frozenset()
+    found: set[int] = set()
+    for cre in _PACK_PATTERNS:
+        for match in cre.finditer(key):
+            n = int(match.group(1))
+            if _PACK_COUNT_MIN <= n <= _PACK_COUNT_MAX:
+                found.add(n)
+    return frozenset(found)
+
+
+def pack_counts_conflict(a: Any, b: Any) -> bool:
+    """True si ambas etiquetas declaran pack y las multiplicidades no se solapan.
+
+    Ej.: pack 6 vs pack 8. Si alguna no trae señal clara, no bloquea.
+    """
+    pa = extract_pack_counts(a)
+    pb = extract_pack_counts(b)
+    return bool(pa and pb and pa.isdisjoint(pb))
+
+
 def _memory_labels_conflict(a: str, b: str) -> bool:
     """Rechaza pares que RapidFuzz acerca pero son variantes incompatibles."""
     ta = set(a.split())
@@ -187,6 +234,9 @@ def _memory_labels_conflict(a: str, b: str) -> bool:
         return True
     # ZERO solo de un lado (Coca vs Coca Zero).
     if ("ZERO" in ta) != ("ZERO" in tb):
+        return True
+    # Pack 6 vs pack 8 (u otras multiplicidades de envase).
+    if pack_counts_conflict(a, b):
         return True
     return False
 

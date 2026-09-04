@@ -475,9 +475,18 @@ def list_uoms_for_product(product_id: int) -> List[Dict[str, Any]]:
     cat_id = _category_id(product_uom)
     if cat_id is None:
         return [{"id": int(product_uom["id"]), "name": product_uom.get("name") or ""}]
+    return _uoms_in_category(cat_id, catalog)
+
+
+def _uoms_in_category(
+    category_id: Optional[int],
+    uom_catalog: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if category_id is None:
+        return []
     out: List[Dict[str, Any]] = []
-    for uom in by_id.values():
-        if _category_id(uom) != cat_id:
+    for uom in (uom_catalog.get("by_id") or {}).values():
+        if _category_id(uom) != int(category_id):
             continue
         uid = uom.get("id")
         if uid is None:
@@ -492,11 +501,19 @@ def _resolve_target_uom_for_product(
     uom_catalog: Dict[str, Dict[str, Any]],
     target_uom_id: Optional[int] = None,
     invoice_um_raw: str = "",
+    *,
+    product_label: str = "",
+    partner_name: str = "",
+    ai_meta: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """UM destino: elegida a mano, kg de factura si aplica, o uom_po default.
+    """UM destino: elegida a mano, kg de factura si aplica, IA, o uom_po default.
 
     PDF Gran Crianza: si FacturIA trae KG y el producto tiene UM de peso en la
     misma categoría, preferir kg sobre el pack/unidad de compra (uom_po).
+
+    Sin señal fuerte (manual / peso), si hay >1 UM en la categoría del producto
+    se consulta Claude (`uom_ai`) antes de caer al default (suele ser Unidades).
+    `ai_meta` (dict mutable opcional) recibe `suggested=True` si la IA eligió.
     """
     product_uom_id = _pkg()._product_default_uom_id(product_id)
     by_id = uom_catalog.get("by_id") or {}
@@ -512,6 +529,26 @@ def _resolve_target_uom_for_product(
         found = _find_uom_in_category(invoice_um_raw or inv_canon, cat_id, uom_catalog)
         if found:
             return found
+
+    # Antes del default Units: preguntar a Claude entre las UM de la categoría.
+    if default_uom is not None and _normalize(product_label):
+        cat_uoms = _uoms_in_category(_category_id(default_uom), uom_catalog)
+        if len(cat_uoms) > 1:
+            from facturia_matching.odoo.purchase_matching import uom_ai
+
+            suggested_id = uom_ai.suggest_uom(
+                product_id=int(product_id),
+                product_label=product_label,
+                partner_name=partner_name,
+                uoms=cat_uoms,
+            )
+            if suggested_id is not None:
+                chosen = by_id.get(int(suggested_id))
+                if chosen and _category_id(chosen) == _category_id(default_uom):
+                    if isinstance(ai_meta, dict):
+                        ai_meta["suggested"] = True
+                    return chosen
+
     return default_uom
 
 
@@ -524,11 +561,19 @@ def _apply_uom_scaling_for_product(
     uom_catalog: Dict[str, Dict[str, Any]],
     target_uom_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    product_label = _normalize(
+        row.get("invoice_line_ids/name") or row.get("Nombre de producto") or ""
+    )
+    partner_name = _normalize(row.get("Nombre de Proveedor") or "")
+    ai_meta: Dict[str, Any] = {}
     to_uom = _resolve_target_uom_for_product(
         product_id,
         uom_catalog,
         target_uom_id,
         invoice_um_raw=invoice_um_raw,
+        product_label=product_label,
+        partner_name=partner_name,
+        ai_meta=ai_meta,
     )
     if not to_uom:
         return {
@@ -541,7 +586,7 @@ def _apply_uom_scaling_for_product(
             "um_note": "Sin UM producto",
         }
     company_name = to_uom.get("name") or ""
-    return _apply_uom_scaling(
+    out = _apply_uom_scaling(
         row,
         invoice_qty=invoice_qty,
         invoice_um_raw=invoice_um_raw,
@@ -549,6 +594,12 @@ def _apply_uom_scaling_for_product(
         po_uom_name=company_name,
         uom_catalog=uom_catalog,
     )
+    if ai_meta.get("suggested"):
+        out["um_note"] = _compose_match_note(
+            "UM sugerida por IA",
+            out.get("um_note") or "",
+        )
+    return out
 
 
 def apply_product_uom_to_row(
