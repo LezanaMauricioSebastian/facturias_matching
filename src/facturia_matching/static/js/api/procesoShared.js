@@ -21,6 +21,7 @@ import {
 import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
 import { PURCHASE_COLUMN_KEYS, odooImportButtonLabel, updateOdooTenantBadge } from "./bootstrap.js";
 import { renderSummary, scheduleAutoSave } from "./autoSave.js";
+import { clearFacturiaRawCache, setActiveProcessTab } from "../facturiaRaw/tab.js";
 
 function cachePurchaseColumnDefs(state) {
   if (state.purchaseColumnDefs?.length) return;
@@ -99,6 +100,8 @@ export function purchaseStatusPart(pm) {
 export function applyProcesoPayload(state, refs, data, pn, empresa) {
   state.processNumber = pn;
   state.empresa = empresa || "";
+  clearFacturiaRawCache(state);
+  if (refs) setActiveProcessTab(refs, "edit");
   if (data.odoo_profile && !state.odooProfileLocked) {
     const prof = data.odoo_profile;
     state.odooProfile =

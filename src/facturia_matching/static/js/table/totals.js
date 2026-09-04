@@ -8,7 +8,7 @@ import {
   lineBase,
 } from "../comprobanteTax/index.js";
 import { formatMoney, formatNumericForDisplay } from "../utils/index.js";
-import { isSoloEncabezado } from "../singleLine/index.js";
+import { isEncabezadoOneLineUi } from "../singleLine/index.js";
 import { refreshFitColWidths } from "./colWidths.js";
 
 /** Subtotal de fila: siempre cantidad × precio (respeta edición del usuario). */
@@ -25,8 +25,8 @@ function applyRowTotalToDom(state, rIdx) {
   const subCell = subtotalCells?.[rIdx];
   if (subCell) subCell.textContent = formatMoney(rowSubtotal(r));
   const mode = resolveTaxModeForRow(state, rIdx);
-  const solo = isSoloEncabezado(r);
-  if (!r?.__iva_monto_manual && showIvaMontoColumn(mode, solo)) {
+  const encabezadoUi = isEncabezadoOneLineUi(r);
+  if (!r?.__iva_monto_manual && showIvaMontoColumn(mode, encabezadoUi)) {
     const ivaInp = ivaInputs?.[rIdx];
     if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
   }
@@ -88,7 +88,7 @@ export function updateTotals(state, refs) {
     if (cell) cell.textContent = formatMoney(rowTotal);
     const subCell = subtotalCells?.[i] ?? tableWrap?.querySelector(`[data-subtotal-r="${i}"]`);
     if (subCell) subCell.textContent = formatMoney(rowSubtotal(r));
-    if (!r.__iva_monto_manual && showIvaMontoColumn(mode, isSoloEncabezado(r))) {
+    if (!r.__iva_monto_manual && showIvaMontoColumn(mode, isEncabezadoOneLineUi(r))) {
       const ivaInp = ivaInputs?.[i] ?? tableWrap?.querySelector(`input[data-r="${i}"][data-k="iva_monto"]`);
       if (ivaInp) ivaInp.value = formatNumericForDisplay(r.iva_monto, "iva_monto");
     }

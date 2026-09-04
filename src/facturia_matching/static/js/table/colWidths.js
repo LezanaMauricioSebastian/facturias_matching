@@ -26,7 +26,8 @@ const COL_SPEC = {
   "invoice_line_ids/account_id": { min: 130, max: 280, flex: true },
   "invoice_line_ids/quantity": { min: 44, max: 88, fit: true, ignoreHeader: true },
   "invoice_line_ids/price_unit": { min: 52, max: 150, fit: true, ignoreHeader: true },
-  iva_pct: { min: 48, max: 88, fit: true, ignoreHeader: true },
+  // Select nativo necesita espacio para valor + flecha; min 48 dejaba solo el chevron.
+  iva_pct: { min: 88, max: 168, fit: true },
   iva_monto: { min: 88, max: 150, fit: true, ignoreHeader: true, money: true },
   otros_impuestos: { min: 120, max: 240, flex: true },
   otros_impuestos_monto: { min: 88, max: 150, fit: true, ignoreHeader: true, money: true },

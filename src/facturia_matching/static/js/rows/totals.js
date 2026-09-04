@@ -5,7 +5,7 @@ import {
   toNumberLoose,
 } from "../utils/index.js";
 import { lineBase, lineIvaSuggested } from "../comprobanteTax/index.js";
-import { isSoloEncabezado } from "../singleLine/index.js";
+import { isEncabezadoOneLineUi } from "../singleLine/index.js";
 
 /**
  * Solo montos de slots con impuesto asignado en la línea.
@@ -26,7 +26,8 @@ function sumAssignedOtrosMontos(row) {
 export function computeRowTotal(row, taxMode = "header") {
   const base = lineBase(row);
   let ivaMonto = 0;
-  if (isSoloEncabezado(row)) {
+  const encabezadoUi = isEncabezadoOneLineUi(row);
+  if (encabezadoUi) {
     const explicit = toNumberLoose(row?.iva_monto);
     const fromFac = toNumberLoose(row?.__fac_iva_monto);
     ivaMonto = explicit > 0 ? explicit : fromFac;
@@ -49,9 +50,9 @@ export function computeRowTotal(row, taxMode = "header") {
     }
   }
 
-  // Solo encabezado: una fila = todo el comprobante → sumar todos los montos.
+  // Encabezado 1 línea (sin pie): una fila = todo el comprobante → sumar todos los montos.
   // Multi-línea: solo slots con impuesto asignado (no storage FacturIA del pie).
-  const otrosMonto = isSoloEncabezado(row)
+  const otrosMonto = encabezadoUi
     ? (() => {
         let s = toNumberLoose(row?.["otros_impuestos_monto"]);
         for (let n = 2; n <= 20; n++) s += toNumberLoose(row?.[otrosImpuestoMontoKey(n)]);

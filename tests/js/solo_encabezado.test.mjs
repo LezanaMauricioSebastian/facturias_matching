@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isSoloEncabezado } from "../../src/facturia_matching/static/js/singleLine/groups.js";
+import { isSoloEncabezado, isEncabezadoOneLineUi } from "../../src/facturia_matching/static/js/singleLine/groups.js";
 import { columnsForTaxMode } from "../../src/facturia_matching/static/js/table/columns.js";
 import { collapseGroupAtRow, prepareSoloEncabezadoRow } from "../../src/facturia_matching/static/js/singleLine/collapse.js";
+import {
+  classifyProcesoLineMode,
+  mixedProcesoLineModeError,
+} from "../../src/facturia_matching/static/js/singleLine/procesoMode.js";
 import { computeRowTotal } from "../../src/facturia_matching/static/js/rows/totals.js";
 import { lineBase } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
+import { renderFooterHtml } from "../../src/facturia_matching/static/js/comprobanteView/footer.js";
 
 describe("isSoloEncabezado", () => {
   it("accepts truthy flag shapes", () => {
@@ -17,7 +22,15 @@ describe("isSoloEncabezado", () => {
   });
 });
 
-describe("columnsForTaxMode + Solo encabezado", () => {
+describe("isEncabezadoOneLineUi", () => {
+  it("true for tilde or __ui_one_line", () => {
+    assert.equal(isEncabezadoOneLineUi({ __solo_encabezado: true }), true);
+    assert.equal(isEncabezadoOneLineUi({ __ui_one_line: true }), true);
+    assert.equal(isEncabezadoOneLineUi({}), false);
+  });
+});
+
+describe("columnsForTaxMode + 1 línea / multi", () => {
   const columns = [
     { key: "invoice_line_ids/price_unit" },
     { key: "__subtotal" },
@@ -27,18 +40,21 @@ describe("columnsForTaxMode + Solo encabezado", () => {
   ];
 
   it("always shows Subtotal; Total stays visible", () => {
-    const without = columnsForTaxMode(columns, "header", { soloEncabezado: false });
+    const without = columnsForTaxMode(columns, "header", { oneLine: false });
     assert.ok(without.some((c) => c.key === "__subtotal"));
     assert.ok(without.some((c) => c.key === "__total_linea"));
-    const withSolo = columnsForTaxMode(columns, "header", { soloEncabezado: true });
-    assert.ok(withSolo.some((c) => c.key === "__subtotal"));
+    const withOne = columnsForTaxMode(columns, "header", { oneLine: true });
+    assert.ok(withOne.some((c) => c.key === "__subtotal"));
   });
 
-  it("hides IVA and otros montos columns (amounts only in pie)", () => {
-    const withSolo = columnsForTaxMode(columns, "header", { soloEncabezado: true });
-    assert.ok(!withSolo.some((c) => c.key === "iva_monto"));
-    assert.ok(!withSolo.some((c) => c.key === "otros_impuestos_monto"));
-    const without = columnsForTaxMode(columns, "header", { soloEncabezado: false });
+  it("1 línea: muestra montos en la fila (sin pie)", () => {
+    const withOne = columnsForTaxMode(columns, "header", { oneLine: true });
+    assert.ok(withOne.some((c) => c.key === "iva_monto"));
+    assert.ok(withOne.some((c) => c.key === "otros_impuestos_monto"));
+  });
+
+  it("multi-línea: oculta montos (van al pie)", () => {
+    const without = columnsForTaxMode(columns, "header", { oneLine: false });
     assert.ok(!without.some((c) => c.key === "iva_monto"));
     assert.ok(!without.some((c) => c.key === "otros_impuestos_monto"));
   });
@@ -52,12 +68,33 @@ describe("columnsForTaxMode + Solo encabezado", () => {
         { key: "otros_impuestos_2_monto" },
       ],
       "line",
-      { soloEncabezado: false }
+      { oneLine: false }
     );
     assert.ok(cols.some((c) => c.key === "otros_impuestos"));
     assert.ok(cols.some((c) => c.key === "otros_impuestos_2"));
     assert.ok(!cols.some((c) => c.key === "otros_impuestos_monto"));
     assert.ok(!cols.some((c) => c.key === "otros_impuestos_2_monto"));
+  });
+});
+
+describe("renderFooterHtml", () => {
+  it("omits pie for 1-line comprobante", () => {
+    const html = renderFooterHtml(
+      { baseOdoo: 100, ivaOdoo: 21, totalOdoo: 121, ivaBreakdown: [], otrosBreakdown: [] },
+      0,
+      [{ __comprobante_idx: 0 }]
+    );
+    assert.equal(html, "");
+  });
+
+  it("renders pie for multi-line comprobante", () => {
+    const html = renderFooterHtml(
+      { baseOdoo: 100, ivaOdoo: 21, totalOdoo: 121, ivaBreakdown: [], otrosBreakdown: [] },
+      0,
+      [{ __comprobante_idx: 0 }, { __comprobante_idx: 0 }]
+    );
+    assert.match(html, /comprobanteFooter/);
+    assert.match(html, /Base imponible/);
   });
 });
 
@@ -85,6 +122,17 @@ describe("computeRowTotal solo encabezado", () => {
     };
     const total = computeRowTotal(row, "header");
     assert.ok(Math.abs(total - (307053.66 + 64481.27 + 1500)) < 0.02);
+  });
+
+  it("uses line montos with __ui_one_line", () => {
+    const row = {
+      __ui_one_line: true,
+      "invoice_line_ids/quantity": "1",
+      "invoice_line_ids/price_unit": "100",
+      iva_monto: "21",
+      otros_impuestos_monto: "5",
+    };
+    assert.equal(computeRowTotal(row, "header"), 126);
   });
 });
 
@@ -135,5 +183,50 @@ describe("collapseGroupAtRow", () => {
     assert.equal(res.changed, true);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].__solo_encabezado, true);
+  });
+});
+
+describe("proceso line mode by row count (1 línea XOR multi)", () => {
+  it("classifyProcesoLineMode detects encabezado, lineas and mixed", () => {
+    assert.equal(
+      classifyProcesoLineMode([
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 1 },
+      ]),
+      "encabezado"
+    );
+    assert.equal(
+      classifyProcesoLineMode([
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 1 },
+        { __comprobante_idx: 1 },
+      ]),
+      "lineas"
+    );
+    assert.equal(
+      classifyProcesoLineMode([
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 1 },
+        { __comprobante_idx: 1 },
+      ]),
+      "mixed"
+    );
+  });
+
+  it("mixedProcesoLineModeError when mixed line counts", () => {
+    const err = mixedProcesoLineModeError([
+      { __comprobante_idx: 0 },
+      { __comprobante_idx: 1 },
+      { __comprobante_idx: 1 },
+    ]);
+    assert.match(err, /mezcla/);
+    assert.equal(
+      mixedProcesoLineModeError([
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 1 },
+      ]),
+      null
+    );
   });
 });

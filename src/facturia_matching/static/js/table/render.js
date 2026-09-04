@@ -159,8 +159,16 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     return;
   }
   const firstRow = rowIndices.length ? state.rows[rowIndices[0]] : null;
+  const oneLine = rowIndices.length === 1;
   const soloEncabezado = isSoloEncabezado(firstRow);
-  const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado });
+  // Marcar filas de este comprobante: 1 línea → sin pie, montos en la fila.
+  for (const rIdx of rowIndices) {
+    const row = state.rows[rIdx];
+    if (!row) continue;
+    if (oneLine) row.__ui_one_line = true;
+    else delete row.__ui_one_line;
+  }
+  const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado, oneLine });
   const colWidths = buildColWidths(cols, state, rowIndices);
   const actionDisabled = !(state.rows && state.rows.length);
 
@@ -195,10 +203,11 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
   html.push(`<th style="min-width:90px">Acciones</th>`);
   html.push("</tr></thead><tbody>");
 
+  const amountsOnRow = oneLine || soloEncabezado;
   for (const rIdx of rowIndices) {
     const r = state.rows[rIdx];
-    if (isSoloEncabezado(r)) syncSoloEncabezadoMontos(r, state);
-    if (showIvaMontoColumn(taxMode, soloEncabezado) && !r.__iva_monto_manual) {
+    if (oneLine || isSoloEncabezado(r)) syncSoloEncabezadoMontos(r, state);
+    if (showIvaMontoColumn(taxMode, amountsOnRow) && !r.__iva_monto_manual) {
       computeRowTotal(r, taxMode);
     }
     html.push("<tr>");
@@ -214,8 +223,8 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           const checked = isSoloEncabezado(r) ? " checked" : "";
           const multi = comprobanteHasMultipleLines(state.rows, rIdx);
           const title = multi
-            ? "Solo encabezado: colapsa a una línea (elimina líneas extra); el pie del comprobante sigue visible"
-            : "Solo encabezado: montos IVA/Otros en el pie del comprobante (sigue visible)";
+            ? "Solo encabezado: colapsa a una línea (elimina líneas extra). Con 1 línea se oculta el pie y los montos van en la fila"
+            : "1 línea: sin pie (Base/IVA/Total abajo). Montos IVA/Otros en la fila";
           html.push(
             `<td${colCellAttrs(colWidths, key, c.label, "soloEncabezadoCell")}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
           );

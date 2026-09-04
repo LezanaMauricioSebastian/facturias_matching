@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from facturia_matching.api.profile import _resolve_request_odoo_profile, _with_odoo_profile
 from facturia_matching.core.options import build_metadata_payload, get_options
 from facturia_matching.export.csv_export import build_csv_response
-from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME, PROCESS_SCHEMA
+from facturia_matching.infra.config import DB_SCHEMA, DB_TABLE_NAME, PROCESS_SCHEMA, is_dev_ui
 from facturia_matching.infra.paths import CSS_DIR, HTML_DIR, JS_DIR
 from facturia_matching.odoo.empresa_profile import (
     empresa_odoo_display_labels,
@@ -74,6 +74,7 @@ def get_bootstrap(
             "options": opts,
             "odoo_profile": current_odoo_profile(),
             "process_schema": PROCESS_SCHEMA,
+            "ui_env": "dev" if is_dev_ui() else "prod",
             "empresa_odoo_profiles": empresa_odoo_profile_map(),
             "empresa_odoo_labels": empresa_odoo_display_labels(),
         }

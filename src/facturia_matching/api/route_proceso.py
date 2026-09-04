@@ -129,6 +129,48 @@ def get_proceso(
     )
 
 
+@router.get("/api/proceso/{process_number}/facturia-raw")
+def get_proceso_facturia_raw(
+    process_number: str,
+    empresa: Optional[str] = None,
+):
+    """Solo en UI dev/staging: json_data crudo que mandó FacturIA (sin conversión)."""
+    from facturia_matching.infra.config import PROCESS_SCHEMA, is_dev_ui
+    from facturia_matching.persistence.back_check import get_process
+    import json as _json
+
+    if not is_dev_ui():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    def _load():
+        process_row = get_process(process_number, empresa=empresa)
+        if not process_row:
+            raise HTTPException(
+                status_code=404, detail=f"No se encontró el proceso {process_number}."
+            )
+        raw = process_row.get("json_data")
+        if raw is None:
+            raise HTTPException(status_code=404, detail="El proceso no tiene json_data.")
+        try:
+            if isinstance(raw, (dict, list)):
+                payload = raw
+            else:
+                payload = _json.loads(raw)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, detail=f"json_data inválido: {e}"
+            ) from e
+        return {
+            "ok": True,
+            "process_number": process_number,
+            "empresa": empresa,
+            "process_schema": PROCESS_SCHEMA,
+            "json_data": payload,
+        }
+
+    return _handle_process_load_errors(_load)
+
+
 @router.post("/api/proceso/{process_number}/select-oc")
 def post_proceso_select_oc(process_number: str, payload: Dict[str, Any]):
     comprobante_idx = payload.get("comprobante_idx")

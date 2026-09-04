@@ -68,6 +68,15 @@ def validate_rows_for_import(rows: List[Dict[str, Any]]) -> Optional[str]:
     if not rows:
         return "No hay filas para importar."
     groups = [propagate_invoice_headers(g) for g in group_rows_into_invoices(rows)]
+
+    has_one = any(len(g) == 1 for g in groups)
+    has_multi = any(len(g) > 1 for g in groups)
+    if has_one and has_multi:
+        return (
+            "El proceso mezcla comprobantes de 1 línea (Encabezado, sin pie) y con varias líneas. "
+            "Un proceso debe ser solo Encabezado (1 línea) o solo con Líneas (no ambos)."
+        )
+
     for gi, group in enumerate(groups):
         header = group[0]
         label = _normalize(header.get("l10n_latam_document_number")) or f"comprobante {gi + 1}"

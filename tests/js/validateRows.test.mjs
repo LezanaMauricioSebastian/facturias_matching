@@ -91,4 +91,21 @@ describe("validateRows", () => {
     assert.equal(err, null);
     assert.equal(row.invoice_date, "15/01/2024");
   });
+
+  it("rejects mixed 1-line and multi-line comprobantes in the same proceso", () => {
+    const rows = [
+      lineRow({ __comprobante_idx: 0 }),
+      lineRow({
+        __comprobante_idx: 1,
+        l10n_latam_document_number: "00002-00000002",
+      }),
+      lineRow({
+        __comprobante_idx: 1,
+        l10n_latam_document_number: "",
+        "invoice_line_ids/name": "linea 2",
+      }),
+    ];
+    const err = validateRows(baseState(rows));
+    assert.match(err, /mezcla/);
+  });
 });

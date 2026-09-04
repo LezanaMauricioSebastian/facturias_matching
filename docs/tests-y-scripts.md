@@ -104,7 +104,7 @@ Uso típico de diagnóstico cuando el matching falla en un proveedor o rubro.
 | Cambiaste… | Agregar/actualizar |
 |------------|-------------------|
 | Fórmula IVA | `tax_scenarios.json` + test JS (`comprobante_tax.test.mjs`, incl. `header footer IVA fixed when price changes`) + `test_comprobante_tax.py` + `test_js_python_parity.py` |
-| Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, columna Subtotal, collapse) |
+| Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, 1 línea sin pie, multi con pie, proceso sin mezcla) |
 | Nueva columna UI/CSV | `test` de `constants` o snapshot headers en export |
 | Import Odoo | `test_odoo_import_*.py` con filas mínimas agrupadas |
 | Matching OC | `test_purchase_matching_{uom,oc,match}.py` |

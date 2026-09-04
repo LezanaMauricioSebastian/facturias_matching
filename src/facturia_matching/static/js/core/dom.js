@@ -17,6 +17,8 @@ export function getDomRefs() {
     totalGeneralEl: el("totalGeneral"),
     companyNumberEl: el("companyNumber"),
     processNumberEl: el("processNumber"),
+    processTabs: el("processTabs"),
+    facturiaRaw: el("facturiaRaw"),
   };
 }
 

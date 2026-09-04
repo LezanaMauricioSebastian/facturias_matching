@@ -38,3 +38,11 @@ export function isSoloEncabezado(row) {
   const v = row?.__solo_encabezado;
   return v === true || v === 1 || v === "1" || String(v ?? "").trim().toLowerCase() === "true";
 }
+
+/**
+ * UI Encabezado 1 línea: tilde Solo encabezado **o** comprobante con una sola fila
+ * (sin pie; montos en la fila).
+ */
+export function isEncabezadoOneLineUi(row) {
+  return isSoloEncabezado(row) || !!row?.__ui_one_line;
+}

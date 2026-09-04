@@ -5,7 +5,7 @@ import {
   tryParseNumericString,
 } from "../utils/index.js";
 import { classifyComprobanteTaxMode } from "../comprobanteTax/totals.js";
-import { groupBounds, isFirstRowOfComprobante } from "../singleLine/index.js";
+import { groupBounds, isFirstRowOfComprobante, mixedProcesoLineModeError } from "../singleLine/index.js";
 import { normalizeComprobanteNumber } from "./documentNumber.js";
 
 const INV_KEY = "l10n_latam_document_number";
@@ -20,6 +20,9 @@ function rowHasLineContent(row) {
 
 export function validateRows(state) {
   const rows = state.rows || [];
+
+  const mixedErr = mixedProcesoLineModeError(rows);
+  if (mixedErr) return mixedErr;
 
   for (let idx = 0; idx < rows.length; idx++) {
     if (!isFirstRowOfComprobante(rows, idx)) continue;

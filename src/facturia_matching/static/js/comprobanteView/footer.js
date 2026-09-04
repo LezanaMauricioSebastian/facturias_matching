@@ -131,7 +131,10 @@ function isFooterTaxInput(el) {
 }
 
 export function renderFooterHtml(totals, compIdx, groupRows) {
-  // Montos siempre en el pie (también con Solo encabezado: colapsa líneas, no el pie).
+  // 1 línea = Encabezado: sin pie (montos en la fila). Varias líneas = pie visible.
+  if (!Array.isArray(groupRows) || groupRows.length <= 1) {
+    return "";
+  }
   return `<div class="comprobanteFooter">
       <table class="comprobanteTotalsTable">
         <tbody>

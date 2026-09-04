@@ -47,6 +47,38 @@ class TestOdooImport(unittest.TestCase):
         err = validate_rows_for_import(rows)
         self.assertIn("proveedor", err or "")
 
+    def test_validate_rejects_mixed_one_line_and_multi_line(self):
+        rows = [
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00001-00000001",
+                "invoice_date": "01/06/2026",
+                "invoice_line_ids/name": "a",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "100",
+                "__comprobante_idx": 0,
+            },
+            {
+                "partner_id": "5",
+                "journal_id": "2",
+                "l10n_latam_document_number": "00002-00000002",
+                "invoice_date": "01/06/2026",
+                "invoice_line_ids/name": "b1",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "50",
+                "__comprobante_idx": 1,
+            },
+            {
+                "invoice_line_ids/name": "b2",
+                "invoice_line_ids/account_id": "10",
+                "invoice_line_ids/price_unit": "25",
+                "__comprobante_idx": 1,
+            },
+        ]
+        err = validate_rows_for_import(rows)
+        self.assertIn("mezcla", err or "")
+
     def test_propagate_header(self):
         rows = [
             {

@@ -71,6 +71,17 @@ def resolve_process_schema(configured: Optional[str] = None) -> str:
 
 PROCESS_SCHEMA = resolve_process_schema()
 
+
+def is_dev_ui() -> bool:
+    """UI de desarrollo (odoo-dev / staging): pestaña FacturIA raw, etc. Nunca en prod."""
+    explicit = _env_strip("FACTURIA_UI_ENV").lower()
+    if explicit in ("dev", "development", "staging"):
+        return True
+    if explicit in ("prod", "production"):
+        return False
+    return "staging" in (PROCESS_SCHEMA or "").lower()
+
+
 DB_TABLE_NAME_TAXES = (
     os.getenv("DB_TABLE_NAME_TAXES", "").strip() or "view_padron_facturia_actualizado"
 )

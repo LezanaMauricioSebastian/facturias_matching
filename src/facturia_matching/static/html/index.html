@@ -46,16 +46,26 @@
         </div>
 
         <div class="card processCard">
-          <div class="hint summaryHint" id="summary"></div>
-          <div id="ocPickerBar" class="ocPickerBar" hidden></div>
-          <div class="tableScroll">
-            <div id="tableWrap"></div>
+          <div class="processTabs" id="processTabs" hidden>
+            <button type="button" class="processTab active" data-process-tab="edit">Edición</button>
+            <button type="button" class="processTab" data-process-tab="facturia">FacturIA</button>
           </div>
-          <div class="footerBar footerInside">
-            <div></div>
-            <div class="totalBox">
-              Total del proceso: <strong id="totalGeneral">$0.00</strong>
+          <div class="processTabPanel" data-process-panel="edit">
+            <div class="hint summaryHint" id="summary"></div>
+            <div id="ocPickerBar" class="ocPickerBar" hidden></div>
+            <div class="tableScroll">
+              <div id="tableWrap"></div>
             </div>
+            <div class="footerBar footerInside">
+              <div></div>
+              <div class="totalBox">
+                Total del proceso: <strong id="totalGeneral">$0.00</strong>
+              </div>
+            </div>
+          </div>
+          <div class="processTabPanel" data-process-panel="facturia" hidden>
+            <div class="hint">JSON crudo que mandó FacturIA (`json_data`). Solo visible en staging/dev.</div>
+            <pre id="facturiaRaw" class="facturiaRaw" aria-label="json_data FacturIA">Cargá un proceso para ver el JSON.</pre>
           </div>
         </div>
       </div>

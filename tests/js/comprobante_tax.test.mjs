@@ -57,11 +57,12 @@ describe("computeComprobanteTotals (fixtures)", () => {
 });
 
 describe("editability matrix", () => {
-  it("amounts only in pie: Monto IVA column always hidden, footer editable", () => {
+  it("multi-línea: Monto IVA column hidden (pie); 1 línea: columna visible", () => {
     assert.equal(showIvaMontoColumn("line"), false);
     assert.equal(showIvaMontoColumn("header"), false);
     assert.equal(showIvaMontoColumn("mixed"), false);
-    assert.equal(showIvaMontoColumn("line", true), false);
+    assert.equal(showIvaMontoColumn("line", true), true);
+    assert.equal(showIvaMontoColumn("header", true), true);
     assert.equal(footerIvaEditable("line"), true);
     assert.equal(footerIvaEditable("header"), true);
     assert.equal(footerIvaEditable("mixed"), true);

@@ -225,6 +225,44 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .summaryHint { margin: 0 0 10px; }
+
+.processTabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 10px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.processTab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.processTab:hover { color: var(--text); background: #f8fafc; }
+.processTab.active {
+  color: var(--text);
+  background: #f1f5f9;
+  border-color: var(--line);
+}
+.facturiaRaw {
+  margin: 8px 0 0;
+  padding: 12px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .summaryBadges {
   display: flex;
   flex-wrap: wrap;
@@ -332,6 +370,10 @@ td input, td select {
   padding: 4px 7px;
   border-radius: 7px;
   font-size: 11px;
+}
+/* Select IVA %: padding derecho para que el valor no quede bajo la flecha */
+td.colIvaPct select {
+  padding-right: 18px;
 }
 td.readonly {
   color: rgba(15,23,42,.75);

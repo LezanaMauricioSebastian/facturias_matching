@@ -94,6 +94,8 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   const options = boot?.options || {};
   state.empresaOdooProfiles = boot?.empresa_odoo_profiles || {};
   state.empresaOdooLabels = boot?.empresa_odoo_labels || {};
+  state.processSchema = boot?.process_schema || "";
+  state.uiEnv = boot?.ui_env === "dev" ? "dev" : "prod";
   if (empresa) state.empresa = empresa;
   syncOdooProfileState(state, urlParams);
   if (!state.odooProfileLocked) {

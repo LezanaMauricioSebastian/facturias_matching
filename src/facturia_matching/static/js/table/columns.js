@@ -7,12 +7,13 @@ export function otroImpuestoNFromNameKey(key) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-export function columnsForTaxMode(columns, taxMode, { soloEncabezado = false } = {}) {
+export function columnsForTaxMode(columns, taxMode, { soloEncabezado = false, oneLine = false } = {}) {
+  const amountsOnRow = !!(oneLine || soloEncabezado);
   return columns.filter((c) => {
-    // Montos solo en el pie (estilo Odoo). Labels de impuesto siguen en la tabla.
-    if (c.key === "iva_monto") return showIvaMontoColumn(taxMode, soloEncabezado);
-    if (c.key === "otros_impuestos_monto") return false;
-    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return false;
+    // Con 1 línea (sin pie): montos en la fila. Con varias: montos solo en el pie.
+    if (c.key === "iva_monto") return showIvaMontoColumn(taxMode, amountsOnRow);
+    if (c.key === "otros_impuestos_monto") return amountsOnRow;
+    if (/^otros_impuestos_\d+_monto$/.test(c.key)) return amountsOnRow;
     return true;
   });
 }
