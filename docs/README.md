@@ -11,6 +11,7 @@ Aplicación web (FastAPI + JS vanilla) que:
 3. Muestra una tabla editable con vista por comprobante.
 4. Persiste ediciones en **MySQL** (`process_conversions`).
 5. Exporta **CSV** o importa borradores a **Odoo TEST**.
+6. Para clientes **sin Odoo**, hay un padrón Excel/Sheets (`/static/padron_excel.html`) que matchea proveedores (CUIT / razón / fantasía), productos + UoM, conceptos y forma de pago. Ver [padron-excel.md](padron-excel.md).
 
 ## Diagrama de capas
 
@@ -142,7 +143,7 @@ Al cargar un **proceso nuevo** (sin conversión propia), tras resolver el provee
 | [api-health.md](api-health.md) | Health Odoo / credenciales (sin exponer `uid`) |
 | [tests-y-scripts.md](tests-y-scripts.md) | Tests, fixtures y scripts de diagnóstico |
 | [iva-y-import-odoo.md](iva-y-import-odoo.md) | IVA por comprobante e import a Odoo (detalle profundo) |
-| [import-odoo/](import-odoo/README.md) | **Paquete `odoo/import_/`**: módulos, pipeline, OC, impuestos, API, tests |
+| [padron-excel.md](padron-excel.md) | Padrón Excel/Sheets: fuentes, matching, endpoints |
 
 ## Árbol del repo (resumido)
 
@@ -172,7 +173,8 @@ facturia-matching-ui/
 | Arreglar matching de proveedor | `padron/postgres.py`, `odoo/catalog.py` |
 | Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, [import-odoo/](import-odoo/README.md), [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
 | Import a Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
-| Matching con OC / producto / aprendizaje | `odoo/purchase_matching/`, [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md), diagrama en esta página |
+| Matching de producto (Odoo) | `odoo/purchase_matching/`, [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md) |
+| Padrón Excel / Sheets (clientes sin Odoo) | [padron-excel.md](padron-excel.md), `padron/excel.py`, `api/route_padron_excel.py` |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |
 | Nuevo endpoint | `api/route_meta.py` / `route_odoo.py` / `route_proceso.py` (+ facade `routes.py`) |
 | Variables de entorno | `.env.example`, `infra/config.py`, `odoo/env.py` |

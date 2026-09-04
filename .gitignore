@@ -24,3 +24,8 @@ env/
 *.log
 *.tmp
 *.csv
+!tests/fixtures/**/*.csv
+
+# Padron Excel local store
+data/padrones/files/
+data/facturas_excel.json
