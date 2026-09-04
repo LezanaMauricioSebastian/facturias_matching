@@ -71,14 +71,14 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 - Los montos (repartidos en las filas) al importar pisan las líneas tax de Odoo (junto con los `tax_ids` de IIBB del padrón).
 - El dropdown se arma **desde Odoo del perfil activo**: **todos** los impuestos del tenant (orden alfabético).
 
-## Solo encabezado
+## Solo encabezado / 1 línea
 
-Con el tilde **Solo encabezado** en la primera fila del comprobante:
+- Si un comprobante tiene **1 sola línea**, se trata como **Encabezado**: **sin pie** (no se muestra Base imponible / IVA / Total abajo). Los montos de IVA y otros van **en la fila**.
+- Si tiene **varias líneas**, el **pie** queda visible (montos ahí, como Odoo).
+- Un **proceso** puede ser solo Encabezado (todos los comprobantes de 1 línea) **o** solo con Líneas (todos con varias). **No** puede mezclar ambos.
+- El tilde **Solo encabezado** en la primera fila colapsa multi-línea a una (para deshacer: **Restaurar original**); al quedar 1 línea se oculta el pie.
 
-1. Si hay varias líneas, se colapsan a una sola (para deshacer: **Restaurar original**).
-2. El **pie** del comprobante **sigue visible** (montos IVA / otros se editan ahí, igual que sin el tilde).
-
-La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**. No depende del tilde Solo encabezado.
+La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**.
 
 ## Import a Odoo — qué esperar
 
@@ -118,6 +118,9 @@ Sudata no tiene instalado el español de Argentina (`es_AR`) sino el latinoameri
 | `ODOO_LANG`, `ODOO_LANG_ALIARE`, `ODOO_LANG_SUDATA` | Fuerzan el idioma RPC. Sin setear, la app usa el primer idioma instalado en el tenant: `es_AR` y si no `es_419` |
 | `FACTURIA_ODOO_PROFILE` | Perfil por defecto en deploy si la URL no trae `odoo_profile_test` |
 | `PROCESS_SCHEMA` | Schema MySQL (`sudataco_staging` / `sudataco_facturia`) para process, conversiones, `product_label_memory` y memoria de diario/cuenta/rubro (desde conversiones) |
+| `FACTURIA_UI_ENV` | Opcional: `dev` fuerza pestaña FacturIA; `prod` la oculta. Sin setear, se infiere si `PROCESS_SCHEMA` contiene `staging` |
+| `FACTURIA_BASE_URL` | Base FacturIA para el webhook erp-imports (default staging/prod según `PROCESS_SCHEMA`) |
+| `FACTURIA_ERP_WEBHOOK_URL` | Override de la URL completa `POST …/api/erp-imports/webhook` |
 
 Ver `.env.example` para la lista completa.
 

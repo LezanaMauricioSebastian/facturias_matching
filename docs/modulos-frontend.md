@@ -111,15 +111,16 @@ API: `POST /api/proceso/{n}/search-oc` (candidatos bajo demanda), `POST .../sele
 
 ### `singleLine/`
 
-UI para modo **Solo encabezado** (`__solo_encabezado`).
+UI para modo **Solo encabezado** / **1 línea** (`__solo_encabezado`, detección por cantidad de filas).
 
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | Entry. |
 | `collapse.js` | Colapsa multi-línea a una fila; setea `__solo_encabezado`. |
-| `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**. |
+| `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**, **`isEncabezadoOneLineUi`**. |
+| `procesoMode.js` | **`classifyProcesoLineMode`** / **`mixedProcesoLineModeError`** por conteo de filas (1 vs >1). Un proceso no mezcla Encabezado y con Líneas. |
 
-Con el tilde activo: colapsa líneas a una; el **pie sigue visible** (montos solo ahí). La columna **Subtotal** (`__subtotal`, qty×precio sin impuestos) es **siempre** visible, inmediatamente antes de **Total**.
+Con **1 línea** por comprobante: **sin pie**; montos IVA/otros en la fila (`__ui_one_line`). Con **varias líneas**: pie visible. La columna **Subtotal** es **siempre** visible antes de **Total**.
 
 ---
 
@@ -170,7 +171,8 @@ flowchart LR
 
 | Archivo | Rol |
 |---------|-----|
-| `static/html/index.html` | Shell: input proceso, botones, `#tableWrap`, `#totalGeneral`, scripts. |
+| `static/html/index.html` | Shell: input proceso, botones, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
+| `static/js/facturiaRaw/tab.js` | Pestaña **FacturIA** (solo `ui_env=dev`): `GET .../facturia-raw`. |
 | `static/css/styles.css` | Layout tabla, modos embed, comprobante footer, combobox. |
 
 **Scroll / pies fijos**
@@ -207,3 +209,5 @@ Al cambiar fórmulas fiscales, actualizar ambos lados y `tests/fixtures/tax_scen
 | `?odoo_profile=aliare` | Perfil Odoo |
 | `?odoo_cloud=1` | Equivalente sudata |
 | `?embed=1` | CSS compacto para iframe |
+| `?import_id=&token=` | Callback FacturIA (`process_erp_imports`); tras **Importar a Odoo** se notifica el webhook |
+| Pestaña **FacturIA** | Solo si bootstrap `ui_env=dev` (staging / `PROCESS_SCHEMA` con `staging`) — JSON crudo `GET /api/proceso/{n}/facturia-raw` |

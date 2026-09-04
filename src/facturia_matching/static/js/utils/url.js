@@ -2,6 +2,9 @@ const URL_PARAM_ALIASES = {
   empresa: ["empresa", "nro_empresa", "nroEmpresa", "company", "cliente"],
   proceso: ["proceso", "nro_proceso", "nroProceso", "process", "process_number"],
   odoo_profile: ["odoo_profile_test", "perfil", "tenant"],
+  /** FacturIA erp-import: callback tras guardar en Odoo. */
+  import_id: ["import_id", "erp_import_id", "process_erp_import_id"],
+  token: ["token", "callback_token", "erp_token", "erp_import_token"],
 };
 
 function hasNonEmptyParam(params, names) {
@@ -41,7 +44,14 @@ export function isEmbedMode() {
 /** Lee params de FacturIA y Odoo (?odoo_profile_test=aliare, ?odoo_cloud=1). */
 export function getUrlParams() {
   const params = new URLSearchParams(window.location.search);
-  const out = { empresa: "", proceso: "", odoo_profile: "", odoo_cloud: "" };
+  const out = {
+    empresa: "",
+    proceso: "",
+    odoo_profile: "",
+    odoo_cloud: "",
+    import_id: "",
+    token: "",
+  };
   for (const [key, aliases] of Object.entries(URL_PARAM_ALIASES)) {
     for (const alias of aliases) {
       const v = params.get(alias);
@@ -184,5 +194,18 @@ export function apiContextBody(state) {
   if (hasExplicitOdooProfileOverride(state) || profile !== "default") {
     body.odoo_profile_test = profile;
   }
+  const importId = String(state?.erpImportId || "").trim();
+  const token = String(state?.erpImportToken || "").trim();
+  if (importId) body.import_id = importId;
+  if (token) body.token = token;
   return body;
+}
+
+/** Persiste import_id + token del deep-link FacturIA (erp-imports webhook). */
+export function syncErpImportCallbackState(state, urlParams = {}) {
+  const url = { ...getUrlParams(), ...(urlParams || {}) };
+  const importId = String(url.import_id || "").trim();
+  const token = String(url.token || "").trim();
+  if (importId) state.erpImportId = importId;
+  if (token) state.erpImportToken = token;
 }

@@ -299,4 +299,25 @@ def odoo_import(
             update_taxes_if_exists=bool(update_taxes_if_exists),
         )
 
-    return _with_odoo_profile(odoo_profile, _import, empresa=empresa)
+    result = _with_odoo_profile(odoo_profile, _import, empresa=empresa)
+
+    # Avisa a FacturIA si el deep-link trae import_id + token (erp-imports webhook).
+    try:
+        from facturia_matching.facturia.erp_import_webhook import (
+            extract_erp_import_callback,
+            notify_erp_import_webhook,
+        )
+
+        import_id, token = extract_erp_import_callback(payload)
+        if import_id is not None and token and isinstance(result, dict):
+            webhook = notify_erp_import_webhook(
+                import_id=import_id,
+                token=token,
+                import_result=result,
+            )
+            result = {**result, "facturia_webhook": webhook}
+    except Exception:
+        # Nunca tumbar el import Odoo por el callback.
+        pass
+
+    return result

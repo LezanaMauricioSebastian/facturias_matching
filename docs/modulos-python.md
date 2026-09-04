@@ -17,12 +17,13 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 
 | Archivo | Rol |
 |---------|-----|
-| `routes.py` | Facade: compone `route_meta` + `route_odoo` + `route_proceso`. |
+| `routes.py` | Facade: compone `route_meta` + `route_odoo` + `route_proceso` + `route_padron_excel`. |
 | `profile.py` | `_resolve_request_odoo_profile`, `_with_odoo_profile`, `_public_health_payload`. |
 | `proceso_response.py` | `_build_proceso_response`, `_handle_process_load_errors` (MySQL→503 / conversión→400). |
 | `route_meta.py` | `/`, metadata, bootstrap, options, padrón, CSV. |
-| `route_odoo.py` | Health Odoo + `POST /api/odoo/import`. |
+| `route_odoo.py` | Health Odoo + `POST /api/odoo/import` (+ callback FacturIA erp-imports si hay `import_id`/`token`). |
 | `route_proceso.py` | `/api/proceso/*` (load, OC, UM, conversion, revert). |
+| `route_padron_excel.py` | `/api/padron-excel/*`: config, upload CSV/XLSX, match, CRUD facturas, export. |
 | `__init__.py` | Vacío / export mínimo. |
 
 **Funciones clave:**
@@ -51,6 +52,11 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `postgres.py` | Cache de vista padrón; `detect_padron_fields`; **`match_proveedor`** (fuzzy CUIT/nombre); `get_table_columns`. Respeta `PADRON_SOURCE` y orden Odoo-first en Aliare/Sudata. |
 | `odoo.py` | **`build_padron_rows_from_odoo`**: últimas facturas proveedor → filas estilo padrón (rubro, cuenta, diario). |
+| `excel.py` | Fuzzy padrón Excel: **`match_proveedor_excel`** (CUIT exacto → razón/fantasía), **`match_producto`** (nombre + UoM), concepto/forma de pago. |
+| `sheet_loader.py` | Fetch CSV de Sheets publicado; parse CSV/XLSX (upload); mapeo de columnas a proveedores/productos. |
+| `catalog_excel.py` | Arma el padrón estructurado desde config (URL + archivos subidos). |
+| `padron_config_store.py` | JSON en `data/padrones/` (mapeo, URL, paths de upload). |
+| `excel_store.py` | JSON de facturas cargadas en la UI Excel (`data/facturas_excel.json`). |
 | `taxes.py` | Padrón fiscal; **`match_padron_taxes`**, **`apply_padron_taxes_to_row`** (solo slot 1 en UI; `_padron_other_tax_ids` para import); resolución label → tax id (IIBB por jurisdicción + alias Aliare `Perc Gananc` / `Perc IVA`); IVA por alícuota desde catálogo Odoo del perfil activo; remapeo ids padrón vía `PADRON_TAX_SOURCE_PROFILE`. |
 | `__init__.py` | Marcador. |
 
@@ -66,7 +72,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching/` | Paquete (antes un solo `.py`). **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM + aprendizaje (`company_id`). Submódulos: `_util`, `uom`, `scoring`, `oc`, `match`. Docs: [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [purchase-matching-modulos.md](import-odoo/purchase-matching-modulos.md). |
+| `purchase_matching/` | Paquete (antes un solo `.py`). **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM + aprendizaje (`company_id`). Submódulos: `_util`, `uom`, `uom_ai` (Claude), `scoring`, `oc`, `match`. Docs: [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [purchase-matching-modulos.md](import-odoo/purchase-matching-modulos.md). |
 | `__init__.py` | Marcador. |
 
 ---
@@ -102,6 +108,15 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `db_resolve.py` | **`resolved_pg_dbname`**, **`mysql_connect_kwargs`**: autodetect DB cuando falta nombre. |
 | `paths.py` | `HTML_DIR`, `JS_DIR`, `CSS_DIR`, `ENV_FILE`. |
 | `normalization.py` | `normalize`, fechas DD/MM/YYYY, `normalize_comprobante_number`, `doc_type_label`. |
+| `__init__.py` | Marcador. |
+
+---
+
+## `facturia/`
+
+| Archivo | Rol |
+|---------|-----|
+| `erp_import_webhook.py` | **`notify_erp_import_webhook`**: `POST /api/erp-imports/webhook` a FacturIA (staging/prod) con `import_id` + `token` tras import Odoo. |
 | `__init__.py` | Marcador. |
 
 ---
@@ -157,5 +172,6 @@ Agrupadas por consumidor:
 - **Odoo default**: `ODOO_BASE_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_PASSWORD` / `ODOO_API_KEY`
 - **Odoo Aliare/Sudata**: mismas claves con sufijo `_ALIARE` / `_SUDATA`
 - **Comportamiento**: `PADRON_SOURCE`, `PADRON_TAX_SOURCE_PROFILE`, `PADRON_FUZZY_MIN_SCORE`, `PADRON_LIMIT`
+- **UM con IA**: `FACTURIA_UOM_AI_ENABLED`, `ANTHROPIC_API_KEY`, opcional `FACTURIA_UOM_AI_MODEL`
 
 Definición en `infra/config.py` y `odoo/env.py`.

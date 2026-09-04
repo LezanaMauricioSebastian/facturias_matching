@@ -1,6 +1,6 @@
 # API REST
 
-Base URL local: `http://localhost:8080`. Router compuesto: `api/routes.py` (`route_meta` + `route_odoo` + `route_proceso`).
+Base URL local: `http://localhost:8080`. Router compuesto: `api/routes.py` (`route_meta` + `route_odoo` + `route_proceso` + `route_padron_excel`).
 
 ## Parámetros comunes
 
@@ -71,11 +71,43 @@ Importa filas a Odoo TEST.
   "skip_duplicates": true,
   "update_taxes_if_exists": true,
   "empresa": "optional",
-  "odoo_profile": "aliare"
+  "odoo_profile": "aliare",
+  "import_id": 12,
+  "token": "callback_token_de_facturia"
 }
 ```
 
-**Respuesta**: resumen por factura (creada, duplicada, errores, tax sync). Ver [import-odoo/](import-odoo/README.md).
+`import_id` + `token` son opcionales: vienen del deep-link FacturIA (`?import_id=&token=`) tras `GET /api/process/{id}/erp-import/init`. Si están presentes, al terminar el import Odoo la app hace `POST` al webhook FacturIA (`/api/erp-imports/webhook`) para marcar el `process_erp_imports` como completed/failed. Ver [api.md § Callback FacturIA](#callback-facturia-erp-imports).
+
+**Respuesta**: resumen por factura (creada, duplicada, errores, tax sync). Ver [import-odoo/](import-odoo/README.md). Puede incluir `facturia_webhook` con el resultado del callback.
+
+---
+
+## Callback FacturIA (erp-imports)
+
+FacturIA avisa al matching UI cuándo abrir el iframe (init) y el matching UI avisa de vuelta cuando el usuario pudo guardar en Odoo (webhook).
+
+| Env | Base | Webhook |
+|-----|------|---------|
+| Staging (`PROCESS_SCHEMA=sudataco_staging`) | `https://facturia-staging.sudata.co` | `POST /api/erp-imports/webhook` |
+| Prod (`PROCESS_SCHEMA=sudataco_facturia`) | `https://facturia.sudata.co` | `POST /api/erp-imports/webhook` |
+
+Override: `FACTURIA_BASE_URL` o `FACTURIA_ERP_WEBHOOK_URL`.
+
+**Init (FacturIA, autenticado):** `GET /api/process/{process_id}/erp-import/init` → crea fila en `process_erp_imports` (`callback_token`) y abre el matching UI con `?import_id=&token=`.
+
+**Webhook body** (matching UI → FacturIA):
+
+```json
+{
+  "import_id": 12,
+  "token": "…",
+  "status": "completed",
+  "comprobantes_importados": 1
+}
+```
+
+Código: `facturia/erp_import_webhook.py`. El fallo del webhook **no** tumba el import Odoo.
 
 ---
 
@@ -117,6 +149,18 @@ Carga filas para la UI.
 ```
 
 **Errores**: 503 MySQL no disponible; 400 conversión inválida o `json_data` vacío/corrupto en el proceso; 500 sin `json_data`.
+
+### `GET /api/proceso/{process_number}/facturia-raw`
+
+**Solo staging/dev** (`PROCESS_SCHEMA` con `staging`, o `FACTURIA_UI_ENV=dev`). En prod responde **404**.
+
+Devuelve el `json_data` crudo de FacturIA (sin conversión guardada), para la pestaña **FacturIA** de la UI.
+
+**Query**: `empresa`
+
+```json
+{ "ok": true, "process_number": "89", "json_data": { }, "process_schema": "sudataco_staging" }
+```
 
 ### `PUT /api/proceso/{process_number}/conversion`
 
@@ -240,6 +284,22 @@ GET  /api/proceso/12345?odoo_profile_test=aliare
 PUT  /api/proceso/12345/conversion        (repetido, debounced)
 POST /api/odoo/import                     (o POST /api/csv)
 ```
+
+---
+
+## Padrón Excel
+
+Página: `/static/padron_excel.html`. Detalle: [padron-excel.md](padron-excel.md).
+
+| Método | Path | Uso |
+|--------|------|-----|
+| GET/PUT | `/api/padron-excel/config` | URL Sheets + mapeo de columnas (`company_id`) |
+| POST | `/api/padron-excel/upload` | Multipart `file` + `kind` (`proveedores` \| `productos` \| `formas_pago` \| `conceptos`) |
+| GET | `/api/padron-excel/data` | Listas estructuradas del padrón |
+| POST | `/api/padron-excel/preview` | Columnas y sample de una URL |
+| POST | `/api/padron-excel/match` | `field`: `proveedor` \| `producto` \| `concepto` \| `forma_pago`; opcional `cuit`, `unidades_medida` |
+| GET/POST | `/api/padron-excel/facturas` | CRUD de facturas con matching |
+| GET | `/api/padron-excel/facturas/export/csv` | Export formato Excel del cliente |
 
 ---
 

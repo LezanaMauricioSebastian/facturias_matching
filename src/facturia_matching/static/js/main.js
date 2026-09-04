@@ -11,9 +11,10 @@ import {
   revertirOriginal,
 } from "./api/index.js";
 import { validateRows } from "./validation/index.js";
-import { getUrlParams, isEmbedMode } from "./utils/index.js";
+import { getUrlParams, isEmbedMode, syncErpImportCallbackState } from "./utils/index.js";
 import { wireOcPicker } from "./ocPicker/index.js";
 import { createHandlers } from "./core/handlers.js";
+import { wireFacturiaTab } from "./facturiaRaw/tab.js";
 
 async function init() {
   const state = createState();
@@ -27,6 +28,7 @@ async function init() {
   }
 
   const urlParams = getUrlParams();
+  syncErpImportCallbackState(state, urlParams);
   const deepLinkProceso = Boolean(urlParams.proceso);
 
   // Deep-link: solapar GET bootstrap ∥ GET proceso (apply sigue en orden).
@@ -48,6 +50,7 @@ async function init() {
       refs.btnOdooImport.textContent = odooImportButtonLabel(state);
     }
     updateOdooTenantBadge(state, refs);
+    wireFacturiaTab(state, refs);
     if (!deepLinkProceso) setStatusBound("");
     refs.btnBuscar.disabled = false;
   } catch (e) {

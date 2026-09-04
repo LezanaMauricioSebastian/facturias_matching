@@ -34,5 +34,11 @@ export function createState() {
     purchaseMatching: {},
     uomOptionsByProductId: {},
     comprobanteTaxModes: {},
+    uiEnv: "prod",
+    processSchema: "",
+    /** FacturIA process_erp_imports.id (deep-link). */
+    erpImportId: "",
+    /** FacturIA callback_token (deep-link). */
+    erpImportToken: "",
   };
 }
