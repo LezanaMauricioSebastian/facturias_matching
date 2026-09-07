@@ -523,6 +523,10 @@ select.selectLoading {
   font-size: 10px;
   line-height: 1.25;
   margin: 0;
+  /* colFit pone nowrap en el td; sin esto el hint se corta en una línea */
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 .fieldHint.warn {
   color: #b45309;

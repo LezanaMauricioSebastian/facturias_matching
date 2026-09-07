@@ -57,11 +57,13 @@ export function refreshComprobanteHints(tableWrap, state) {
     const hint = comprobanteDigitUiHint(state.rows[r]?.[DOC_NUM_KEY]);
     if (!hint) {
       el.textContent = "";
+      el.removeAttribute("title");
       el.hidden = true;
       el.className = "fieldHint";
       return;
     }
     el.textContent = hint.text;
+    el.title = hint.text;
     el.hidden = false;
     el.className = hint.kind === "bad" ? "fieldHint bad" : "fieldHint warn";
   });

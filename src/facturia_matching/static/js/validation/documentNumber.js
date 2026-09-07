@@ -16,7 +16,7 @@ export function comprobanteDigitUiHint(raw) {
   if (!/^\d{5}-\d{8}$/.test(norm)) {
     return {
       kind: "bad",
-      text: "Formato inválido. Usá punto de venta y número (ej. 0001-6501 o 00001-00006501).",
+      text: "Formato inválido. Ej: 0001-6501 o 00001-00006501.",
     };
   }
   if (v === norm) return null;
