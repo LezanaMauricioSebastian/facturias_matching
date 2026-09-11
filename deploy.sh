@@ -181,7 +181,7 @@ build_prod_secrets_arg() {
       pairs+=("${env_key}=${resolved}:latest")
     fi
   done
-  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA ODOO_PASSWORD_ALIARE; do
+  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA ODOO_PASSWORD_ALIARE ANTHROPIC_API_KEY GOOGLE_SERVICE_ACCOUNT_JSON; do
     resolved="$(resolve_secret_gcp_name "${env_key}" "${env_key}")"
     if [[ -n "${resolved}" ]]; then
       pairs+=("${env_key}=${resolved}:latest")
@@ -203,7 +203,7 @@ build_dev_secrets_arg() {
       pairs+=("${env_key}=${resolved}:latest")
     fi
   done
-  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA; do
+  for env_key in ODOO_PASSWORD_SUDATA ODOO_API_KEY_SUDATA ANTHROPIC_API_KEY GOOGLE_SERVICE_ACCOUNT_JSON; do
     resolved="$(resolve_secret_gcp_name "${env_key}" "${env_key}")"
     if [[ -n "${resolved}" ]]; then
       pairs+=("${env_key}=${resolved}:latest")
@@ -378,7 +378,7 @@ is_secret_env_key() {
     ODOO_PASSWORD|ODOO_API_KEY|ODOO_PASSWORD_DINNER|ODOO_API_KEY_DINNER|\
 ODOO_PASSWORD_TEST|ODOO_API_KEY_TEST|\
 ODOO_PASSWORD_SUDATA|ODOO_API_KEY_SUDATA|PASSWORD_SUDATA|API_KEY_SUDATA|\
-ODOO_PASSWORD_ALIARE|ODOO_API_KEY_ALIARE)
+ODOO_PASSWORD_ALIARE|ODOO_API_KEY_ALIARE|ANTHROPIC_API_KEY)
       return 0
       ;;
   esac
@@ -509,6 +509,7 @@ default_prod_mysql_env_pairs() {
 default_dinner_env_pairs() {
   merge_env_pairs \
     "FACTURIA_ODOO_PROFILE=default" \
+    "FACTURIA_UOM_AI_ENABLED=1" \
     "$(default_mysql_env_pairs)"
 }
 

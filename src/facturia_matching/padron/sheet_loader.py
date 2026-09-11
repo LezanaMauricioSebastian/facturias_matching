@@ -1,4 +1,4 @@
-"""Fetch and parse CSV/XLSX from URL, bytes, or disk (public Sheets + uploads)."""
+"""Fetch and parse CSV/XLSX from URL, bytes, or disk (public Sheets + uploads + private SA)."""
 
 import csv
 import io
@@ -23,6 +23,10 @@ def _normalize_sheet_url(url: str) -> str:
 
         m = re.search(r"/spreadsheets/d/([^/]+)", url)
         gid_m = re.search(r"gid=(\d+)", url)
+        if m and m.group(1) != "e":
+            # Edit URLs with real spreadsheet id cannot be converted to /d/e/ publish URLs.
+            # Caller should use spreadsheet_id + service account for private sheets.
+            return url
         if m:
             sheet_id = m.group(1)
             base = f"https://docs.google.com/spreadsheets/d/e/{sheet_id}/pub?output=csv"
@@ -30,6 +34,10 @@ def _normalize_sheet_url(url: str) -> str:
                 base += f"&gid={gid_m.group(1)}"
             return base
     return url
+
+
+def _cache_key_private(spreadsheet_id: str, gid: Optional[str]) -> str:
+    return f"private:{spreadsheet_id}:gid={gid or ''}"
 
 
 def parse_csv_text(raw: str) -> List[Dict[str, str]]:
@@ -113,11 +121,36 @@ def fetch_csv_raw(url: str, timeout: int = 15) -> List[List[str]]:
 
 
 def fetch_sheet(
-    url: str,
+    url: str = "",
     ttl: int = DEFAULT_TTL_SECONDS,
     force: bool = False,
+    spreadsheet_id: Optional[str] = None,
+    gid: Optional[str] = None,
 ) -> List[Dict[str, str]]:
-    """Fetch with in-memory cache keyed by URL."""
+    """Fetch with in-memory cache. Prefer private spreadsheet_id when configured."""
+    sid = (spreadsheet_id or "").strip()
+    if sid:
+        from facturia_matching.padron.google_sheets import (
+            fetch_spreadsheet_csv_text,
+            service_account_configured,
+        )
+
+        if not service_account_configured():
+            raise RuntimeError(
+                "spreadsheet_id configurado pero falta GOOGLE_SERVICE_ACCOUNT_JSON"
+            )
+        key = _cache_key_private(sid, gid)
+        now = time.time()
+        cached = _cache.get(key)
+        if cached and not force and (now - cached["ts"]) < ttl:
+            return cached["rows"]
+        raw = fetch_spreadsheet_csv_text(sid, gid=gid)
+        rows = parse_csv_text(raw)
+        _cache[key] = {"rows": rows, "ts": now}
+        return rows
+
+    if not (url or "").strip():
+        return []
     norm_url = _normalize_sheet_url(url)
     now = time.time()
     cached = _cache.get(norm_url)
@@ -126,6 +159,24 @@ def fetch_sheet(
     rows = fetch_csv(norm_url)
     _cache[norm_url] = {"rows": rows, "ts": now}
     return rows
+
+
+def fetch_sheet_raw_rows(
+    url: str = "",
+    spreadsheet_id: Optional[str] = None,
+    gid: Optional[str] = None,
+    timeout: int = 15,
+) -> List[List[str]]:
+    """Download CSV as list-of-lists (incl. header) from private or public source."""
+    sid = (spreadsheet_id or "").strip()
+    if sid:
+        from facturia_matching.padron.google_sheets import fetch_spreadsheet_csv_text
+
+        raw = fetch_spreadsheet_csv_text(sid, gid=gid, timeout=timeout)
+        return list(csv.reader(io.StringIO(raw)))
+    if not (url or "").strip():
+        return []
+    return fetch_csv_raw(_normalize_sheet_url(url), timeout=timeout)
 
 
 def extract_column_values(rows: List[Dict[str, str]], column: str) -> List[str]:
@@ -156,19 +207,33 @@ def preview_rows(rows: List[Dict[str, str]], max_rows: int = 10) -> Dict[str, An
     }
 
 
-def preview(url: str, max_rows: int = 10) -> Dict[str, Any]:
+def preview(
+    url: str = "",
+    max_rows: int = 10,
+    spreadsheet_id: Optional[str] = None,
+    gid: Optional[str] = None,
+) -> Dict[str, Any]:
     """Fetch sheet and return columns + first N rows for UI preview."""
-    rows = fetch_sheet(url, force=True)
+    rows = fetch_sheet(
+        url=url, force=True, spreadsheet_id=spreadsheet_id, gid=gid
+    )
     return preview_rows(rows, max_rows=max_rows)
 
 
-def extract_category_map(url: str, timeout: int = 15) -> Dict[str, str]:
+def extract_category_map(
+    url: str = "",
+    timeout: int = 15,
+    spreadsheet_id: Optional[str] = None,
+    gid: Optional[str] = None,
+) -> Dict[str, str]:
     """Build a Concepto → Categoría de Gasto lookup from unnamed columns 8 & 9.
 
     The sheet has unnamed columns after the main data that form a
     two-column lookup: col-index 8 = concepto, col-index 9 = categoría.
     """
-    raw_rows = fetch_csv_raw(url, timeout)
+    raw_rows = fetch_sheet_raw_rows(
+        url=url, spreadsheet_id=spreadsheet_id, gid=gid, timeout=timeout
+    )
     mapping: Dict[str, str] = {}
     for row in raw_rows[1:]:  # skip header
         if len(row) < 10:

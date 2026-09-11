@@ -15,9 +15,8 @@ _FILES_DIR = _ROOT / "files"
 _lock = threading.Lock()
 
 DEFAULT_SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vSJSetlpFQzy56oT9Ek3lecPKvnGKcgLLAsLwKGNUHQWEaPt5K6Qs78lFb4f5Nm0d5-vqHDnACOsUXm"
-    "/pub?output=csv"
+    "https://docs.google.com/spreadsheets/d/"
+    "1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA/edit"
 )
 
 DEFAULT_MAPPING = {
@@ -36,7 +35,9 @@ def default_config(company_id: int = 0) -> Dict[str, Any]:
     return {
         "company_id": company_id,
         "sheet_url": DEFAULT_SHEET_URL,
-        "refresh_minutes": 15,
+        "spreadsheet_id": "1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA",
+        "sheet_gid": "",
+        "refresh_minutes": 2,
         "mapping": {k: dict(v) for k, v in DEFAULT_MAPPING.items()},
         "files": {},
     }
@@ -84,6 +85,21 @@ def save_config(company_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
         cfg = all_cfg.get(key) or default_config(company_id)
         if "sheet_url" in updates and updates["sheet_url"] is not None:
             cfg["sheet_url"] = updates["sheet_url"]
+            from facturia_matching.padron.google_sheets import (
+                extract_gid,
+                extract_spreadsheet_id,
+            )
+
+            sid = extract_spreadsheet_id(str(updates["sheet_url"]))
+            if sid and not (updates.get("spreadsheet_id") or cfg.get("spreadsheet_id")):
+                cfg["spreadsheet_id"] = sid
+            gid = extract_gid(str(updates["sheet_url"]))
+            if gid and not (updates.get("sheet_gid") or cfg.get("sheet_gid")):
+                cfg["sheet_gid"] = gid
+        if "spreadsheet_id" in updates and updates["spreadsheet_id"] is not None:
+            cfg["spreadsheet_id"] = str(updates["spreadsheet_id"]).strip()
+        if "sheet_gid" in updates and updates["sheet_gid"] is not None:
+            cfg["sheet_gid"] = str(updates["sheet_gid"]).strip()
         if "refresh_minutes" in updates and updates["refresh_minutes"] is not None:
             cfg["refresh_minutes"] = int(updates["refresh_minutes"])
         if updates.get("mapping"):

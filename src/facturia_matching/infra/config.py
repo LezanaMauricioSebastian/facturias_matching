@@ -44,6 +44,8 @@ PADRON_LIMIT = int(os.getenv("PADRON_LIMIT", "50000") or "50000")
 PADRON_ODOO_LIMIT = int(os.getenv("PADRON_ODOO_LIMIT", "5000") or "5000")
 # odoo | postgres | odoo,postgres — en perfil aliare default odoo,postgres (Odoo primero)
 PADRON_SOURCE = _env_strip("PADRON_SOURCE").lower()
+# Path to SA JSON file, or raw JSON string. Used for private Google Sheets (Viewer share).
+GOOGLE_SERVICE_ACCOUNT_JSON = _env_strip("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 DB_HOST_MYSQL = os.getenv("DB_HOST_MYSQL")
 DB_USER_MYSQL = os.getenv("DB_USER_MYSQL")

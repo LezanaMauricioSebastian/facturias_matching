@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt pyproject.toml /app/
 COPY src/ /app/src/
+COPY data/padrones/config.json /app/data/padrones/config.json
 RUN pip install --no-cache-dir -r /app/requirements.txt \
   && pip install --no-cache-dir /app
 

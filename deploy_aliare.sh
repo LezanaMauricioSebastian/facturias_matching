@@ -131,6 +131,9 @@ build_default_secrets_arg() {
       pairs+=("${env_key}=${gcp_name}:latest")
     fi
   done
+  if secret_exists "ANTHROPIC_API_KEY"; then
+    pairs+=("ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest")
+  fi
   local IFS=,
   echo "${pairs[*]}"
 }
@@ -331,6 +334,7 @@ default_mysql_env_pairs() {
 default_aliare_env_pairs() {
   merge_env_pairs \
     "FACTURIA_ODOO_PROFILE=aliare" \
+    "FACTURIA_UOM_AI_ENABLED=1" \
     "$(default_mysql_env_pairs)"
 }
 

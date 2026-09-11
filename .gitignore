@@ -13,6 +13,7 @@ env/
 .env.aliare
 .env.dinner
 .env.sudata
+secrets/
 
 # IDE / OS
 .vscode/

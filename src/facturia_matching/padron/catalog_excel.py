@@ -1,9 +1,10 @@
-"""Load structured Excel/Sheets padron from config (URL + optional uploads)."""
+"""Load structured Excel/Sheets padron from config (URL / private SA + optional uploads)."""
 
 import time
 from typing import Any, Dict, List, Optional
 
 from facturia_matching.padron import padron_config_store as cfg_store
+from facturia_matching.padron.google_sheets import resolve_sheet_source
 from facturia_matching.padron.sheet_loader import (
     extract_category_map,
     extract_category_map_from_rows,
@@ -34,16 +35,27 @@ def load_padron(company_id: int = 0, force: bool = False) -> Dict[str, Any]:
         if time.time() - float(entry.get("_ts") or 0) < ttl:
             return entry
 
-    url = (cfg.get("sheet_url") or "").strip()
+    mode, source, gid = resolve_sheet_source(cfg)
     sheet_rows: List[Dict[str, str]] = []
     cat_map: Dict[str, str] = {}
-    if url:
+    if mode == "private" and source:
         try:
-            sheet_rows = fetch_sheet(url, ttl=ttl, force=force)
+            sheet_rows = fetch_sheet(
+                spreadsheet_id=source, gid=gid, ttl=ttl, force=force
+            )
         except Exception:
             sheet_rows = []
         try:
-            cat_map = extract_category_map(url)
+            cat_map = extract_category_map(spreadsheet_id=source, gid=gid)
+        except Exception:
+            cat_map = {}
+    elif mode == "public" and source:
+        try:
+            sheet_rows = fetch_sheet(url=source, ttl=ttl, force=force)
+        except Exception:
+            sheet_rows = []
+        try:
+            cat_map = extract_category_map(url=source)
         except Exception:
             cat_map = {}
 
@@ -87,6 +99,7 @@ def load_padron(company_id: int = 0, force: bool = False) -> Dict[str, Any]:
         "conceptos": [r["nombre"] for r in conceptos],
         "categoria_map": cat_map,
         "config": cfg,
+        "sheet_source_mode": mode or "none",
         "_ts": time.time(),
     }
     _data_cache[cache_key] = data

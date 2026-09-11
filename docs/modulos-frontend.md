@@ -172,6 +172,8 @@ flowchart LR
 | Archivo | Rol |
 |---------|-----|
 | `static/html/index.html` | Shell: input proceso, botones, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
+| `static/html/padron_excel.html` | UI padrón Excel/Sheets (clientes sin Odoo). `?embed=1&proceso=` para iframe FacturIA. |
+| `static/js/padronExcel/app.js` | Config fuentes (pub / spreadsheet_id+SA / upload), CRUD facturas, deep-link proceso → match. |
 | `static/js/facturiaRaw/tab.js` | Pestaña **FacturIA** (solo `ui_env=dev`): `GET .../facturia-raw`. |
 | `static/css/styles.css` | Layout tabla, modos embed, comprobante footer, combobox. |
 

@@ -66,46 +66,87 @@
     .hint { font-size: .75rem; color: var(--muted); }
     .sidebar-lists { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
     .mini-list { max-height: 140px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; font-size: .78rem; padding: .35rem .5rem; background: #fff; }
+    body.embed-mode { background: #fff; }
+    body.embed-mode .wrap { max-width: none; padding: .75rem .5rem; }
+    body.embed-mode .admin-only { display: none !important; }
+    body.embed-mode .top-bar h1 { font-size: 1.05rem; }
+    .proceso-banner { display: none; font-size: .82rem; color: var(--muted); margin-bottom: .75rem; }
+    body.embed-mode .proceso-banner { display: block; }
+    .padron-lists-embed { display: none; margin-bottom: 1rem; }
+    body.embed-mode .padron-lists-embed { display: block; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top-bar">
-      <div style="display:flex;align-items:center;gap:.75rem">
+      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
         <h1>Registro de Facturas</h1>
         <span class="status-pill status-loading" id="statusPill">Cargando padrón...</span>
       </div>
       <div class="top-actions">
-        <button class="btn btn-secondary" id="btnExport" disabled>Exportar CSV</button>
-        <button class="btn btn-primary" id="btnToggleForm">+ Nueva factura</button>
+        <button class="btn btn-secondary admin-only" id="btnExport" disabled>Exportar CSV</button>
+        <button class="btn btn-primary admin-only" id="btnToggleForm">+ Nueva factura</button>
       </div>
     </div>
 
-    <details class="card sources" id="sourcesCard">
-      <summary>Fuentes de padrón (Sheets / Excel / CSV)</summary>
-      <p class="hint">URL publicada de Google Sheets o archivos subidos. Guardá el mapeo de columnas después de previsualizar o subir.</p>
+    <div class="proceso-banner" id="procesoBanner"></div>
+
+    <div class="padron-lists-embed card" id="padronListsEmbed">
+      <h2 style="font-size:.95rem;margin:0 0 .5rem">Listas del padrón</h2>
+      <div class="counts" id="padronCountsEmbed"></div>
+      <div class="sidebar-lists">
+        <div><div class="hint">Proveedores</div><div class="mini-list" id="listProvEmbed"></div></div>
+        <div><div class="hint">Productos</div><div class="mini-list" id="listProdEmbed"></div></div>
+        <div><div class="hint">Conceptos</div><div class="mini-list" id="listConcEmbed"></div></div>
+        <div><div class="hint">Formas de pago</div><div class="mini-list" id="listFpEmbed"></div></div>
+      </div>
+    </div>
+
+    <details class="card sources admin-only" id="sourcesCard" open>
+      <summary>Fuentes de padrón</summary>
+      <div class="source-status" id="sourceStatus" style="margin:.5rem 0;font-size:.82rem"></div>
+      <p class="hint">
+        Flujo recomendado: compartí el Sheet como <strong>Lector</strong> a
+        <code id="saEmailInline">facturia-padron@…</code>
+        (sin publicar a la web). Pegá la URL <code>/edit</code> o el spreadsheet id.
+      </p>
       <div class="form-grid" style="margin-top:.75rem">
         <div class="form-group form-full">
-          <label>URL Google Sheets (CSV publicado)</label>
-          <input type="text" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv">
+          <label>URL del Sheet (compartido a la SA)</label>
+          <input type="text" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/ID/edit">
+        </div>
+        <div class="form-group">
+          <label>Spreadsheet ID</label>
+          <input type="text" id="spreadsheetId" placeholder="se completa solo desde la URL /edit">
+        </div>
+        <div class="form-group">
+          <label>gid pestaña (opcional)</label>
+          <input type="text" id="sheetGid" placeholder="vacío = primera hoja">
         </div>
       </div>
-      <div style="margin:.5rem 0; display:flex; gap:.5rem; flex-wrap:wrap">
-        <button class="btn btn-secondary" id="btnPreview">Vista previa URL</button>
-        <button class="btn btn-primary" id="btnSaveConfig">Guardar URL y mapeo</button>
+      <p class="hint" id="saHint"></p>
+      <div style="margin:.5rem 0; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center">
+        <button class="btn btn-secondary" id="btnPreview">Probar lectura</button>
+        <button class="btn btn-primary" id="btnSaveConfig">Guardar fuente y mapeo</button>
+        <button class="btn btn-secondary" id="btnRefreshPadron" title="Vuelve a bajar el Sheet ahora">Actualizar padrón ahora</button>
+        <span class="hint" id="refreshStatus"></span>
       </div>
-      <div class="upload-row">
-        <label>Subir archivo</label>
-        <select id="uploadKind">
-          <option value="proveedores">Proveedores</option>
-          <option value="productos">Productos</option>
-          <option value="formas_pago">Formas de pago</option>
-          <option value="conceptos">Conceptos</option>
-        </select>
-        <input type="file" id="uploadFile" accept=".csv,.xlsx,.xlsm">
-        <button class="btn btn-secondary" id="btnUpload">Subir</button>
-        <span class="hint" id="uploadStatus"></span>
-      </div>
+      <details style="margin:.75rem 0">
+        <summary class="hint" style="cursor:pointer">Alternativas: publicar CSV o subir archivo</summary>
+        <p class="hint" style="margin:.4rem 0">Solo si no podés compartir a la SA: URL <code>pub?output=csv</code>, o upload CSV/XLSX por tipo (sin auto-refresh).</p>
+        <div class="upload-row">
+          <label>Subir archivo</label>
+          <select id="uploadKind">
+            <option value="proveedores">Proveedores</option>
+            <option value="productos">Productos</option>
+            <option value="formas_pago">Formas de pago</option>
+            <option value="conceptos">Conceptos</option>
+          </select>
+          <input type="file" id="uploadFile" accept=".csv,.xlsx,.xlsm">
+          <button class="btn btn-secondary" id="btnUpload">Subir</button>
+          <span class="hint" id="uploadStatus"></span>
+        </div>
+      </details>
       <h3 style="font-size:.88rem;margin:1rem 0 .4rem">Mapeo de columnas</h3>
       <div class="form-grid">
         <div class="form-group"><label>Proveedor · razón social</label><select id="mapProvRazon"></select></div>

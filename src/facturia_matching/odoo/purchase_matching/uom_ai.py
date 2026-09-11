@@ -15,7 +15,8 @@ from facturia_matching.odoo.purchase_matching._util import _normalize, _normaliz
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+# Sonnet 4 dated ID was retired (404); use current dateless Sonnet 4.6.
+_DEFAULT_MODEL = "claude-sonnet-4-6"
 _CACHE: Dict[Tuple[int, str], Optional[int]] = {}
 _ID_RE = re.compile(r"\b(\d+)\b")
 

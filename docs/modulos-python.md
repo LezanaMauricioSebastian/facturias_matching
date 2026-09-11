@@ -23,7 +23,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `route_meta.py` | `/`, metadata, bootstrap, options, padrón, CSV. |
 | `route_odoo.py` | Health Odoo + `POST /api/odoo/import` (+ callback FacturIA erp-imports si hay `import_id`/`token`). |
 | `route_proceso.py` | `/api/proceso/*` (load, OC, UM, conversion, revert). |
-| `route_padron_excel.py` | `/api/padron-excel/*`: config, upload CSV/XLSX, match, CRUD facturas, export. |
+| `route_padron_excel.py` | `/api/padron-excel/*`: config (pub o `spreadsheet_id`+SA), upload CSV/XLSX, listar hojas / fila 1 (headers), match, CRUD facturas, `GET /proceso/{n}` para iframe FacturIA, export. |
 | `__init__.py` | Vacío / export mínimo. |
 
 **Funciones clave:**
@@ -53,6 +53,9 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `postgres.py` | Cache de vista padrón; `detect_padron_fields`; **`match_proveedor`** (fuzzy CUIT/nombre); `get_table_columns`. Respeta `PADRON_SOURCE` y orden Odoo-first en Aliare/Sudata. |
 | `odoo.py` | **`build_padron_rows_from_odoo`**: últimas facturas proveedor → filas estilo padrón (rubro, cuenta, diario). |
 | `excel.py` | Fuzzy padrón Excel: **`match_proveedor_excel`** (CUIT exacto → razón/fantasía), **`match_producto`** (nombre + UoM), concepto/forma de pago. |
+| `google_sheets.py` | Service account (`GOOGLE_SERVICE_ACCOUNT_JSON`): export CSV, listar pestañas (Sheets API), leer fila 1 (headers) de un tab privado compartido al SA. |
+| `process_to_invoice.py` | FacturIA `json_data` → dicts tipo InvoiceInput para match Excel. |
+| `sheet_loader.py` | Fetch CSV pub o privado; parse CSV/XLSX; mapeo filas → proveedores/productos. |
 | `sheet_loader.py` | Fetch CSV de Sheets publicado; parse CSV/XLSX (upload); mapeo de columnas a proveedores/productos. |
 | `catalog_excel.py` | Arma el padrón estructurado desde config (URL + archivos subidos). |
 | `padron_config_store.py` | JSON en `data/padrones/` (mapeo, URL, paths de upload). |

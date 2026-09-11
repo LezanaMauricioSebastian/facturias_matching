@@ -1,6 +1,7 @@
 """Unit tests for Excel/Sheets padron matching and CSV/XLSX parsing."""
 
 import io
+import json
 import unittest
 from pathlib import Path
 
@@ -89,6 +90,110 @@ class TestParsePadronFiles(unittest.TestCase):
         rows = parse_file_bytes(buf.getvalue(), "prod.xlsx")
         prods = rows_to_productos(rows, "nombre", "unidad_medida")
         self.assertEqual(prods, [{"nombre": "Pan", "unidad_medida": "kg"}])
+
+
+class TestGoogleSheetsHelpers(unittest.TestCase):
+    def test_extract_spreadsheet_id_from_edit_url(self):
+        from facturia_matching.padron.google_sheets import extract_gid, extract_spreadsheet_id
+
+        url = "https://docs.google.com/spreadsheets/d/1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA/edit?gid=1583130206#gid=1583130206"
+        self.assertEqual(
+            extract_spreadsheet_id(url),
+            "1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA",
+        )
+        self.assertEqual(extract_gid(url), "1583130206")
+
+    def test_publish_url_has_no_spreadsheet_id(self):
+        from facturia_matching.padron.google_sheets import extract_spreadsheet_id
+
+        pub = (
+            "https://docs.google.com/spreadsheets/d/e/"
+            "2PACX-1vSJSetlpFQzy56oT9Ek3lecPKvnGKcgLLAsLwKGNUHQWEaPt5K6Qs78lFb4f5Nm0d5-vqHDnACOsUXm"
+            "/pub?output=csv"
+        )
+        self.assertIsNone(extract_spreadsheet_id(pub))
+
+    def test_a1_sheet_range_quotes_spaces(self):
+        from facturia_matching.padron.google_sheets import _a1_sheet_range
+
+        self.assertEqual(_a1_sheet_range("Proveedores"), "Proveedores!1:1")
+        self.assertEqual(_a1_sheet_range("Forma de pago"), "'Forma de pago'!1:1")
+        self.assertEqual(_a1_sheet_range("O'Brien"), "'O''Brien'!1:1")
+
+    def test_list_spreadsheet_sheets_parses_api(self):
+        from unittest.mock import patch
+
+        from facturia_matching.padron import google_sheets as gs
+
+        fake = {
+            "properties": {"title": "Padron"},
+            "sheets": [
+                {"properties": {"sheetId": 10, "title": "B", "index": 1}},
+                {"properties": {"sheetId": 5, "title": "A", "index": 0}},
+            ],
+        }
+        with patch.object(gs, "service_account_configured", return_value=True), patch.object(
+            gs, "_sheets_api_get", return_value=fake
+        ):
+            out = gs.list_spreadsheet_sheets("abc123sidxxxxxxxx")
+        self.assertEqual(out["title"], "Padron")
+        self.assertEqual([s["title"] for s in out["sheets"]], ["A", "B"])
+        self.assertEqual(out["sheets"][0]["gid"], "5")
+
+    def test_fetch_first_row_by_gid(self):
+        from unittest.mock import patch
+
+        from facturia_matching.padron import google_sheets as gs
+
+        meta = {
+            "spreadsheet_id": "sid",
+            "title": "Padron",
+            "sheets": [
+                {"title": "Proveedores", "sheet_id": 99, "gid": "99", "index": 0},
+            ],
+        }
+        values_resp = {"values": [["Mes", "Sucursal", "Proveedores", "", "CUIT"]]}
+        with patch.object(gs, "service_account_configured", return_value=True), patch.object(
+            gs, "list_spreadsheet_sheets", return_value=meta
+        ), patch.object(gs, "_sheets_api_get", return_value=values_resp):
+            out = gs.fetch_first_row("sid", sheet_gid="99")
+        self.assertEqual(out["sheet_title"], "Proveedores")
+        self.assertEqual(out["values"], ["Mes", "Sucursal", "Proveedores", "CUIT"])
+        self.assertEqual(out["count"], 4)
+    def test_map_factura(self):
+        from facturia_matching.padron.process_to_invoice import (
+            factura_to_invoice_input,
+            invoices_from_process_row,
+        )
+
+        fac = {
+            "proveedor": {"razon_social": "Carrefour", "cuit": "30-54668899-9"},
+            "forma_de_pago": "Efectivo",
+            "tipo_comprobante": "FACTURA A",
+            "items": [
+                {"descripcion": "Café", "unidad_medida": "kg"},
+                {"descripcion": "Leche", "unidad_medida": "l"},
+            ],
+        }
+        inv = factura_to_invoice_input(fac, company_id=7)
+        self.assertEqual(inv["proveedor"], "Carrefour")
+        self.assertEqual(inv["cuit"], "30-54668899-9")
+        self.assertEqual(inv["lineas"], ["Café", "Leche"])
+        self.assertEqual(inv["unidades_medida"], ["kg", "l"])
+        self.assertEqual(inv["forma_pago"], "Efectivo")
+        self.assertEqual(inv["company_id"], 7)
+
+        row = {
+            "company_id": 3,
+            "json_data": json.dumps(
+                {"facturas": [{"json": {"factura": fac}}]},
+                ensure_ascii=False,
+            ),
+        }
+        drafts = invoices_from_process_row(row)
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0]["company_id"], 3)
+        self.assertEqual(drafts[0]["lineas"], ["Café", "Leche"])
 
 
 if __name__ == "__main__":

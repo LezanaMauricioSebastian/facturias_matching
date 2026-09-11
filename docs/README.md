@@ -11,7 +11,7 @@ Aplicación web (FastAPI + JS vanilla) que:
 3. Muestra una tabla editable con vista por comprobante.
 4. Persiste ediciones en **MySQL** (`process_conversions`).
 5. Exporta **CSV** o importa borradores a **Odoo TEST**.
-6. Para clientes **sin Odoo**, hay un padrón Excel/Sheets (`/static/padron_excel.html`) que matchea proveedores (CUIT / razón / fantasía), productos + UoM, conceptos y forma de pago. Ver [padron-excel.md](padron-excel.md).
+6. Para clientes **sin Odoo**, hay un padrón Excel/Sheets (`/static/padron_excel.html`) que matchea proveedores (CUIT / razón / fantasía), productos + UoM, conceptos y forma de pago. Fuentes: Sheets privado vía service account, `pub?output=csv`, o upload. Iframe FacturIA: `?embed=1&proceso=`. Ver [padron-excel.md](padron-excel.md).
 
 ## Diagrama de capas
 

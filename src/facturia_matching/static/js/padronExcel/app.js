@@ -1,6 +1,19 @@
-/** @module padronExcel/app — CRUD + padron sources (Sheets / Excel / CSV). */
+/** @module padronExcel/app — CRUD + padron sources (Sheets / Excel / CSV) + FacturIA iframe embed. */
 
 const API = '/api/padron-excel';
+
+function urlParams() {
+  return new URLSearchParams(window.location.search);
+}
+
+function isEmbedMode() {
+  const p = urlParams();
+  if (p.has('embed')) {
+    const v = (p.get('embed') || '1').trim().toLowerCase();
+    return !['0', 'false', 'no'].includes(v);
+  }
+  return Boolean((p.get('proceso') || '').trim());
+}
 
 const $status = document.getElementById('statusPill');
 const $btnToggle = document.getElementById('btnToggleForm');
@@ -14,8 +27,16 @@ const $preview = document.getElementById('matchPreview');
 const $tbody = document.getElementById('tableBody');
 const $formTitle = document.getElementById('formTitle');
 const $editingId = document.getElementById('editingId');
+const $procesoBanner = document.getElementById('procesoBanner');
+const $spreadsheetId = document.getElementById('spreadsheetId');
+const $sheetGid = document.getElementById('sheetGid');
+const $saHint = document.getElementById('saHint');
+const $sourceStatus = document.getElementById('sourceStatus');
+const $saEmailInline = document.getElementById('saEmailInline');
 
 let _recordsById = {};
+let _companyId = 0;
+const _embed = isEmbedMode();
 
 const $fMes = document.getElementById('fMes');
 const $fSucursal = document.getElementById('fSucursal');
@@ -28,10 +49,12 @@ const $fTipo = document.getElementById('fTipo');
 const $sheetUrl = document.getElementById('sheetUrl');
 const $btnPreview = document.getElementById('btnPreview');
 const $btnSaveConfig = document.getElementById('btnSaveConfig');
+const $btnRefreshPadron = document.getElementById('btnRefreshPadron');
 const $uploadKind = document.getElementById('uploadKind');
 const $uploadFile = document.getElementById('uploadFile');
 const $btnUpload = document.getElementById('btnUpload');
 const $uploadStatus = document.getElementById('uploadStatus');
+const $refreshStatus = document.getElementById('refreshStatus');
 const $padronCounts = document.getElementById('padronCounts');
 
 const mapSelects = {
@@ -46,6 +69,11 @@ const mapSelects = {
 };
 
 let _columns = [];
+
+if (_embed) {
+  document.documentElement.classList.add('embed-mode');
+  document.body.classList.add('embed-mode');
+}
 
 async function api(path, opts = {}) {
   const headers = opts.headers || {};
@@ -226,7 +254,7 @@ async function runPreview() {
     if (prov || cuit) {
       const r = await api('/match', {
         method: 'POST',
-        body: JSON.stringify({ field: 'proveedor', queries: [prov || cuit], cuit }),
+        body: JSON.stringify({ field: 'proveedor', queries: [prov || cuit], cuit, company_id: _companyId }),
       });
       const m = r.results[0];
       if (m?.match) {
@@ -235,7 +263,7 @@ async function runPreview() {
       }
     }
     if (lineas.length) {
-      const conc = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'concepto', queries: lineas }) });
+      const conc = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'concepto', queries: lineas, company_id: _companyId }) });
       for (const m of conc.results) {
         if (m?.match) {
           const cat = m.categoria ? `<span class="cat">(${m.categoria})</span>` : '';
@@ -244,7 +272,7 @@ async function runPreview() {
       }
       const prod = await api('/match', {
         method: 'POST',
-        body: JSON.stringify({ field: 'producto', queries: lineas, unidades_medida }),
+        body: JSON.stringify({ field: 'producto', queries: lineas, unidades_medida, company_id: _companyId }),
       });
       for (const m of prod.results) {
         if (m?.match) {
@@ -254,7 +282,7 @@ async function runPreview() {
       }
     }
     if (fp) {
-      const r = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'forma_pago', queries: [fp] }) });
+      const r = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'forma_pago', queries: [fp], company_id: _companyId }) });
       const m = r.results[0];
       if (m?.match) chips.push(`<div class="match-chip"><span class="label">F.Pago:</span><span class="value">${m.match}</span>${badge(m.score)}</div>`);
     }
@@ -284,6 +312,7 @@ $btnSave.addEventListener('click', async () => {
     forma_pago: $fFormaPago.value.trim(),
     estado_deuda: $fEstado.value,
     tipo_comprobante: $fTipo.value,
+    company_id: _companyId,
   };
   const editId = $editingId.value.trim();
   $btnSave.disabled = true;
@@ -307,29 +336,118 @@ function renderLists(data) {
   const prod = data.productos || [];
   const conc = data.conceptos || [];
   const fp = data.formas_pago || [];
-  $padronCounts.innerHTML = `
+  const countsHtml = `
     <span>Proveedores: ${prov.length}</span>
     <span>Productos: ${prod.length}</span>
     <span>Conceptos: ${conc.length}</span>
     <span>Formas de pago: ${fp.length}</span>`;
-  document.getElementById('listProv').innerHTML = prov.slice(0, 80).map((p) => {
+  if ($padronCounts) $padronCounts.innerHTML = countsHtml;
+  const $countsEmbed = document.getElementById('padronCountsEmbed');
+  if ($countsEmbed) $countsEmbed.innerHTML = countsHtml;
+
+  const provHtml = prov.slice(0, 80).map((p) => {
     const bits = [p.razon_social, p.nombre_fantasia, p.cuit].filter(Boolean);
     return `<div>${bits.join(' · ')}</div>`;
   }).join('') || '—';
-  document.getElementById('listProd').innerHTML = prod.slice(0, 80).map((p) =>
+  const prodHtml = prod.slice(0, 80).map((p) =>
     `<div>${p.nombre}${p.unidad_medida ? ` <span class="cell-cat">${p.unidad_medida}</span>` : ''}</div>`
   ).join('') || '—';
-  document.getElementById('listConc').innerHTML = conc.slice(0, 80).map((c) => `<div>${c}</div>`).join('') || '—';
-  document.getElementById('listFp').innerHTML = fp.map((c) => `<div>${c}</div>`).join('') || '—';
+  const concHtml = conc.slice(0, 80).map((c) => `<div>${c}</div>`).join('') || '—';
+  const fpHtml = fp.map((c) => `<div>${c}</div>`).join('') || '—';
+
+  const listProv = document.getElementById('listProv');
+  const listProd = document.getElementById('listProd');
+  const listConc = document.getElementById('listConc');
+  const listFp = document.getElementById('listFp');
+  if (listProv) listProv.innerHTML = provHtml;
+  if (listProd) listProd.innerHTML = prodHtml;
+  if (listConc) listConc.innerHTML = concHtml;
+  if (listFp) listFp.innerHTML = fpHtml;
+
+  const listProvE = document.getElementById('listProvEmbed');
+  const listProdE = document.getElementById('listProdEmbed');
+  const listConcE = document.getElementById('listConcEmbed');
+  const listFpE = document.getElementById('listFpEmbed');
+  if (listProvE) listProvE.innerHTML = provHtml;
+  if (listProdE) listProdE.innerHTML = prodHtml;
+  if (listConcE) listConcE.innerHTML = concHtml;
+  if (listFpE) listFpE.innerHTML = fpHtml;
 }
 
-async function loadPadron() {
-  const data = await api('/data');
+function applySaHint(cfgOrData) {
+  if (!$saHint && !$sourceStatus) return;
+  const ok = cfgOrData.google_sa_configured;
+  const email = cfgOrData.google_sa_email || '';
+  const mode = cfgOrData.sheet_source_mode || (cfgOrData.config && cfgOrData.config.sheet_source_mode) || '';
+  const counts = cfgOrData.row_count || {};
+  if ($saEmailInline && email) $saEmailInline.textContent = email;
+
+  const modeLabel = mode === 'private'
+    ? 'Privado (service account)'
+    : mode === 'public'
+      ? 'Público (pub CSV)'
+      : mode === 'private_unconfigured'
+        ? 'ID privado sin SA'
+        : (mode || 'sin fuente');
+
+  if ($sourceStatus) {
+    const n = counts.proveedores != null
+      ? ` · prov ${counts.proveedores || 0} · conceptos ${counts.conceptos || 0} · f.pago ${counts.formas_pago || 0}`
+      : '';
+    $sourceStatus.innerHTML = ok
+      ? `<span class="status-pill status-ok">Fuente: ${modeLabel}${n}</span>`
+      : `<span class="status-pill status-loading">Fuente: ${modeLabel}${n} · SA no configurada</span>`;
+  }
+
+  if ($saHint) {
+    if (ok && email) {
+      $saHint.textContent = `SA activa: ${email}. Compartí el Sheet (Lector) a ese mail.`;
+    } else if (ok) {
+      $saHint.textContent = 'Service account configurada en el server.';
+    } else {
+      $saHint.textContent = 'Sin GOOGLE_SERVICE_ACCOUNT_JSON: solo pub CSV o upload.';
+    }
+  }
+}
+
+function syncIdsFromSheetUrl() {
+  if (!$sheetUrl) return;
+  const url = $sheetUrl.value.trim();
+  if (!url) return;
+  const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (m && m[1] !== 'e' && $spreadsheetId && !$spreadsheetId.value.trim()) {
+    $spreadsheetId.value = m[1];
+  }
+  const gm = url.match(/[?&#]gid=(\d+)/);
+  if (gm && $sheetGid && !$sheetGid.value.trim()) {
+    $sheetGid.value = gm[1];
+  }
+}
+
+if ($sheetUrl) {
+  $sheetUrl.addEventListener('change', syncIdsFromSheetUrl);
+  $sheetUrl.addEventListener('blur', syncIdsFromSheetUrl);
+}
+
+async function loadPadron(force = false) {
+  const data = await api(`/data?company_id=${_companyId}&force=${force ? '1' : '0'}`);
   const cfg = data.config || {};
-  $sheetUrl.value = cfg.sheet_url || '';
-  if (cfg.sheet_url) {
+  if ($sheetUrl) $sheetUrl.value = cfg.sheet_url || '';
+  if ($spreadsheetId) $spreadsheetId.value = cfg.spreadsheet_id || '';
+  if ($sheetGid) $sheetGid.value = cfg.sheet_gid || '';
+  syncIdsFromSheetUrl();
+  applySaHint(data);
+  const previewTarget = ($spreadsheetId && $spreadsheetId.value.trim()) || cfg.spreadsheet_id || cfg.sheet_url;
+  if (previewTarget) {
     try {
-      const prev = await api('/preview', { method: 'POST', body: JSON.stringify({ url: cfg.sheet_url }) });
+      const prev = await api('/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: ($sheetUrl && $sheetUrl.value.trim()) || cfg.sheet_url || '',
+          spreadsheet_id: ($spreadsheetId && $spreadsheetId.value.trim()) || cfg.spreadsheet_id || '',
+          sheet_gid: ($sheetGid && $sheetGid.value.trim()) || cfg.sheet_gid || '',
+        }),
+      });
       fillAllMaps(prev.columns, cfg.mapping);
     } catch (_) {
       fillAllMaps(_columns, cfg.mapping);
@@ -341,34 +459,66 @@ async function loadPadron() {
   return data;
 }
 
-$btnPreview.addEventListener('click', async () => {
-  const url = $sheetUrl.value.trim();
-  if (!url) return;
+$btnRefreshPadron.addEventListener('click', async () => {
+  $btnRefreshPadron.disabled = true;
+  $refreshStatus.textContent = 'Bajando Sheet...';
+  setStatus('Actualizando padrón...', false);
   try {
-    const prev = await api('/preview', { method: 'POST', body: JSON.stringify({ url }) });
-    fillAllMaps(prev.columns, currentMapping());
-    $uploadStatus.textContent = `${prev.row_count} filas, ${prev.columns.length} columnas`;
+    await api(`/invalidate-cache?company_id=${_companyId}`, { method: 'POST' });
+    const data = await loadPadron(true);
+    const n = data.row_count || {};
+    $refreshStatus.textContent = `Actualizado · prov ${n.proveedores || 0} · prod ${n.productos || 0} · conceptos ${n.conceptos || 0}`;
+    setStatus('Padrón actualizado', true);
   } catch (e) {
-    $uploadStatus.textContent = e.message;
+    $refreshStatus.textContent = e.message;
+    setStatus('Error al actualizar', false);
+  } finally {
+    $btnRefreshPadron.disabled = false;
+  }
+});
+
+$btnPreview.addEventListener('click', async () => {
+  syncIdsFromSheetUrl();
+  const url = $sheetUrl.value.trim();
+  const sid = ($spreadsheetId && $spreadsheetId.value.trim()) || '';
+  if (!url && !sid) return;
+  try {
+    const prev = await api('/preview', {
+      method: 'POST',
+      body: JSON.stringify({
+        url,
+        spreadsheet_id: sid,
+        sheet_gid: ($sheetGid && $sheetGid.value.trim()) || '',
+      }),
+    });
+    fillAllMaps(prev.columns, currentMapping());
+    if ($uploadStatus) $uploadStatus.textContent = `${prev.row_count} filas, ${prev.columns.length} columnas`;
+    if ($refreshStatus) $refreshStatus.textContent = 'Lectura OK';
+  } catch (e) {
+    if ($uploadStatus) $uploadStatus.textContent = e.message;
+    if ($refreshStatus) $refreshStatus.textContent = e.message;
   }
 });
 
 $btnSaveConfig.addEventListener('click', async () => {
   try {
+    syncIdsFromSheetUrl();
     await api('/config', {
       method: 'PUT',
       body: JSON.stringify({
-        company_id: 0,
+        company_id: _companyId,
         sheet_url: $sheetUrl.value.trim(),
+        spreadsheet_id: ($spreadsheetId && $spreadsheetId.value.trim()) || '',
+        sheet_gid: ($sheetGid && $sheetGid.value.trim()) || '',
         mapping: currentMapping(),
       }),
     });
-    const data = await loadPadron();
+    const data = await loadPadron(true);
     setStatus('Padrón actualizado', true);
-    $uploadStatus.textContent = 'Config guardada';
+    if ($uploadStatus) $uploadStatus.textContent = 'Config guardada';
     renderLists(data);
   } catch (e) {
-    $uploadStatus.textContent = e.message;
+    if ($uploadStatus) $uploadStatus.textContent = e.message;
   }
 });
 
@@ -378,7 +528,7 @@ $btnUpload.addEventListener('click', async () => {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('kind', $uploadKind.value);
-  fd.append('company_id', '0');
+  fd.append('company_id', String(_companyId));
   try {
     const res = await api('/upload', { method: 'POST', body: fd });
     fillAllMaps(res.columns, currentMapping());
@@ -388,22 +538,30 @@ $btnUpload.addEventListener('click', async () => {
   }
 });
 
-async function loadTable() {
-  try {
-    const records = await api('/facturas');
-    _recordsById = {};
-    for (const r of records) _recordsById[r.id] = r;
-    if (!records.length) {
-      $tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No hay facturas cargadas. Usá "+ Nueva factura" para empezar.</td></tr>';
-      $btnExport.disabled = true;
-      return;
-    }
-    $btnExport.disabled = false;
-    $tbody.innerHTML = records.map((r) => {
-      const umBit = r.unidad_medida
-        ? ` <span class="cell-cat">${r.unidad_medida}${r.um_match === false ? ' ≠' : ''}</span>`
-        : '';
-      return `<tr data-id="${r.id}">
+function renderMatchedTable(records) {
+  _recordsById = {};
+  for (const r of records) {
+    const id = r.id || `tmp-${Object.keys(_recordsById).length}`;
+    _recordsById[id] = { ...r, id };
+  }
+  const list = Object.values(_recordsById);
+  if (!list.length) {
+    $tbody.innerHTML = '<tr><td colspan="11" class="empty-state">Sin facturas en el proceso.</td></tr>';
+    if ($btnExport) $btnExport.disabled = true;
+    return;
+  }
+  if ($btnExport) $btnExport.disabled = false;
+  $tbody.innerHTML = list.map((r) => {
+    const umBit = r.unidad_medida
+      ? ` <span class="cell-cat">${r.unidad_medida}${r.um_match === false ? ' ≠' : ''}</span>`
+      : '';
+    const actions = _embed
+      ? ''
+      : `<td class="row-actions">
+        <button class="btn btn-secondary btn-sm btn-edit" data-id="${r.id}" title="Editar">✎</button>
+        <button class="btn btn-danger btn-sm btn-delete" data-id="${r.id}" title="Eliminar">&#x2715;</button>
+      </td>`;
+    return `<tr data-id="${r.id}">
       <td>${r.mes || ''}</td>
       <td>${r.sucursal || ''}</td>
       <td>
@@ -422,12 +580,59 @@ async function loadTable() {
       </td>
       <td>${r.estado_deuda || '—'}</td>
       <td>${r.tipo_comprobante || '—'}</td>
-      <td class="row-actions">
-        <button class="btn btn-secondary btn-sm btn-edit" data-id="${r.id}" title="Editar">✎</button>
-        <button class="btn btn-danger btn-sm btn-delete" data-id="${r.id}" title="Eliminar">&#x2715;</button>
-      </td>
+      ${actions || '<td></td>'}
     </tr>`;
-    }).reverse().join('');
+  }).join('');
+}
+
+async function loadProcesoMatched() {
+  const p = urlParams();
+  const proceso = (p.get('proceso') || '').trim();
+  const empresa = (p.get('empresa') || '').trim();
+  const companyQ = (p.get('company_id') || '').trim();
+  if (companyQ && /^\d+$/.test(companyQ)) _companyId = parseInt(companyQ, 10);
+
+  const qs = new URLSearchParams({
+    force_refresh: '1',
+    company_id: String(_companyId),
+  });
+  if (empresa) qs.set('empresa', empresa);
+
+  if ($procesoBanner) {
+    $procesoBanner.textContent = `Proceso ${proceso}${empresa ? ` · empresa ${empresa}` : ''} — matching contra padrón Excel`;
+  }
+
+  const data = await api(`/proceso/${encodeURIComponent(proceso)}?${qs}`);
+  if (data.company_id != null) _companyId = data.company_id;
+  if (data.padron) {
+    renderLists(data.padron);
+    applySaHint({
+      ...data,
+      row_count: data.padron.row_count,
+      google_sa_configured: data.google_sa_configured,
+      google_sa_email: data.google_sa_email,
+      sheet_source_mode: data.sheet_source_mode,
+    });
+  } else {
+    applySaHint(data);
+  }
+
+  const facturas = data.facturas || [];
+  renderMatchedTable(facturas.map((f, i) => ({ ...f, id: `proc-${i}` })));
+
+  if (facturas.length) {
+    fillFormFromRecord({ ...facturas[0], id: '' });
+    openForm('new');
+    $formTitle.textContent = 'Factura del proceso (IA + match)';
+    if ($btnSave) $btnSave.textContent = 'Guardar en registro';
+  }
+  return data;
+}
+
+async function loadTable() {
+  try {
+    const records = await api('/facturas');
+    renderMatchedTable(records);
   } catch (e) {
     $tbody.innerHTML = `<tr><td colspan="11" class="empty-state" style="color:var(--red)">Error: ${e.message}</td></tr>`;
   }
@@ -460,14 +665,24 @@ $btnExport.addEventListener('click', () => {
 });
 
 async function init() {
+  const p = urlParams();
+  const companyQ = (p.get('company_id') || '').trim();
+  if (companyQ && /^\d+$/.test(companyQ)) _companyId = parseInt(companyQ, 10);
+
   setStatus('Cargando padrón...', false);
   try {
-    await loadPadron();
-    setStatus('Padrón listo', true);
+    if (_embed && (p.get('proceso') || '').trim()) {
+      await loadProcesoMatched();
+      setStatus('Match listo', true);
+    } else {
+      await loadPadron();
+      setStatus('Padrón listo', true);
+      loadTable();
+    }
   } catch (e) {
-    setStatus('Error padrón', false);
+    setStatus('Error: ' + (e.message || e), false);
+    if (!_embed) loadTable();
   }
-  loadTable();
 }
 
 init();

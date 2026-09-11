@@ -293,13 +293,34 @@ Página: `/static/padron_excel.html`. Detalle: [padron-excel.md](padron-excel.md
 
 | Método | Path | Uso |
 |--------|------|-----|
-| GET/PUT | `/api/padron-excel/config` | URL Sheets + mapeo de columnas (`company_id`) |
+| GET/PUT | `/api/padron-excel/config` | URL Sheets / `spreadsheet_id` + mapeo (`company_id`) |
 | POST | `/api/padron-excel/upload` | Multipart `file` + `kind` (`proveedores` \| `productos` \| `formas_pago` \| `conceptos`) |
 | GET | `/api/padron-excel/data` | Listas estructuradas del padrón |
-| POST | `/api/padron-excel/preview` | Columnas y sample de una URL |
+| POST | `/api/padron-excel/preview` | Columnas y sample (URL pub o `spreadsheet_id` + SA) |
+| POST | `/api/padron-excel/sheets` | URL/`spreadsheet_id` compartido al SA → lista de hojas (`title`, `gid`, `index`) |
+| POST | `/api/padron-excel/sheets/row` | Primera fila (headers) de una hoja (`sheet_gid` y/o `sheet_title`). Alias: `/sheets/column` |
+| GET | `/api/padron-excel/proceso/{n}` | FacturIA `json_data` → fuzzy match contra padrón actual (`force_refresh` default true) |
 | POST | `/api/padron-excel/match` | `field`: `proveedor` \| `producto` \| `concepto` \| `forma_pago`; opcional `cuit`, `unidades_medida` |
 | GET/POST | `/api/padron-excel/facturas` | CRUD de facturas con matching |
 | GET | `/api/padron-excel/facturas/export/csv` | Export formato Excel del cliente |
+
+### `POST /api/padron-excel/sheets`
+
+Body: `{ "url": "https://docs.google.com/spreadsheets/d/<id>/edit" }` o `{ "spreadsheet_id": "<id>" }`.
+
+Respuesta: `{ "spreadsheet_id", "title", "sheets": [{ "title", "sheet_id", "gid", "index" }] }`.
+
+### `POST /api/padron-excel/sheets/row`
+
+Body: `{ "url"|"spreadsheet_id", "sheet_gid"?, "sheet_title"?, "skip_empty": true }`. Si no pasás hoja, usa la primera pestaña. Alias legacy: `/sheets/column` (misma respuesta).
+
+Respuesta: `{ "spreadsheet_id", "sheet_title", "sheet_gid", "values": [...], "count" }` — celdas de la **fila 1** (headers).
+
+### Matching proceso FacturIA
+
+`GET /api/padron-excel/proceso/{n}?empresa=&company_id=&force_refresh=1` — lee el `json_data` del proceso, fuerza refresh del Sheet/Excel y devuelve facturas matcheadas + padrón.
+
+Iframe: `/static/padron_excel.html?embed=1&proceso={n}&empresa={id}`. Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (path o JSON) para Sheets privados.
 
 ---
 
