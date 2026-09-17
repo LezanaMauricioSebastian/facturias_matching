@@ -22,6 +22,7 @@ from facturia_matching.padron.google_sheets import (
     extract_gid,
     extract_spreadsheet_id,
     fetch_first_row,
+    friendly_sheet_access_error,
     list_spreadsheet_sheets,
     service_account_configured,
     service_account_email,
@@ -79,7 +80,7 @@ class MatchRequest(BaseModel):
     cuit: Optional[str] = None
     unidades_medida: Optional[List[str]] = None
     company_id: int = 0
-    force_refresh: bool = False
+    force_refresh: bool = True
 
 
 class InvoiceInput(BaseModel):
@@ -219,18 +220,29 @@ async def upload_padron(
 
 @router.get("/data")
 def get_data(
-    company_id: int = Query(0),
+    company_id: Optional[int] = Query(
+        None, description="Padrón Sheet; si se omite, usa empresa o 0."
+    ),
+    empresa: Optional[str] = Query(
+        None, description="Empresa FacturIA (default company_id si no viene company_id)."
+    ),
     sheet_url: Optional[str] = Query(None),
-    force: bool = Query(False),
+    force: bool = Query(True),
 ):
+    cid = company_id
+    if cid is None:
+        if empresa is not None and str(empresa).strip().isdigit():
+            cid = int(str(empresa).strip())
+        else:
+            cid = 0
     if sheet_url:
-        cfg_store.save_config(company_id, {"sheet_url": sheet_url})
-        invalidate_data_cache(company_id)
+        cfg_store.save_config(cid, {"sheet_url": sheet_url})
+        invalidate_data_cache(cid)
         force = True
     if force:
         reset_cache()
-        invalidate_data_cache(company_id)
-    padron = load_padron(company_id, force=force)
+        invalidate_data_cache(cid)
+    padron = load_padron(cid, force=force)
     return {
         "proveedores": padron["proveedores"],
         "productos": padron["productos"],
@@ -239,9 +251,12 @@ def get_data(
         "categoria_map": padron["categoria_map"],
         "config": padron["config"],
         "sheet_source_mode": padron.get("sheet_source_mode"),
+        "sheet_error": padron.get("sheet_error"),
         "google_sa_configured": service_account_configured(),
         "google_sa_email": service_account_email(),
         "refreshed": force,
+        "company_id": cid,
+        "empresa": empresa,
         "row_count": {
             "proveedores": len(padron["proveedores"]),
             "productos": len(padron["productos"]),
@@ -265,7 +280,10 @@ def preview_sheet(body: PreviewRequest):
         url = (body.url or "").strip() or cfg_store.DEFAULT_SHEET_URL
         return sheet_preview(url=url, max_rows=body.max_rows)
     except Exception as e:
-        raise HTTPException(400, f"Error fetching sheet: {e}")
+        sid = (body.spreadsheet_id or "").strip() or (
+            extract_spreadsheet_id(body.url) or ""
+        )
+        raise HTTPException(400, friendly_sheet_access_error(e, spreadsheet_id=sid))
 
 
 def _resolve_spreadsheet_id(url: str = "", spreadsheet_id: str = "") -> str:
@@ -288,7 +306,7 @@ def list_sheets(body: SheetsListRequest):
     try:
         return list_spreadsheet_sheets(sid)
     except Exception as e:
-        raise HTTPException(400, f"Error listando hojas: {e}") from e
+        raise HTTPException(400, friendly_sheet_access_error(e, spreadsheet_id=sid)) from e
 
 
 @router.post("/sheets/row")
@@ -336,6 +354,7 @@ def get_proceso_matched(
         if raw is not None and str(raw).strip().isdigit():
             cid = int(raw)
 
+    # Matching siempre baja el Sheet actual (salvo force_refresh=0 explícito).
     if force_refresh:
         reset_cache()
         invalidate_data_cache(cid)
@@ -345,6 +364,8 @@ def get_proceso_matched(
     except Exception as e:
         raise HTTPException(400, f"No se pudo parsear json_data: {e}") from e
 
+    # Una sola lectura forzada; el resto reusa el cache recién llenado.
+    load_padron(cid, force=bool(force_refresh))
     matched = [
         _match_invoice(InvoiceInput(**d), force_refresh=False) for d in drafts
     ]
@@ -368,7 +389,9 @@ def get_proceso_matched(
             },
         },
         "sheet_source_mode": padron.get("sheet_source_mode"),
+        "sheet_error": padron.get("sheet_error"),
         "google_sa_configured": service_account_configured(),
+        "google_sa_email": service_account_email(),
     }
 
 
@@ -509,7 +532,7 @@ def invalidate_cache(company_id: int = Query(0)):
     invalidate_data_cache(company_id)
     padron = load_padron(company_id, force=True)
     return {
-        "ok": True,
+        "ok": not bool(padron.get("sheet_error")),
         "row_count": {
             "proveedores": len(padron["proveedores"]),
             "productos": len(padron["productos"]),
@@ -517,4 +540,6 @@ def invalidate_cache(company_id: int = Query(0)):
             "conceptos": len(padron["conceptos"]),
         },
         "sheet_source_mode": padron.get("sheet_source_mode"),
+        "sheet_error": padron.get("sheet_error"),
+        "google_sa_email": service_account_email(),
     }

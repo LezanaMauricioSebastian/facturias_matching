@@ -1,6 +1,6 @@
-"""Sugerencia de UM vía Claude cuando el fallback a Units del producto es ambiguo.
+"""Sugerencia de UM vía DeepSeek cuando el fallback a Units del producto es ambiguo.
 
-Se activa con FACTURIA_UOM_AI_ENABLED=1 y ANTHROPIC_API_KEY. Si falla o está
+Se activa con FACTURIA_UOM_AI_ENABLED=1 y DEEPSEEK_API_KEY. Si falla o está
 apagado, el matching sigue con el default de compra del producto (como antes).
 """
 
@@ -10,13 +10,15 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+
 from facturia_matching.infra.env import env_strip
 from facturia_matching.odoo.purchase_matching._util import _normalize, _normalize_key
 
 logger = logging.getLogger(__name__)
 
-# Sonnet 4 dated ID was retired (404); use current dateless Sonnet 4.6.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "deepseek-flash"
+_DEFAULT_BASE_URL = "https://api.deepseek.com"
 _CACHE: Dict[Tuple[int, str], Optional[int]] = {}
 _ID_RE = re.compile(r"\b(\d+)\b")
 
@@ -26,7 +28,7 @@ def is_uom_ai_enabled() -> bool:
     flag = env_strip("FACTURIA_UOM_AI_ENABLED", "0").lower()
     if flag not in ("1", "true", "yes", "on"):
         return False
-    return bool(env_strip("ANTHROPIC_API_KEY"))
+    return bool(env_strip("DEEPSEEK_API_KEY"))
 
 
 def clear_uom_ai_cache() -> None:
@@ -79,24 +81,38 @@ def _parse_uom_id(text: str, valid_ids: set) -> Optional[int]:
     return None
 
 
-def _call_claude(prompt: str) -> str:
-    """Llama a Anthropic Messages API. Import lazy para no exigir el paquete si está off."""
-    import anthropic
-
-    api_key = env_strip("ANTHROPIC_API_KEY")
+def _call_deepseek(prompt: str) -> str:
+    """Llama a DeepSeek Chat Completions (OpenAI-compatible). Thinking off."""
+    api_key = env_strip("DEEPSEEK_API_KEY")
     model = env_strip("FACTURIA_UOM_AI_MODEL") or _DEFAULT_MODEL
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model,
-        max_tokens=32,
-        messages=[{"role": "user", "content": prompt}],
+    base = (env_strip("DEEPSEEK_BASE_URL") or _DEFAULT_BASE_URL).rstrip("/")
+    url = f"{base}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 32,
+        # Thinking está on por default y gasta tokens; para un ID no hace falta.
+        "thinking": {"type": "disabled"},
+    }
+    resp = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=30,
     )
-    parts: List[str] = []
-    for block in message.content or []:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(str(text))
-    return " ".join(parts).strip()
+    if not resp.ok:
+        body = (resp.text or "")[:300]
+        raise RuntimeError(f"DeepSeek HTTP {resp.status_code}: {body}")
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    return str(content or "").strip()
 
 
 def suggest_uom(
@@ -107,7 +123,7 @@ def suggest_uom(
     uoms: List[Dict[str, Any]],
 ) -> Optional[int]:
     """
-    Devuelve el id de UM sugerido por Claude, o None.
+    Devuelve el id de UM sugerido por DeepSeek, o None.
 
     Cache en memoria por (product_id, label_key) para no repetir llamadas en el
     mismo proceso. Ante error / respuesta inválida: log warning y None.
@@ -137,7 +153,7 @@ def suggest_uom(
         uoms=options,
     )
     try:
-        raw = _call_claude(prompt)
+        raw = _call_deepseek(prompt)
         chosen = _parse_uom_id(raw, valid_ids)
         if chosen is None:
             logger.warning(
@@ -150,7 +166,7 @@ def suggest_uom(
         return chosen
     except Exception as e:
         logger.warning(
-            "uom_ai: fallo Claude product_id=%s label=%r: %s",
+            "uom_ai: fallo DeepSeek product_id=%s label=%r: %s",
             product_id,
             label,
             e,

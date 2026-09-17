@@ -72,6 +72,7 @@ from facturia_matching.odoo.purchase_matching.oc import (
     _resolve_po_partner_scope,
     _row_match_context,
     fetch_partner_po_lines,
+    partner_has_confirmed_pos,
     score_oc_candidates,
 )
 from facturia_matching.odoo.purchase_matching.scoring import (
@@ -257,6 +258,7 @@ __all__ = [
     "has_any_oc_candidates",
     "is_purchase_odoo_configured",
     "list_uoms_for_product",
+    "partner_has_confirmed_pos",
     "match_invoice_row",
     "odoo_available_fields",
     "odoo_model_field_names",

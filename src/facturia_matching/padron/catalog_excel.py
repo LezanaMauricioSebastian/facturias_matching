@@ -4,7 +4,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 from facturia_matching.padron import padron_config_store as cfg_store
-from facturia_matching.padron.google_sheets import resolve_sheet_source
+from facturia_matching.padron.google_sheets import (
+    friendly_sheet_access_error,
+    resolve_sheet_source,
+)
 from facturia_matching.padron.sheet_loader import (
     extract_category_map,
     extract_category_map_from_rows,
@@ -26,7 +29,8 @@ def _rows_for_kind(cfg: Dict[str, Any], kind: str, sheet_rows: Optional[List[Dic
     return sheet_rows or []
 
 
-def load_padron(company_id: int = 0, force: bool = False) -> Dict[str, Any]:
+def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
+    """Load padron lists. ``force=True`` (default) re-reads Sheet; pass False to reuse TTL cache."""
     cfg = cfg_store.get_config(company_id)
     ttl = int(cfg.get("refresh_minutes") or 15) * 60
     cache_key = str(company_id)
@@ -38,26 +42,36 @@ def load_padron(company_id: int = 0, force: bool = False) -> Dict[str, Any]:
     mode, source, gid = resolve_sheet_source(cfg)
     sheet_rows: List[Dict[str, str]] = []
     cat_map: Dict[str, str] = {}
+    sheet_error: Optional[str] = None
+
     if mode == "private" and source:
         try:
             sheet_rows = fetch_sheet(
                 spreadsheet_id=source, gid=gid, ttl=ttl, force=force
             )
-        except Exception:
+        except Exception as e:
+            sheet_error = friendly_sheet_access_error(e, spreadsheet_id=str(source))
             sheet_rows = []
-        try:
-            cat_map = extract_category_map(spreadsheet_id=source, gid=gid)
-        except Exception:
-            cat_map = {}
+        if not sheet_error:
+            try:
+                cat_map = extract_category_map(spreadsheet_id=source, gid=gid)
+            except Exception:
+                cat_map = {}
     elif mode == "public" and source:
         try:
             sheet_rows = fetch_sheet(url=source, ttl=ttl, force=force)
-        except Exception:
+        except Exception as e:
+            sheet_error = f"No se pudo leer la URL publicada del Sheet: {e}"
             sheet_rows = []
-        try:
-            cat_map = extract_category_map(url=source)
-        except Exception:
-            cat_map = {}
+        if not sheet_error:
+            try:
+                cat_map = extract_category_map(url=source)
+            except Exception:
+                cat_map = {}
+    elif mode == "private_unconfigured":
+        sheet_error = (
+            "Hay spreadsheet_id pero falta GOOGLE_SERVICE_ACCOUNT_JSON en el server."
+        )
 
     mapping = cfg.get("mapping") or {}
     m_prov = mapping.get("proveedores") or {}
@@ -100,8 +114,12 @@ def load_padron(company_id: int = 0, force: bool = False) -> Dict[str, Any]:
         "categoria_map": cat_map,
         "config": cfg,
         "sheet_source_mode": mode or "none",
+        "sheet_error": sheet_error,
         "_ts": time.time(),
     }
+    # Don't cache failed private reads for the full TTL — retry sooner.
+    if sheet_error:
+        data["_ts"] = time.time() - max(ttl - 60, 0)
     _data_cache[cache_key] = data
     return data
 

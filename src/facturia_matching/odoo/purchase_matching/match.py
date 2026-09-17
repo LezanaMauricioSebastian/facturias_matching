@@ -14,6 +14,7 @@ from facturia_matching.odoo.purchase_matching._util import (
 from facturia_matching.odoo.purchase_matching.oc import (
     _min_match_score,
     _po_cache,
+    partner_has_confirmed_pos,
     score_oc_candidates,
 )
 from facturia_matching.odoo.purchase_matching.scoring import (
@@ -636,6 +637,40 @@ def has_any_oc_candidates(oc_candidates_by_comprobante: Dict[str, Any]) -> bool:
     return any(bool(cands) for cands in (oc_candidates_by_comprobante or {}).values())
 
 
+def _po_order_limit_for_enrich(
+    *,
+    fetch_candidates: bool,
+    saved_oid: Optional[int] = None,
+) -> Optional[int]:
+    """Tope de OCs en carga inicial; unlimited si hay búsqueda on-demand o OC guardada."""
+    if fetch_candidates or saved_oid:
+        return None
+    from facturia_matching.infra.config import ODOO_PO_ENRICH_ORDER_LIMIT
+
+    lim = int(ODOO_PO_ENRICH_ORDER_LIMIT or 0)
+    return lim if lim > 0 else None
+
+
+def _fetch_partner_lines_for_enrich(
+    pm: Any,
+    partner_id: int,
+    partner_lines: Dict[int, List[Dict[str, Any]]],
+    *,
+    fetch_candidates: bool,
+    saved_oid: Optional[int],
+    summary: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    if partner_id not in partner_lines:
+        limit = _po_order_limit_for_enrich(
+            fetch_candidates=fetch_candidates, saved_oid=saved_oid
+        )
+        partner_lines[partner_id] = pm.fetch_partner_po_lines(
+            partner_id, limit_orders=limit
+        )
+        summary["partners"] += 1
+    return partner_lines[partner_id]
+
+
 def enrich_rows_with_purchase_data(
     rows: List[Dict[str, Any]],
     *,
@@ -698,15 +733,26 @@ def enrich_rows_with_purchase_data(
             if not partner_raw.isdigit():
                 continue
             partner_id = int(partner_raw)
-            if partner_id not in partner_lines:
-                partner_lines[partner_id] = pm.fetch_partner_po_lines(partner_id)
+            saved_oid = _saved_oc_order_id(comprobante_rows)
+            # Carga fría sin OC guardada: solo saber si hay OCs (RPC limit=1).
+            if not fetch_candidates and not saved_oid:
+                has = partner_has_confirmed_pos(partner_id)
                 summary["partners"] += 1
-            po_lines = partner_lines[partner_id]
+                summary["oc_provider_has_ocs_by_comprobante"][comp_key] = has
+                summary["oc_candidates_by_comprobante"][comp_key] = []
+                continue
+            po_lines = _fetch_partner_lines_for_enrich(
+                pm,
+                partner_id,
+                partner_lines,
+                fetch_candidates=fetch_candidates,
+                saved_oid=saved_oid,
+                summary=summary,
+            )
             summary["oc_provider_has_ocs_by_comprobante"][comp_key] = bool(po_lines)
             summary["oc_candidates_by_comprobante"][comp_key] = (
                 score_oc_candidates(comprobante_rows, po_lines) if fetch_candidates else []
             )
-            saved_oid = _saved_oc_order_id(comprobante_rows)
             selected_oid: Optional[int] = None
             selected_name = ""
             if saved_oid and any(int(p.get("order_id") or 0) == saved_oid for p in po_lines):
@@ -742,21 +788,24 @@ def enrich_rows_with_purchase_data(
             continue
 
         partner_id = int(partner_raw)
-        if partner_id not in partner_lines:
-            partner_lines[partner_id] = pm.fetch_partner_po_lines(partner_id)
-            summary["partners"] += 1
+        saved_oid = _saved_oc_order_id(comprobante_rows)
+        po_lines = _fetch_partner_lines_for_enrich(
+            pm,
+            partner_id,
+            partner_lines,
+            fetch_candidates=fetch_candidates,
+            saved_oid=saved_oid,
+            summary=summary,
+        )
 
-        po_lines = partner_lines[partner_id]
         summary["oc_provider_has_ocs_by_comprobante"][comp_key] = bool(po_lines)
 
         if fetch_candidates:
             candidates = score_oc_candidates(comprobante_rows, po_lines)
             summary["oc_candidates_by_comprobante"][comp_key] = candidates
-            saved_oid = _saved_oc_order_id(comprobante_rows)
             selected_oid, selected_name = _resolve_selected_oc(candidates, saved_oid)
         else:
             summary["oc_candidates_by_comprobante"][comp_key] = []
-            saved_oid = _saved_oc_order_id(comprobante_rows)
             selected_oid = None
             selected_name = ""
             if saved_oid and any(int(p.get("order_id") or 0) == saved_oid for p in po_lines):

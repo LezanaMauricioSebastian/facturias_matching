@@ -69,6 +69,16 @@ export function odooTenantBadgeLabel(state) {
 export function updateOdooTenantBadge(state, refs) {
   const badge = refs?.odooTenantBadge;
   if (!badge) return;
+  if (state?.excelUser) {
+    badge.textContent = "Padrón Excel";
+    badge.dataset.profile = "excel";
+    badge.hidden = false;
+    const err = state?.excelPadron?.sheet_error;
+    badge.title = err
+      ? `Error Sheet: ${err}`
+      : "Matching contra padrón Excel/Sheets (sin Odoo)";
+    return;
+  }
   const profile = activeOdooProfile(state);
   const label = odooTenantBadgeLabel(state);
   badge.textContent = label;

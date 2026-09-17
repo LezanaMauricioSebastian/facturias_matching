@@ -40,7 +40,7 @@ src/facturia_matching/odoo/purchase_matching/
 ├── __init__.py   # Reexporta API pública + privados usados por tests
 ├── _util.py      # normalize, parse_amount, config, _pkg, _is_content_row
 ├── uom.py        # Catálogo UM, Odoo 19, convert, apply_product_uom_to_row
-├── uom_ai.py     # Sugerencia Claude antes del fallback a Unidades
+├── uom_ai.py     # Sugerencia DeepSeek antes del fallback a Unidades
 ├── scoring.py    # Tokens, Dinner notes, _line_match_score
 ├── oc.py         # fetch_partner_po_lines, score_oc_candidates
 └── match.py      # match_invoice_row, enrich, select-oc, rematch, clear cache
@@ -79,7 +79,7 @@ scoring.py
 2. **UM de memoria** (`product_label_memory.uom_id`) — mismo proveedor + etiqueta; no re-escala qty.
 3. **UM elegida a mano** (`POST rematch-uom` con `uom_id`) — misma categoría; re-escala desde qty/UM original.
 4. **Excepción peso FacturIA** — `unidad_medida` `KG`/`g` y existe en la categoría del producto → preferir **kg** sobre pack/`uom_po`.
-5. **Sugerencia Claude** (`uom_ai`) — si `FACTURIA_UOM_AI_ENABLED=1` + `ANTHROPIC_API_KEY`, hay descripción de ítem y **>1 UM** en la categoría del producto → Claude elige el ID; stamp `__um_note` con `UM sugerida por IA`. Reemplaza el fallback a Unidades cuando el default de compra suele ser incorrecto (packs / kg / litros en gastronomía).
+5. **Sugerencia DeepSeek** (`uom_ai`) — si `FACTURIA_UOM_AI_ENABLED=1` + `DEEPSEEK_API_KEY`, hay descripción de ítem y **>1 UM** en la categoría del producto → DeepSeek elige el ID; stamp `__um_note` con `UM sugerida por IA`. Reemplaza el fallback a Unidades cuando el default de compra suele ser incorrecto (packs / kg / litros en gastronomía).
 6. **Default de compra del producto** (`uom_po_id` / `uom_id`) — **no** la UM de la línea OC (solo si la IA está off, falla o no hay opciones).
 7. **Fallback raro** — match OC sin `product_id` → UM de la línea OC.
 

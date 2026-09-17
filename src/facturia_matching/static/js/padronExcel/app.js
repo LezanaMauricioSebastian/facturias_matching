@@ -50,10 +50,7 @@ const $sheetUrl = document.getElementById('sheetUrl');
 const $btnPreview = document.getElementById('btnPreview');
 const $btnSaveConfig = document.getElementById('btnSaveConfig');
 const $btnRefreshPadron = document.getElementById('btnRefreshPadron');
-const $uploadKind = document.getElementById('uploadKind');
-const $uploadFile = document.getElementById('uploadFile');
-const $btnUpload = document.getElementById('btnUpload');
-const $uploadStatus = document.getElementById('uploadStatus');
+const $configStatus = document.getElementById('configStatus');
 const $refreshStatus = document.getElementById('refreshStatus');
 const $padronCounts = document.getElementById('padronCounts');
 
@@ -250,11 +247,18 @@ async function runPreview() {
   if (!prov && !cuit && !fp && !lineas.length) { $preview.innerHTML = ''; return; }
 
   const chips = [];
+  // Un solo force_refresh al inicio del preview; el resto usa el padrón recién bajado.
+  let forceRefresh = true;
+  const matchBody = (extra) => {
+    const body = { company_id: _companyId, force_refresh: forceRefresh, ...extra };
+    forceRefresh = false;
+    return body;
+  };
   try {
     if (prov || cuit) {
       const r = await api('/match', {
         method: 'POST',
-        body: JSON.stringify({ field: 'proveedor', queries: [prov || cuit], cuit, company_id: _companyId }),
+        body: JSON.stringify(matchBody({ field: 'proveedor', queries: [prov || cuit], cuit })),
       });
       const m = r.results[0];
       if (m?.match) {
@@ -263,7 +267,7 @@ async function runPreview() {
       }
     }
     if (lineas.length) {
-      const conc = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'concepto', queries: lineas, company_id: _companyId }) });
+      const conc = await api('/match', { method: 'POST', body: JSON.stringify(matchBody({ field: 'concepto', queries: lineas })) });
       for (const m of conc.results) {
         if (m?.match) {
           const cat = m.categoria ? `<span class="cat">(${m.categoria})</span>` : '';
@@ -272,7 +276,7 @@ async function runPreview() {
       }
       const prod = await api('/match', {
         method: 'POST',
-        body: JSON.stringify({ field: 'producto', queries: lineas, unidades_medida, company_id: _companyId }),
+        body: JSON.stringify(matchBody({ field: 'producto', queries: lineas, unidades_medida })),
       });
       for (const m of prod.results) {
         if (m?.match) {
@@ -282,7 +286,7 @@ async function runPreview() {
       }
     }
     if (fp) {
-      const r = await api('/match', { method: 'POST', body: JSON.stringify({ field: 'forma_pago', queries: [fp], company_id: _companyId }) });
+      const r = await api('/match', { method: 'POST', body: JSON.stringify(matchBody({ field: 'forma_pago', queries: [fp] })) });
       const m = r.results[0];
       if (m?.match) chips.push(`<div class="match-chip"><span class="label">F.Pago:</span><span class="value">${m.match}</span>${badge(m.score)}</div>`);
     }
@@ -380,6 +384,7 @@ function applySaHint(cfgOrData) {
   const email = cfgOrData.google_sa_email || '';
   const mode = cfgOrData.sheet_source_mode || (cfgOrData.config && cfgOrData.config.sheet_source_mode) || '';
   const counts = cfgOrData.row_count || {};
+  const sheetError = cfgOrData.sheet_error || '';
   if ($saEmailInline && email) $saEmailInline.textContent = email;
 
   const modeLabel = mode === 'private'
@@ -391,21 +396,27 @@ function applySaHint(cfgOrData) {
         : (mode || 'sin fuente');
 
   if ($sourceStatus) {
-    const n = counts.proveedores != null
-      ? ` · prov ${counts.proveedores || 0} · conceptos ${counts.conceptos || 0} · f.pago ${counts.formas_pago || 0}`
-      : '';
-    $sourceStatus.innerHTML = ok
-      ? `<span class="status-pill status-ok">Fuente: ${modeLabel}${n}</span>`
-      : `<span class="status-pill status-loading">Fuente: ${modeLabel}${n} · SA no configurada</span>`;
+    if (sheetError) {
+      $sourceStatus.innerHTML = `<span class="status-pill status-loading" style="background:#fee2e2;color:#991b1b;max-width:100%;white-space:normal;display:inline-block;line-height:1.35">${sheetError}</span>`;
+    } else {
+      const n = counts.proveedores != null
+        ? ` · prov ${counts.proveedores || 0} · conceptos ${counts.conceptos || 0} · f.pago ${counts.formas_pago || 0}`
+        : '';
+      $sourceStatus.innerHTML = ok
+        ? `<span class="status-pill status-ok">Fuente: ${modeLabel}${n}</span>`
+        : `<span class="status-pill status-loading">Fuente: ${modeLabel}${n} · SA no configurada</span>`;
+    }
   }
 
   if ($saHint) {
-    if (ok && email) {
+    if (sheetError) {
+      $saHint.textContent = sheetError;
+    } else if (ok && email) {
       $saHint.textContent = `SA activa: ${email}. Compartí el Sheet (Lector) a ese mail.`;
     } else if (ok) {
       $saHint.textContent = 'Service account configurada en el server.';
     } else {
-      $saHint.textContent = 'Sin GOOGLE_SERVICE_ACCOUNT_JSON: solo pub CSV o upload.';
+      $saHint.textContent = 'Sin GOOGLE_SERVICE_ACCOUNT_JSON: solo URL pub CSV.';
     }
   }
 }
@@ -429,7 +440,7 @@ if ($sheetUrl) {
   $sheetUrl.addEventListener('blur', syncIdsFromSheetUrl);
 }
 
-async function loadPadron(force = false) {
+async function loadPadron(force = true) {
   const data = await api(`/data?company_id=${_companyId}&force=${force ? '1' : '0'}`);
   const cfg = data.config || {};
   if ($sheetUrl) $sheetUrl.value = cfg.sheet_url || '';
@@ -456,6 +467,10 @@ async function loadPadron(force = false) {
     fillAllMaps(_columns, cfg.mapping);
   }
   renderLists(data);
+  if (data.sheet_error) {
+    setStatus('Error de fuente', false);
+    if ($refreshStatus) $refreshStatus.textContent = data.sheet_error;
+  }
   return data;
 }
 
@@ -464,11 +479,17 @@ $btnRefreshPadron.addEventListener('click', async () => {
   $refreshStatus.textContent = 'Bajando Sheet...';
   setStatus('Actualizando padrón...', false);
   try {
-    await api(`/invalidate-cache?company_id=${_companyId}`, { method: 'POST' });
+    const inv = await api(`/invalidate-cache?company_id=${_companyId}`, { method: 'POST' });
     const data = await loadPadron(true);
-    const n = data.row_count || {};
-    $refreshStatus.textContent = `Actualizado · prov ${n.proveedores || 0} · prod ${n.productos || 0} · conceptos ${n.conceptos || 0}`;
-    setStatus('Padrón actualizado', true);
+    const err = data.sheet_error || inv.sheet_error;
+    if (err) {
+      $refreshStatus.textContent = err;
+      setStatus('Error de fuente', false);
+    } else {
+      const n = data.row_count || {};
+      $refreshStatus.textContent = `Actualizado · prov ${n.proveedores || 0} · prod ${n.productos || 0} · conceptos ${n.conceptos || 0}`;
+      setStatus('Padrón actualizado', true);
+    }
   } catch (e) {
     $refreshStatus.textContent = e.message;
     setStatus('Error al actualizar', false);
@@ -492,10 +513,10 @@ $btnPreview.addEventListener('click', async () => {
       }),
     });
     fillAllMaps(prev.columns, currentMapping());
-    if ($uploadStatus) $uploadStatus.textContent = `${prev.row_count} filas, ${prev.columns.length} columnas`;
+    if ($configStatus) $configStatus.textContent = `${prev.row_count} filas, ${prev.columns.length} columnas`;
     if ($refreshStatus) $refreshStatus.textContent = 'Lectura OK';
   } catch (e) {
-    if ($uploadStatus) $uploadStatus.textContent = e.message;
+    if ($configStatus) $configStatus.textContent = e.message;
     if ($refreshStatus) $refreshStatus.textContent = e.message;
   }
 });
@@ -515,26 +536,10 @@ $btnSaveConfig.addEventListener('click', async () => {
     });
     const data = await loadPadron(true);
     setStatus('Padrón actualizado', true);
-    if ($uploadStatus) $uploadStatus.textContent = 'Config guardada';
+    if ($configStatus) $configStatus.textContent = 'Config guardada';
     renderLists(data);
   } catch (e) {
-    if ($uploadStatus) $uploadStatus.textContent = e.message;
-  }
-});
-
-$btnUpload.addEventListener('click', async () => {
-  const file = $uploadFile.files[0];
-  if (!file) { $uploadStatus.textContent = 'Elegí un archivo'; return; }
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('kind', $uploadKind.value);
-  fd.append('company_id', String(_companyId));
-  try {
-    const res = await api('/upload', { method: 'POST', body: fd });
-    fillAllMaps(res.columns, currentMapping());
-    $uploadStatus.textContent = `Subido ${res.filename} (${res.row_count} filas). Mapeá columnas y guardá.`;
-  } catch (e) {
-    $uploadStatus.textContent = e.message;
+    if ($configStatus) $configStatus.textContent = e.message;
   }
 });
 
@@ -675,8 +680,12 @@ async function init() {
       await loadProcesoMatched();
       setStatus('Match listo', true);
     } else {
-      await loadPadron();
-      setStatus('Padrón listo', true);
+      const data = await loadPadron();
+      if (data.sheet_error) {
+        setStatus('Error de fuente', false);
+      } else {
+        setStatus('Padrón listo', true);
+      }
       loadTable();
     }
   } catch (e) {

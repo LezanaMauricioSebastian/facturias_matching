@@ -23,6 +23,16 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
 
     const syncDisplayFromValue = () => {
       const v = getValue();
+      if (!v && state.excelUser) {
+        if (k === "partner_id") {
+          input.value = String(state.rows[r]?.["Nombre de Proveedor"] || state.rows[r]?.__excel_proveedor || "").trim();
+          return;
+        }
+        if (k === "invoice_line_ids/product_id") {
+          input.value = String(state.rows[r]?.["Nombre de producto"] || state.rows[r]?.__excel_producto || "").trim();
+          return;
+        }
+      }
       input.value = v ? findOptionLabel(getOpts(), v) || v : "";
     };
 
@@ -98,6 +108,13 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
       const changedProduct =
         k === "invoice_line_ids/product_id" && v !== String(state.rows[r][k] ?? "");
       state.rows[r][k] = v;
+      if (state.excelUser && k === "partner_id") {
+        state.rows[r]["Nombre de Proveedor"] = v;
+      }
+      if (state.excelUser && k === "invoice_line_ids/product_id") {
+        state.rows[r]["Nombre de producto"] = v;
+        state.rows[r].__excel_producto = v;
+      }
       // Al cambiar producto: no dejar UM del producto anterior; rematch-uom completa.
       if (changedProduct) {
         if (state.rows[r].__product_suggested) {

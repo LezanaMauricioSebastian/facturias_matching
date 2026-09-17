@@ -11,7 +11,7 @@ Aplicación web (FastAPI + JS vanilla) que:
 3. Muestra una tabla editable con vista por comprobante.
 4. Persiste ediciones en **MySQL** (`process_conversions`).
 5. Exporta **CSV** o importa borradores a **Odoo TEST**.
-6. Para clientes **sin Odoo**, hay un padrón Excel/Sheets (`/static/padron_excel.html`) que matchea proveedores (CUIT / razón / fantasía), productos + UoM, conceptos y forma de pago. Fuentes: Sheets privado vía service account, `pub?output=csv`, o upload. Iframe FacturIA: `?embed=1&proceso=`. Ver [padron-excel.md](padron-excel.md).
+6. Para clientes **sin Odoo**, hay un padrón Excel/Sheets (`/static/padron_excel.html`) y también la UI principal con `?excel_user=1` (o `?pepe=1`) que matchea proveedores (CUIT / razón / fantasía), productos + UoM, conceptos y forma de pago. Fuentes: Sheets privado vía service account, `pub?output=csv`, o upload. Ver [padron-excel.md](padron-excel.md).
 
 ## Diagrama de capas
 
@@ -174,7 +174,7 @@ facturia-matching-ui/
 | Impuestos / IVA / IIBB | `padron/taxes.py`, `core/comprobante_tax.py`, [import-odoo/](import-odoo/README.md), [iva-y-import-odoo.md](iva-y-import-odoo.md), [guia-usuario.md](guia-usuario.md) |
 | Import a Odoo | [import-odoo/](import-odoo/README.md), `odoo/import_/` |
 | Matching de producto (Odoo) | `odoo/purchase_matching/`, [import-odoo/purchase-oc.md](import-odoo/purchase-oc.md) |
-| Padrón Excel / Sheets (clientes sin Odoo) | [padron-excel.md](padron-excel.md), `padron/excel.py`, `api/route_padron_excel.py` |
+| Padrón Excel / Sheets (clientes sin Odoo) | [padron-excel.md](padron-excel.md), `padron/excel.py`, `padron/excel_user.py`, `api/route_padron_excel.py`, `?excel_user=1` en UI principal |
 | Guardar / cargar ediciones | `persistence/process_conversions.py`, `static/js/api/autoSave.js` |
 | Nuevo endpoint | `api/route_meta.py` / `route_odoo.py` / `route_proceso.py` (+ facade `routes.py`) |
 | Variables de entorno | `.env.example`, `infra/config.py`, `odoo/env.py` |

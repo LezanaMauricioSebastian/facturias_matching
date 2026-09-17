@@ -30,7 +30,8 @@ export function validateRows(state) {
     if (!String(row?.partner_id ?? "").trim()) {
       return `Proveedor vacío en partner_id (fila ${idx + 1}).`;
     }
-    if (!String(row?.journal_id ?? "").trim()) {
+    // Modo Excel: sin Odoo; no exigir diario/cuenta.
+    if (!state.excelUser && !String(row?.journal_id ?? "").trim()) {
       return `Diario vacío en journal_id (fila ${idx + 1}).`;
     }
   }
@@ -82,12 +83,14 @@ export function validateRows(state) {
     }
   }
 
-  const accountKey = "invoice_line_ids/account_id";
-  for (let idx = 0; idx < rows.length; idx++) {
-    const row = rows[idx];
-    if (!rowHasLineContent(row)) continue;
-    const acc = String(row?.[accountKey] ?? "").trim();
-    if (!acc) return `Cuenta contable vacía en ${accountKey} (fila ${idx + 1}).`;
+  if (!state.excelUser) {
+    const accountKey = "invoice_line_ids/account_id";
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
+      if (!rowHasLineContent(row)) continue;
+      const acc = String(row?.[accountKey] ?? "").trim();
+      if (!acc) return `Cuenta contable vacía en ${accountKey} (fila ${idx + 1}).`;
+    }
   }
 
   const requiredDateFormat = "DD/MM/YYYY";

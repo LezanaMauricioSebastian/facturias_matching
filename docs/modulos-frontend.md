@@ -10,7 +10,7 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 |---------|-----|
 | `main.js` | `init()`: crea state, DOM refs, carga bootstrap, wire botones (buscar, CSV, Odoo, revertir), OC picker; delegación en `#tableWrap` para `+` / `×` de otros impuestos. Con `?proceso=` en URL: dispara **en paralelo** `fetchProcesoPayload` ∥ `loadMetaAndOptions`, aplica bootstrap y luego el payload del proceso. |
 | `app.js` | Legacy/alternativo si existe; el flujo principal es `main.js`. |
-| `core/state.js` | **`createState()`**: `rows`, `options`, `columns`, `purchaseMatching`, `comprobanteTaxModes`, flags autosave. |
+| `core/state.js` | **`createState()`**: `rows`, `options`, `columns`, `purchaseMatching`, `comprobanteTaxModes`, `viewMode` / `carouselIndex` / `unifiedOneLine`, flags autosave. |
 | `core/dom.js` | Referencias a elementos HTML (`getDomRefs`), `setStatus`. |
 | `core/handlers.js` | **`createHandlers`**: callbacks de edición celda, agregar/quitar otro impuesto (`+` / `×`; la `×` no usa `confirm` porque en iframe FacturIA falla en silencio), cambios que disparan re-render y autosave. |
 
@@ -26,7 +26,7 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 | `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). **`syncPurchaseColumns`**: muestra columnas UM/OC si `show_purchase_columns` o si las filas ya traen `__um_empresa` / `__oc_line_id` (reload). UM se inserta entre Cantidad y Precio; cant. pedida/recibida y notas OC quedan antes de Subtotal/Total. |
 | `autoSave.js` | Debounce PUT `/api/proceso/{n}/conversion`; indicador `dirty` / `saveStatus`. |
 | `export.js` | **`descargarCsv`**, **`importarOdoo`**, **`odooImportButtonLabel`**. |
-| `purchase.js` | POST `select-oc`, `rematch-purchase`, `rematch-uom` (UM al cambiar producto o al elegir UM); GET `product-uoms`; cache `state.uomOptionsByProductId`. |
+| `purchase.js` | POST `select-oc`, `rematch-purchase`, `rematch-uom` (UM al cambiar producto o al elegir UM); GET `product-uoms`; cache `state.uomOptionsByProductId`. Con `excel_user`: **Restaurar original** hace `/revert`; **Re-matchear** (`btnRematchExcel` → `rematchearExcelPadron`) relee el Sheet. |
 
 Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.js`.
 
@@ -51,9 +51,22 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | API pública del bloque comprobante (footer expandible). |
-| `render.js` | HTML del pie: subtotal, IVA desglosado, otros impuestos nombrados. |
+| `render.js` | Stack de tarjetas (**Lista**) o una factura (**Carrusel**); **Vista unificada** (una tabla si todas son 1 línea); `setViewMode` / `setUnifiedOneLine` / `shiftCarousel`. |
+| `facturaChrome.js` | Chrome estilo **factura AFIP AR**: emisor \| letra+COD+ORIGINAL \| FACTURA+PV/nro/fecha; banda período/vto; bloque receptor; wire de campos editables (`documentLetterFromLabel`, `splitDocumentNumber`). |
+| `archivoViewer.js` | Botón **Ver factura** + lightbox (PDF/imagen) vía `GET /api/proceso/{n}/archivo`. Visible si la fila trae `__fac_archivo`. |
 | `footer.js` | Inputs del pie (IVA y otros por slot); **`setFooterIvaAmount`** / **`setOtrosFooterAmount`**; al elegir impuesto en columna **`syncOtrosFooterFromRowSelection`** agrega fila nombrada. |
-| `uiState.js` | Expandido/colapsado, clases CSS por modo. |
+| `uiState.js` | Scroll/foco al re-render. |
+
+### Lista / Carrusel
+
+- Toggle en `index.html` (`.viewModeToggle`): **Lista** = stack vertical actual; **Carrusel** = un comprobante a la vez con chrome de factura + nav `N / M`.
+- Preferencia en `localStorage` clave `facturia.viewMode` (`lista` \| `carrusel`). Estado: `state.viewMode`, `state.carouselIndex` (se resetea al cargar proceso).
+- **Vista unificada** (checkbox `#chkUnifiedOneLine`, solo en Lista): aparece únicamente si hay **≥2 comprobantes** y **todos son de 1 línea** (`classifyProcesoLineMode === "encabezado"`). Al activarla, colapsa el stack en **una sola tabla** (1 `thead` + scroll-x en `.comprobanteTableMount--unified`, tabla `width: max-content` para no encoger columnas). OC / Ver factura pasan a la columna Acciones de cada fila. Preferencia: `localStorage` `facturia.unifiedOneLine` / `state.unifiedOneLine`.
+- Botón **Ampliar** (`▢` / `▣`): en `view-expanded` queda **solo la factura + el botón** (oculta summary, Lista/Carrusel, Vista unificada, nav, OC, total del proceso); `Esc` reduce.
+- Botón **Ver factura**: abre el PDF/foto original enviado a FacturIA (`__fac_archivo` desde `archivo_original` / `file_name` en `json_data`). Requiere `FACTURIA_FILE_URL_TEMPLATE` en el servidor; sin eso el lightbox muestra error claro.
+- En carrusel, `columnsForTaxMode(..., { hideChromeKeys: true })` oculta encabezado del chrome, **Notas OC/UM**, **Cant. pedida/recibida**, **Rubros**, **Diario** y **Cuenta** (`CAROUSEL_HIDE_KEYS`). Rubros/Diario/Cuenta se editan arriba en el chrome.
+- Cache bust de `/` (`route_meta.root`): `?v=` = max mtime de **todo** `static/js` + `static/css` (no solo `main.js` / `render.js`); si no, un cambio solo en `columns.js` deja el grafo ES viejo en el browser.
+- Flechas ←/→ cambian de comprobante si el foco no está en input/combobox.
 
 ---
 
@@ -116,7 +129,7 @@ UI para modo **Solo encabezado** / **1 línea** (`__solo_encabezado`, detección
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | Entry. |
-| `collapse.js` | Colapsa multi-línea a una fila; setea `__solo_encabezado`. |
+| `collapse.js` | Colapsa multi-línea a una fila (`__solo_encabezado` + backup `__solo_encabezado_backup`); pisa IVA/otros de línea con montos FacturIA; `expandSoloEncabezadoAtRow` restaura al destildar. |
 | `groups.js` | Bounds por comprobante; **`isSoloEncabezado`**, **`isEncabezadoOneLineUi`**. |
 | `procesoMode.js` | **`classifyProcesoLineMode`** / **`mixedProcesoLineModeError`** por conteo de filas (1 vs >1). Un proceso no mezcla Encabezado y con Líneas. |
 
@@ -171,18 +184,19 @@ flowchart LR
 
 | Archivo | Rol |
 |---------|-----|
-| `static/html/index.html` | Shell: input proceso, botones, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
-| `static/html/padron_excel.html` | UI padrón Excel/Sheets (clientes sin Odoo). `?embed=1&proceso=` para iframe FacturIA. |
+| `static/html/index.html` | Shell: input proceso, botones, toggle Lista/Carrusel, nav carrusel, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
+| `static/html/padron_excel.html` | UI padrón Excel/Sheets (clientes sin Odoo). `?embed=1&proceso=` para iframe FacturIA. Deep link UI principal: `/?excel_user=1&proceso=` (ver [padron-excel.md](padron-excel.md)). |
 | `static/js/padronExcel/app.js` | Config fuentes (pub / spreadsheet_id+SA / upload), CRUD facturas, deep-link proceso → match. |
 | `static/js/facturiaRaw/tab.js` | Pestaña **FacturIA** (solo `ui_env=dev`): `GET .../facturia-raw`. |
-| `static/css/styles.css` | Layout tabla, modos embed, comprobante footer, combobox. |
+| `static/css/styles.css` | Layout tabla, modos embed, comprobante footer, combobox, chrome factura / toggle vista. |
 
 **Scroll / pies fijos**
 
 | Contenedor | Scroll | Qué queda fijo |
 |------------|--------|----------------|
-| `.tableScroll` | **vertical** (lista) con `max-height` | badges + **Total del proceso** (`.footerBar` fuera del scroll) |
-| `.comprobanteTableMount` | horizontal por tarjeta | header OC + pie del comprobante |
+| `.tableScroll` | **vertical** (lista) con `max-height` | badges + toggle vista + **Total del proceso** (`.footerBar` fuera del scroll) |
+| `.comprobanteTableMount` | horizontal por tarjeta | header OC / chrome factura + pie del comprobante |
+| Carrusel | un `.comprobanteCard--factura` | nav `#carouselNav` fuera del scroll |
 
 En embed/deep-link: `html/body` con `overflow: hidden` + flex; solo scrollea `.tableScroll`. El Total del proceso queda siempre visible abajo de la tarjeta.
 

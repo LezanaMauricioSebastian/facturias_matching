@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { isSoloEncabezado, isEncabezadoOneLineUi } from "../../src/facturia_matching/static/js/singleLine/groups.js";
 import { columnsForTaxMode } from "../../src/facturia_matching/static/js/table/columns.js";
-import { collapseGroupAtRow, prepareSoloEncabezadoRow } from "../../src/facturia_matching/static/js/singleLine/collapse.js";
+import { collapseGroupAtRow, prepareSoloEncabezadoRow, expandSoloEncabezadoAtRow } from "../../src/facturia_matching/static/js/singleLine/collapse.js";
 import {
   classifyProcesoLineMode,
   mixedProcesoLineModeError,
@@ -11,6 +11,7 @@ import {
 import { computeRowTotal } from "../../src/facturia_matching/static/js/rows/totals.js";
 import { lineBase } from "../../src/facturia_matching/static/js/comprobanteTax/lineCalc.js";
 import { renderFooterHtml } from "../../src/facturia_matching/static/js/comprobanteView/footer.js";
+import { toNumberLoose } from "../../src/facturia_matching/static/js/utils/index.js";
 
 describe("isSoloEncabezado", () => {
   it("accepts truthy flag shapes", () => {
@@ -183,6 +184,86 @@ describe("collapseGroupAtRow", () => {
     assert.equal(res.changed, true);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].__solo_encabezado, true);
+  });
+
+  it("overwrites stale line IVA with FacturIA header IVA", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_subtotal: "1221278,23",
+        __fac_iva_monto: "256468,43",
+        __fac_percepciones: [{ ui_monto_key: "otros_impuestos_monto", monto: "22166,20" }],
+        iva_monto: "37844,17",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "500000",
+        "invoice_line_ids/name": "A",
+      },
+      {
+        __comprobante_idx: 0,
+        iva_monto: "100000",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "721278,23",
+        "invoice_line_ids/name": "B",
+      },
+    ];
+    collapseGroupAtRow(rows, 0);
+    assert.equal(rows.length, 1);
+    assert.ok(Math.abs(toNumberLoose(rows[0].iva_monto) - 256468.43) < 0.02);
+    assert.ok(Math.abs(toNumberLoose(rows[0].otros_impuestos_monto) - 22166.2) < 0.02);
+    const total = computeRowTotal(rows[0], "header");
+    assert.ok(Math.abs(total - 1499912.86) < 0.05);
+  });
+
+  it("uses __fac_iva_montos when __fac_iva_monto is empty", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_subtotal: "1000",
+        __fac_iva_montos: JSON.stringify({ "21": "210" }),
+        iva_monto: "50",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "400",
+        "invoice_line_ids/name": "A",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "600",
+        "invoice_line_ids/name": "B",
+      },
+    ];
+    collapseGroupAtRow(rows, 0);
+    assert.ok(Math.abs(toNumberLoose(rows[0].iva_monto) - 210) < 0.02);
+  });
+
+  it("stores backup and expand restores original lines", () => {
+    const rows = [
+      {
+        __comprobante_idx: 0,
+        __fac_subtotal: "1000",
+        "invoice_line_ids/quantity": "2",
+        "invoice_line_ids/price_unit": "100",
+        "invoice_line_ids/name": "A",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "200",
+        "invoice_line_ids/name": "B",
+      },
+    ];
+    collapseGroupAtRow(rows, 0);
+    assert.equal(rows.length, 1);
+    assert.ok(Array.isArray(rows[0].__solo_encabezado_backup));
+    assert.equal(rows[0].__solo_encabezado_backup.length, 2);
+
+    const expanded = expandSoloEncabezadoAtRow(rows, 0);
+    assert.equal(expanded.restored, 2);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]["invoice_line_ids/name"], "A");
+    assert.equal(rows[1]["invoice_line_ids/name"], "B");
+    assert.equal(rows[0].__solo_encabezado, false);
+    assert.equal(rows[0].__solo_encabezado_backup, undefined);
   });
 });
 

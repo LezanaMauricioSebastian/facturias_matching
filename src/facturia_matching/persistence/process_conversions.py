@@ -66,17 +66,23 @@ def resolve_process_row(
 
 
 def _otro_impuesto_slot_has_content(row: Dict[str, Any], n: int) -> bool:
-    """True si el slot N tiene datos visibles en la grilla."""
+    """True si el slot N debe abrir columna en la grilla.
+
+    Slot 1: etiqueta o monto.
+    Slots 2+: solo con etiqueta (botón +). Montos FacturIA sin label alimentan el pie,
+    no columnas vacías «Otros Impuestos (2/3)».
+    """
     from facturia_matching.core.amounts import otros_impuesto_monto_key, parse_amount_loose
     from facturia_matching.infra.normalization import normalize as norm
 
     label_key = "otros_impuestos" if n == 1 else f"otros_impuestos_{n}"
     monto_key = otros_impuesto_monto_key(n)
+    if n >= 2:
+        return bool(norm(row.get(label_key)))
     amt = parse_amount_loose(row.get(monto_key))
     if amt is not None and amt > 0:
         return True
-    # Slot 1: etiqueta del padrón / FacturIA sin monto aún.
-    if n == 1 and norm(row.get(label_key)):
+    if norm(row.get(label_key)):
         return True
     return False
 
@@ -359,15 +365,24 @@ def load_process_rows(
     process_number: str,
     empresa: Optional[str] = None,
     regenerate: bool = False,
+    *,
+    excel_user: bool = False,
+    excel_company_id: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any], str, Optional[Dict[str, Any]]]:
     """
     Load rows for a process.
 
     Returns (rows, etiqueta_options, purchase_summary, source, conversion_meta).
     source is 'saved' or 'generated'.
+    With excel_user=True always regenerates from json_data (Excel/Sheets padrón).
     """
     from facturia_matching.persistence.back_check import get_process
-    from facturia_matching.core.process import attach_facturia_item_quantities, backfill_fac_iva_montos_from_process, parse_process_json
+    from facturia_matching.core.process import (
+        attach_facturia_item_quantities,
+        backfill_fac_iva_montos_from_process,
+        parse_process_json,
+    )
+    from facturia_matching.facturia.archivo import attach_facturia_archivo
     from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data
     from facturia_matching.core.comprobante_tax import (
         propagate_single_footer_iva_to_lines,
@@ -395,6 +410,10 @@ def load_process_rows(
     process_id = process_row.get("id")
     conversion_meta: Optional[Dict[str, Any]] = None
 
+    # Modo Excel: siempre regenerar desde json_data (no usar conversión Odoo guardada).
+    if excel_user:
+        regenerate = True
+
     if not regenerate and process_id:
         saved = get_saved_conversion(int(process_id))
         t_lookup = time.perf_counter()
@@ -405,6 +424,7 @@ def load_process_rows(
             t_remap = time.perf_counter()
             filas = attach_facturia_item_quantities(filas, process_number, empresa=empresa)
             filas = backfill_fac_iva_montos_from_process(filas, process_number, empresa=empresa)
+            filas = attach_facturia_archivo(filas, process_number, empresa=empresa)
             propagate_single_footer_iva_to_lines(filas)
             _strip_empty_extra_otro_impuesto_slots(filas)
             t_attach = time.perf_counter()
@@ -456,12 +476,17 @@ def load_process_rows(
         reason = "regenerate_flag" if regenerate else "no_process_id"
 
     t_before_parse = time.perf_counter()
-    filas, etiqueta_opts, purchase_summary = parse_process_json(process_number, empresa=empresa)
+    filas, etiqueta_opts, purchase_summary = parse_process_json(
+        process_number,
+        empresa=empresa,
+        excel_user=excel_user,
+        excel_company_id=excel_company_id,
+    )
     t_parse = time.perf_counter()
     _strip_empty_extra_otro_impuesto_slots(filas)
     logger.warning(
         "timing load_process_rows pn=%s path=generated reason=%s "
-        "profile=%s template_id=%s process_id=%s rows=%s "
+        "profile=%s template_id=%s process_id=%s rows=%s excel_user=%s "
         "mysql=%.0fms lookup=%.0fms parse=%.0fms total=%.0fms",
         process_number,
         reason,
@@ -469,6 +494,7 @@ def load_process_rows(
         template_id,
         process_id,
         len(filas or []),
+        excel_user,
         (t_mysql - t0) * 1000,
         (t_lookup - t_mysql) * 1000,
         (t_parse - t_before_parse) * 1000,

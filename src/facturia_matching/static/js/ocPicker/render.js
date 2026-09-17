@@ -244,6 +244,7 @@ function comprobanteHasPartner(rows, compKey) {
  * Mismo botón secondary que la barra vieja («Buscar OCs similares» / «OC: … ▾»).
  */
 export function renderOcHeaderControls(state, compKey) {
+  if (state?.excelUser) return "";
   const pm = state.purchaseMatching || {};
   const key = String(compKey);
   const hasOcsFlag = (pm.oc_provider_has_ocs_by_comprobante || {})[key];

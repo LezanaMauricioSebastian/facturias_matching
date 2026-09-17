@@ -282,7 +282,7 @@ Ejemplo: tres líneas con 21 % y 10,5 %, pero en el pie el usuario fija IVA 21 %
 |----------------|---------|
 | **Padrón** | `apply_padron_taxes_to_row` solo llena el slot 1 (`otros_impuestos`); los ids restantes van en `_padron_other_tax_ids` para el import, **sin** crear `otros_impuestos_2..N` en la UI |
 | **Al cargar conversión** | `_strip_empty_extra_otro_impuesto_slots` elimina slots `_2..N` sin monto (legacy) |
-| **Columnas visibles** | `infer_otro_impuesto_indices`: slot 1 puede tener solo etiqueta; slots `_2+` solo si tienen monto > 0 |
+| **Columnas visibles** | `infer_otro_impuesto_indices`: slot 1 = etiqueta o monto; slots `_2+` **solo si tienen etiqueta** (botón +). Montos FacturIA sin label alimentan el pie, **no** abren «Otros Impuestos (2/3)» |
 | **Labels en col 2/3** | Solo si **esa línea** tiene más de un impuesto (botón +). No se espejan en la 1ª fila los impuestos elegidos en otras líneas; el pie usa `__fac_otros_claimed` |
 | **Dropdown** | `otros_impuestos_options_from_odoo`: **todos** los `account.tax` del tenant (sin filtrar por lista canónica), orden alfabético. Nombres EN sin i18n (`Internal taxes` / `Other taxes`) → `Impuestos internos` / `Otros impuestos`. Alias de resolución: `Perc Gananc` / `Perc IVA` / `IVA Adic 20%` / `Impuesto Interno`. |
 

@@ -1,4 +1,4 @@
-import { applyProveedorToCuit, propagateAccountDown } from "../rows/index.js";
+import { applyProveedorToCuit } from "../rows/index.js";
 import {
   allContentLinesExplicitZeroIva,
   classifyComprobanteTaxMode,
@@ -73,7 +73,12 @@ export function handleSelectionChange(state, r, k, ctx) {
   const { refs, handlers } = ctx;
   const tableWrap = refs?.tableWrap;
   if (k === "invoice_line_ids/account_id") {
-    propagateAccountDown(state.rows);
+    // Force-sync cuenta a todas las líneas del comprobante (chrome/tabla).
+    const [s, e] = groupBounds(state.rows, r);
+    const val = String(state.rows[r]?.[k] ?? "").trim();
+    for (let i = s; i < e; i++) {
+      if (state.rows[i]) state.rows[i][k] = val;
+    }
     handlers.onRerender?.();
     return;
   }
@@ -92,6 +97,14 @@ export function handleSelectionChange(state, r, k, ctx) {
       return;
     }
     handlers.onRerender?.();
+    return;
+  }
+  if (k === "journal_id" || k === "x_studio_category") {
+    const [s, e] = groupBounds(state.rows, r);
+    const val = String(state.rows[r]?.[k] ?? "").trim();
+    for (let i = s; i < e; i++) {
+      if (state.rows[i]) state.rows[i][k] = val;
+    }
     return;
   }
   if (k === "invoice_line_ids/product_id") {

@@ -4,7 +4,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from facturia_matching.api.proceso_response import (
     _build_proceso_response,
@@ -14,6 +15,11 @@ from facturia_matching.api.profile import (
     _payload_odoo_profile,
     _resolve_request_odoo_profile,
     _with_odoo_profile,
+)
+from facturia_matching.padron.excel_user import (
+    is_excel_user_request,
+    matched_excel_alias,
+    resolve_excel_company_id,
 )
 from facturia_matching.odoo.env import current_odoo_profile
 from facturia_matching.odoo.purchase_matching import (
@@ -82,14 +88,24 @@ def _save_rows_and_respond(
 
 @router.get("/api/proceso/{process_number}")
 def get_proceso(
+    request: Request,
     process_number: str,
     empresa: Optional[str] = None,
     perfil: Optional[str] = Query(None),
     odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
+    excel_user: Optional[str] = Query(
+        None, description="Si 1/true, matching con padrón Excel/Sheets (sin Odoo/OC)."
+    ),
     regenerate: bool = Query(False, description="Si true, ignora conversión guardada y regenera desde json_data."),
 ):
-    odoo_profile = _resolve_request_odoo_profile(
+    qs = request.query_params
+    use_excel = is_excel_user_request(excel_user=excel_user, query_params=qs)
+    # Solo fijar company_id si un alias lo pincha; si no, parse usa el del proceso.
+    excel_cid = (
+        resolve_excel_company_id(query_params=qs) if matched_excel_alias(qs) else None
+    )
+    odoo_profile = None if use_excel else _resolve_request_odoo_profile(
         perfil, odoo_profile_q, odoo_cloud, empresa=empresa
     )
 
@@ -98,7 +114,9 @@ def get_proceso(
         filas, etiqueta_options, purchase_summary, source, conversion_meta = load_process_rows(
             process_number,
             empresa=empresa,
-            regenerate=regenerate,
+            regenerate=regenerate or use_excel,
+            excel_user=use_excel,
+            excel_company_id=excel_cid,
         )
         t_load = time.perf_counter()
         resp = _build_proceso_response(
@@ -109,24 +127,136 @@ def get_proceso(
             purchase_summary,
             source,
             conversion_meta,
+            excel_user=use_excel,
         )
         logger.debug(
-            "timing /api/proceso/%s profile=%s empresa=%s source=%s rows=%s "
+            "timing /api/proceso/%s profile=%s empresa=%s source=%s rows=%s excel_user=%s "
             "load=%.0fms build=%.0fms total=%.0fms",
             process_number,
-            current_odoo_profile(),
+            current_odoo_profile() if not use_excel else "excel",
             empresa or "-",
             source,
             len(filas or []),
+            use_excel,
             (t_load - t0) * 1000,
             (time.perf_counter() - t_load) * 1000,
             (time.perf_counter() - t0) * 1000,
         )
         return resp
 
+    if use_excel:
+        return _handle_process_load_errors(_load)
     return _handle_process_load_errors(
         lambda: _with_odoo_profile(odoo_profile, _load, empresa=empresa)
     )
+
+
+@router.get("/api/proceso/{process_number}/archivo")
+def get_proceso_archivo(
+    process_number: str,
+    comprobante_idx: int = Query(0, ge=0),
+    empresa: Optional[str] = None,
+):
+    """Proxy del PDF/foto original del comprobante (ruta en json_data FacturIA).
+
+    Requiere ``FACTURIA_FILE_URL_TEMPLATE`` apuntando a un endpoint FacturIA que
+    sirva el archivo. Sin template → 503.
+    """
+    import requests
+
+    from facturia_matching.facturia.archivo import (
+        archivo_paths_by_comprobante,
+        build_facturia_file_url,
+        guess_content_type,
+        resolve_file_url_template,
+    )
+    from facturia_matching.persistence.back_check import (
+        MySQLUnavailableError,
+        ProcessTableError,
+        get_process,
+    )
+
+    try:
+        process_row = get_process(process_number, empresa=empresa)
+    except MySQLUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ProcessTableError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if not process_row:
+        raise HTTPException(status_code=404, detail="Proceso no encontrado.")
+    if not process_row.get("json_data"):
+        raise HTTPException(status_code=404, detail="El proceso no tiene json_data.")
+
+    paths = archivo_paths_by_comprobante(
+        process_row["json_data"],
+        company_id=process_row.get("company_id"),
+        process_number=process_row.get("process_number") or process_number,
+    )
+    path = paths.get(int(comprobante_idx))
+    if not path:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay archivo original para ese comprobante.",
+        )
+
+    if not resolve_file_url_template():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Archivo no disponible: falta configurar FACTURIA_FILE_URL_TEMPLATE "
+                "(endpoint FacturIA que sirva conversion/…)."
+            ),
+        )
+
+    url = build_facturia_file_url(
+        path=path,
+        process_id=process_row.get("id"),
+        process_number=process_row.get("process_number") or process_number,
+        company_id=process_row.get("company_id"),
+        comprobante_idx=int(comprobante_idx),
+    )
+    if not url:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo armar la URL del archivo en FacturIA.",
+        )
+
+    try:
+        upstream = requests.get(url, timeout=60, stream=True)
+    except requests.RequestException as e:
+        logger.warning("FacturIA archivo proxy error url=%s: %s", url, e)
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo obtener el archivo desde FacturIA.",
+        ) from e
+
+    if upstream.status_code >= 400:
+        detail = (
+            f"FacturIA no devolvió el archivo (HTTP {upstream.status_code})."
+        )
+        upstream.close()
+        raise HTTPException(status_code=502, detail=detail)
+
+    content_type = (
+        upstream.headers.get("Content-Type")
+        or guess_content_type(path)
+    )
+    filename = path.rsplit("/", 1)[-1] or "factura"
+    headers = {
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "private, max-age=300",
+    }
+
+    def _iter():
+        try:
+            for chunk in upstream.iter_content(chunk_size=65536):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(_iter(), media_type=content_type, headers=headers)
 
 
 @router.get("/api/proceso/{process_number}/facturia-raw")
@@ -387,7 +517,16 @@ def put_proceso_conversion(
 def post_proceso_revert(process_number: str, payload: Optional[Dict[str, Any]] = None):
     payload = payload or {}
     empresa = payload.get("empresa")
-    odoo_profile = _payload_odoo_profile(payload)
+    use_excel = is_excel_user_request(payload=payload)
+    excel_cid = None
+    if use_excel:
+        from facturia_matching.padron.excel_user import EXCEL_USER_ALIASES
+
+        for alias in EXCEL_USER_ALIASES:
+            if str(payload.get(alias) or "").strip().lower() in ("1", "true", "yes", "on"):
+                excel_cid = resolve_excel_company_id(payload=payload)
+                break
+    odoo_profile = None if use_excel else _payload_odoo_profile(payload)
 
     def _revert():
         process_row = resolve_process_row(process_number, empresa=empresa)
@@ -396,6 +535,8 @@ def post_proceso_revert(process_number: str, payload: Optional[Dict[str, Any]] =
             process_number,
             empresa=empresa,
             regenerate=True,
+            excel_user=use_excel,
+            excel_company_id=excel_cid,
         )
         return _build_proceso_response(
             process_number,
@@ -405,8 +546,11 @@ def post_proceso_revert(process_number: str, payload: Optional[Dict[str, Any]] =
             purchase_summary,
             source,
             conversion_meta,
+            excel_user=use_excel,
         )
 
+    if use_excel:
+        return _handle_process_load_errors(_revert)
     return _handle_process_load_errors(
         lambda: _with_odoo_profile(odoo_profile, _revert, empresa=empresa)
     )

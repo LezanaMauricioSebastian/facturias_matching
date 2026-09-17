@@ -33,7 +33,7 @@ Metadata estática de la app (columnas, flags de perfil). Ver `build_metadata_pa
 
 ### `GET /api/bootstrap`
 
-Carga inicial de la UI: metadata + opciones ligeras (sin padrón completo).
+Carga inicial de la UI: metadata + opciones ligeras (sin padrón completo). Cold path: `get_catalog()` contra Odoo (cache en memoria `ODOO_CATALOG_CACHE_TTL`, single-flight por perfil; RPCs de catálogo en paralelo). Warm path ≈ instantáneo si el proceso ya cargó ese perfil.
 
 **Query**: `empresa`, `perfil`, `odoo_profile_test`, `odoo_cloud`
 
@@ -131,7 +131,9 @@ Muestra filas de padrón construido desde facturas Odoo (diagnóstico).
 
 Carga filas para la UI.
 
-**Query**: `empresa`, `regenerate=true` (ignora conversión guardada), perfil Odoo.
+**Query**: `empresa`, `regenerate=true` (ignora conversión guardada), perfil Odoo, `excel_user=1` (o alias `pepe=1`).
+
+Con `excel_user=1` (o `?pepe=1`): matching contra padrón Excel/Sheets (`force` refresh), sin Odoo/OC; siempre regenera desde `json_data`. Respuesta incluye `excel_user: true` y `excel_padron: { sheet_error, company_id }`. Deep link UI: `/static/?excel_user=1&proceso=N`. Ver [padron-excel.md](padron-excel.md).
 
 **Respuesta** (campos principales):
 ```json
@@ -144,11 +146,24 @@ Carga filas para la UI.
   "purchase_matching": { "enabled": true, "comprobantes": [] },
   "conversion_id": 1,
   "saved_at": "...",
-  "odoo_profile": "default"
+  "odoo_profile": "default",
+  "excel_user": false
 }
 ```
 
 **Errores**: 503 MySQL no disponible; 400 conversión inválida o `json_data` vacío/corrupto en el proceso; 500 sin `json_data`.
+
+### `GET /api/proceso/{process_number}/archivo`
+
+Proxy del PDF/foto original del comprobante. La ruta sale de `json_data` (`facturas[i].json.archivo_original` o `factura.file_name`); los bytes viven en FacturIA.
+
+**Query**: `comprobante_idx` (0-based), `empresa`
+
+**Env**: `FACTURIA_FILE_URL_TEMPLATE` (obligatorio para servir). Placeholders: `{base}`, `{path}`, `{path_encoded}`, `{process_id}`, `{process_number}`, `{company_id}`, `{comprobante_idx}`. Base vía `FACTURIA_BASE_URL` / `PROCESS_SCHEMA`.
+
+**Respuesta**: stream `inline` del archivo. Sin path → 404; sin template → 503; FacturIA falla → 502.
+
+Las filas de `GET /api/proceso` incluyen `__fac_archivo` en la 1ª línea de cada comprobante cuando hay ruta.
 
 ### `GET /api/proceso/{process_number}/facturia-raw`
 
@@ -320,7 +335,9 @@ Respuesta: `{ "spreadsheet_id", "sheet_title", "sheet_gid", "values": [...], "co
 
 `GET /api/padron-excel/proceso/{n}?empresa=&company_id=&force_refresh=1` — lee el `json_data` del proceso, fuerza refresh del Sheet/Excel y devuelve facturas matcheadas + padrón.
 
-Iframe: `/static/padron_excel.html?embed=1&proceso={n}&empresa={id}`. Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (path o JSON) para Sheets privados.
+Iframe admin: `/static/padron_excel.html?embed=1&proceso={n}&empresa={id}`.
+
+UI principal (misma grilla): `/static/?excel_user=1&proceso={n}&empresa={id}` → `GET /api/proceso/{n}?excel_user=1`. Env: `GOOGLE_SERVICE_ACCOUNT_JSON` (path o JSON) para Sheets privados.
 
 ---
 

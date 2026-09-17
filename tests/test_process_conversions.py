@@ -61,7 +61,20 @@ class TestProcessConversionsPayload(unittest.TestCase):
         self.assertEqual(infer_otro_impuesto_indices(rows), [1, 2, 3])
 
     def test_infer_otro_impuesto_indices_ignores_label_only_without_monto(self):
+        # Slot 2+ con label (usuario +) sí abre columna aunque el monto esté vacío.
         rows = [{"otros_impuestos": "A", "otros_impuestos_2": "B", "otros_impuestos_2_monto": ""}]
+        self.assertEqual(infer_otro_impuesto_indices(rows), [1, 2])
+
+    def test_infer_otro_impuesto_indices_ignores_fac_monto_without_label(self):
+        # Montos FacturIA en slots 2+ sin label no deben abrir columnas.
+        rows = [
+            {
+                "otros_impuestos": "IIBB",
+                "otros_impuestos_monto": "100",
+                "otros_impuestos_2_monto": "50",
+                "otros_impuestos_3_monto": "25",
+            }
+        ]
         self.assertEqual(infer_otro_impuesto_indices(rows), [1])
 
     def test_strip_empty_extra_otro_impuesto_slots(self):

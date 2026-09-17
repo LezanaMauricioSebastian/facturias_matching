@@ -15,7 +15,8 @@ export function isComboboxOptionKey(k) {
     k === "rubros" ||
     k === "journals" ||
     k === "cuentas" ||
-    k === "productos"
+    k === "productos" ||
+    k === "conceptos"
   );
 }
 

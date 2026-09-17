@@ -35,6 +35,8 @@ import {
   maybeRerenderOnTaxModeChange,
   refreshComprobanteHints,
 } from "./handlers.js";
+import { renderOcHeaderControls } from "../ocPicker/render.js";
+import { renderVerFacturaButtonHtml } from "../comprobanteView/archivoViewer.js";
 
 function syncLineIvaMetadata(state, rowIdx) {
   const [s, e] = groupBounds(state.rows, rowIdx);
@@ -159,7 +161,9 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     return;
   }
   const firstRow = rowIndices.length ? state.rows[rowIndices[0]] : null;
-  const oneLine = rowIndices.length === 1;
+  // forceOneLine: vista unificada (varias facturas de 1 línea en una sola tabla).
+  const oneLine = !!options.forceOneLine || rowIndices.length === 1;
+  const unifiedOneLine = !!options.unifiedOneLine;
   const soloEncabezado = isSoloEncabezado(firstRow);
   // Marcar filas de este comprobante: 1 línea → sin pie, montos en la fila.
   for (const rIdx of rowIndices) {
@@ -168,12 +172,15 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     if (oneLine) row.__ui_one_line = true;
     else delete row.__ui_one_line;
   }
-  const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado, oneLine });
+  // Carrusel pasa hideChromeKeys; también si el mount está dentro de la tarjeta factura.
+  const hideChromeKeys =
+    !!options.hideChromeKeys || !!(containerEl && containerEl.closest?.(".comprobanteCard--factura"));
+  const cols = columnsForTaxMode(state.columns, taxMode, { soloEncabezado, oneLine, hideChromeKeys });
   const colWidths = buildColWidths(cols, state, rowIndices);
   const actionDisabled = !(state.rows && state.rows.length);
 
   const html = [];
-  html.push("<table><thead><tr>");
+  html.push(`<table class="${unifiedOneLine ? "tableUnifiedOneLine" : ""}"><thead><tr>`);
   for (const c of cols) {
     if (c.type === "header_action" && c.key === ADD_OTRO_IMPUESTO_KEY) {
       const dis = actionDisabled ? " disabled" : "";
@@ -200,15 +207,21 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
     }
     html.push(`<th${colCellAttrs(colWidths, c.key, c.label)}>${c.label}</th>`);
   }
-  html.push(`<th style="min-width:90px">Acciones</th>`);
+  html.push(
+    `<th style="min-width:${unifiedOneLine ? "220px" : "90px"}">Acciones</th>`
+  );
   html.push("</tr></thead><tbody>");
 
   const amountsOnRow = oneLine || soloEncabezado;
   for (const rIdx of rowIndices) {
     const r = state.rows[rIdx];
     if (oneLine || isSoloEncabezado(r)) syncSoloEncabezadoMontos(r, state);
-    if (showIvaMontoColumn(taxMode, amountsOnRow) && !r.__iva_monto_manual) {
-      computeRowTotal(r, taxMode);
+    // En unificado cada fila es su propio comprobante: tax mode por grupo.
+    const rowTaxMode = unifiedOneLine
+      ? state.comprobanteTaxModes[String(r?.__comprobante_idx ?? rIdx)] || taxMode
+      : taxMode;
+    if (showIvaMontoColumn(rowTaxMode, amountsOnRow) && !r.__iva_monto_manual) {
+      computeRowTotal(r, rowTaxMode);
     }
     html.push("<tr>");
     for (const c of cols) {
@@ -223,7 +236,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           const checked = isSoloEncabezado(r) ? " checked" : "";
           const multi = comprobanteHasMultipleLines(state.rows, rIdx);
           const title = multi
-            ? "Solo encabezado: colapsa a una línea (elimina líneas extra). Con 1 línea se oculta el pie y los montos van en la fila"
+            ? "Solo encabezado: colapsa a una línea (guarda las líneas para poder destildar). Con 1 línea se oculta el pie y los montos van en la fila"
             : "1 línea: sin pie (Base/IVA/Total abajo). Montos IVA/Otros en la fila";
           html.push(
             `<td${colCellAttrs(colWidths, key, c.label, "soloEncabezadoCell")}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
@@ -232,7 +245,7 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           html.push(`<td${tdAttrs}></td>`);
         }
       } else if (c.type === "computed") {
-        const n = key === "__subtotal" ? computeSubtotalCell(r) : computeRowTotal(r, taxMode);
+        const n = key === "__subtotal" ? computeSubtotalCell(r) : computeRowTotal(r, rowTaxMode);
         const dataAttr =
           key === "__subtotal" ? ` data-subtotal-r="${rIdx}"` : ` data-total-r="${rIdx}"`;
         html.push(
@@ -251,7 +264,17 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
         if (isComboboxOptionKey(optKey)) {
           const suggested = optKey === "productos" && !!r.__product_suggested;
           html.push(
-            renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle: tdAttrs, loading, state, suggested })
+            renderComboboxCellHtml({
+              rIdx,
+              key,
+              optKey,
+              cellVal,
+              tdStyle: tdAttrs,
+              loading,
+              state,
+              suggested,
+              row: r,
+            })
           );
         } else {
           const selectLoading =
@@ -296,14 +319,36 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
           `<td${colCellAttrs(colWidths, key, c.label, "cellWithHint")}><div class="cellStack"><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /><div class="fieldHint" data-doc-hint-row="${rIdx}" aria-live="polite" hidden></div></div></td>`
         );
       } else if (c.type === "text" && c.editable) {
-        html.push(`<td${tdAttrs}><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}" /></td>`);
+        let titleAttr = "";
+        if (
+          (key === "Nombre de producto" || key === "invoice_line_ids/name") &&
+          String(r?.__excel_concepto || "").trim()
+        ) {
+          const conc = String(r.__excel_concepto).trim();
+          const sc = r.__excel_concepto_score;
+          const scorePart =
+            sc != null && Number(sc) > 0 ? ` (${Math.round(Number(sc))}%)` : "";
+          titleAttr = ` title="Concepto: ${escapeAttr(conc)}${escapeAttr(scorePart)}"`;
+        }
+        html.push(
+          `<td${tdAttrs}><input data-r="${rIdx}" data-k="${key}" value="${val.replaceAll('"', "&quot;")}"${titleAttr} /></td>`
+        );
       } else {
         html.push(`<td${colCellAttrs(colWidths, key, c.label, "readonly")}>${val}</td>`);
       }
     }
-    html.push(
-      `<td><button type="button" class="rowDeleteBtn" data-del-r="${rIdx}">Borrar</button></td>`
-    );
+    const deleteBtn = `<button type="button" class="rowDeleteBtn" data-del-r="${rIdx}">Borrar</button>`;
+    if (unifiedOneLine && isFirstRowOfComprobante(state.rows, rIdx)) {
+      const compIdx = r?.__comprobante_idx ?? rIdx;
+      const groupRows = [r];
+      const verFactura = renderVerFacturaButtonHtml(groupRows, compIdx);
+      const ocControls = renderOcHeaderControls(state, compIdx);
+      html.push(
+        `<td class="unifiedRowActions"><div class="unifiedRowActionsInner">${verFactura}${ocControls}${deleteBtn}</div></td>`
+      );
+    } else {
+      html.push(`<td>${deleteBtn}</td>`);
+    }
     html.push("</tr>");
   }
   html.push("</tbody></table>");

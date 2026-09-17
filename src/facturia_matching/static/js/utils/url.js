@@ -5,7 +5,11 @@ const URL_PARAM_ALIASES = {
   /** FacturIA erp-import: callback tras guardar en Odoo. */
   import_id: ["import_id", "erp_import_id", "process_erp_import_id"],
   token: ["token", "callback_token", "erp_token", "erp_import_token"],
+  excel_user: ["excel_user"],
 };
+
+/** Aliases de cliente demo → mismo modo Excel (?pepe=1). */
+export const EXCEL_USER_ALIASES = ["pepe"];
 
 function hasNonEmptyParam(params, names) {
   for (const name of names) {
@@ -19,6 +23,46 @@ function hasNonEmptyParam(params, names) {
 export function isOdooCloudFlag(raw) {
   const p = String(raw || "").trim().toLowerCase();
   return p === "1" || p === "true" || p === "yes" || p === "on";
+}
+
+/** true si excel_user / pepe / etc. es 1/true/yes/on. */
+export function isExcelUserFlag(raw) {
+  return isOdooCloudFlag(raw);
+}
+
+/** true si la URL pide matching con padrón Excel/Sheets. */
+export function isExcelUserMode(urlParams = null) {
+  try {
+    const url = urlParams ? { ...getUrlParams(), ...urlParams } : getUrlParams();
+    if (isExcelUserFlag(url.excel_user)) return true;
+    for (const alias of EXCEL_USER_ALIASES) {
+      if (isExcelUserFlag(url[alias])) return true;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (isExcelUserFlag(params.get("excel_user"))) return true;
+    for (const alias of EXCEL_USER_ALIASES) {
+      if (isExcelUserFlag(params.get(alias))) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Query/body extras para APIs cuando hay modo Excel. */
+export function apiExcelQueryParams(state, urlParams = {}) {
+  if (!(state?.excelUser || isExcelUserMode(urlParams))) return {};
+  const url = { ...getUrlParams(), ...(urlParams || {}) };
+  const empresa = String(url.empresa || state?.empresa || "").trim();
+  const out = { excel_user: "1" };
+  if (empresa) out.empresa = empresa;
+  return out;
+}
+
+/** Empresa activa: override → state → URL. */
+export function currentEmpresa(state, urlParams = {}) {
+  const url = { ...getUrlParams(), ...(urlParams || {}) };
+  return String(url.empresa || state?.empresa || "").trim();
 }
 
 /** true si la UI va embebida (iframe, ?embed=1 o deep link FacturIA con proceso). */
@@ -51,7 +95,11 @@ export function getUrlParams() {
     odoo_cloud: "",
     import_id: "",
     token: "",
+    excel_user: "",
   };
+  for (const alias of EXCEL_USER_ALIASES) {
+    out[alias] = "";
+  }
   for (const [key, aliases] of Object.entries(URL_PARAM_ALIASES)) {
     for (const alias of aliases) {
       const v = params.get(alias);
@@ -64,6 +112,12 @@ export function getUrlParams() {
   const oc = params.get("odoo_cloud");
   if (oc != null && String(oc).trim() !== "") {
     out.odoo_cloud = String(oc).trim();
+  }
+  for (const alias of EXCEL_USER_ALIASES) {
+    const v = params.get(alias);
+    if (v != null && String(v).trim() !== "") {
+      out[alias] = String(v).trim();
+    }
   }
   return out;
 }
@@ -174,6 +228,7 @@ export function activeOdooProfile(state) {
 
 /** Params Odoo para query API según perfil activo. */
 export function apiOdooQueryParams(state) {
+  if (state?.excelUser || isExcelUserMode()) return {};
   const profile = activeOdooProfile(state);
   if (hasExplicitOdooProfileOverride(state)) {
     return { odoo_profile_test: profile };
@@ -189,7 +244,12 @@ export function apiOdooQueryParams(state) {
 
 export function apiContextBody(state) {
   const body = {};
-  if (state.empresa) body.empresa = state.empresa;
+  const empresa = currentEmpresa(state);
+  if (empresa) body.empresa = empresa;
+  if (state.excelUser || isExcelUserMode()) {
+    body.excel_user = "1";
+    return body;
+  }
   const profile = activeOdooProfile(state);
   if (hasExplicitOdooProfileOverride(state) || profile !== "default") {
     body.odoo_profile_test = profile;

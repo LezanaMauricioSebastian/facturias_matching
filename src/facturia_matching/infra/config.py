@@ -160,6 +160,8 @@ from facturia_matching.odoo.env import build_odoo_main_config
 ODOO_CONFIG = build_odoo_main_config("default")
 
 ODOO_CATALOG_CACHE_TTL = int(_env_strip("ODOO_CATALOG_CACHE_TTL", "600") or "600")
+# Tope de OCs recientes al enriquecer proceso (fetch_candidates=False). 0 = sin tope.
+ODOO_PO_ENRICH_ORDER_LIMIT = int(_env_strip("ODOO_PO_ENRICH_ORDER_LIMIT", "100") or "100")
 # Idioma para search_read / execute_kw (nombres traducibles en catálogo). Vacío = sin forzar.
 ODOO_LANG = _env_strip("ODOO_LANG", "es_AR")
 DEFAULT_JOURNAL_NAME = _env_strip("DEFAULT_JOURNAL_NAME")

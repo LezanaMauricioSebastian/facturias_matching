@@ -76,7 +76,7 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 - Si un comprobante tiene **1 sola línea**, se trata como **Encabezado**: **sin pie** (no se muestra Base imponible / IVA / Total abajo). Los montos de IVA y otros van **en la fila**.
 - Si tiene **varias líneas**, el **pie** queda visible (montos ahí, como Odoo).
 - Un **proceso** puede ser solo Encabezado (todos los comprobantes de 1 línea) **o** solo con Líneas (todos con varias). **No** puede mezclar ambos.
-- El tilde **Solo encabezado** en la primera fila colapsa multi-línea a una (para deshacer: **Restaurar original**); al quedar 1 línea se oculta el pie.
+- El tilde **Solo encabezado** en la primera fila colapsa multi-línea a una (precio = subtotal FacturIA; IVA y otros del encabezado van a la fila). **Destildar** restaura las líneas originales del comprobante; **Restaurar original** sigue siendo el reset completo del proceso. Al quedar 1 línea se oculta el pie.
 
 La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**.
 
@@ -121,6 +121,7 @@ Sudata no tiene instalado el español de Argentina (`es_AR`) sino el latinoameri
 | `FACTURIA_UI_ENV` | Opcional: `dev` fuerza pestaña FacturIA; `prod` la oculta. Sin setear, se infiere si `PROCESS_SCHEMA` contiene `staging` |
 | `FACTURIA_BASE_URL` | Base FacturIA para el webhook erp-imports (default staging/prod según `PROCESS_SCHEMA`) |
 | `FACTURIA_ERP_WEBHOOK_URL` | Override de la URL completa `POST …/api/erp-imports/webhook` |
+| `FACTURIA_FILE_URL_TEMPLATE` | Plantilla para proxy de PDF/foto original (`GET /api/proceso/{n}/archivo`). Sin setear, el botón **Ver factura** muestra error |
 
 Ver `.env.example` para la lista completa.
 

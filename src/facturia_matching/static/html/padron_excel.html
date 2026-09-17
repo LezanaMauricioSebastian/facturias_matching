@@ -59,8 +59,6 @@
     .cell-cat { color: var(--muted); font-style: italic; font-size: .78rem; }
     .row-actions { display: flex; gap: .3rem; }
     .counts { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; font-size: .8rem; color: var(--muted); }
-    .upload-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .4rem; font-size: .82rem; }
-    .upload-row input[type=file] { font-size: .78rem; }
     details.sources { margin-bottom: 1.25rem; }
     details.sources > summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
     .hint { font-size: .75rem; color: var(--muted); }
@@ -130,23 +128,8 @@
         <button class="btn btn-primary" id="btnSaveConfig">Guardar fuente y mapeo</button>
         <button class="btn btn-secondary" id="btnRefreshPadron" title="Vuelve a bajar el Sheet ahora">Actualizar padrón ahora</button>
         <span class="hint" id="refreshStatus"></span>
+        <span class="hint" id="configStatus"></span>
       </div>
-      <details style="margin:.75rem 0">
-        <summary class="hint" style="cursor:pointer">Alternativas: publicar CSV o subir archivo</summary>
-        <p class="hint" style="margin:.4rem 0">Solo si no podés compartir a la SA: URL <code>pub?output=csv</code>, o upload CSV/XLSX por tipo (sin auto-refresh).</p>
-        <div class="upload-row">
-          <label>Subir archivo</label>
-          <select id="uploadKind">
-            <option value="proveedores">Proveedores</option>
-            <option value="productos">Productos</option>
-            <option value="formas_pago">Formas de pago</option>
-            <option value="conceptos">Conceptos</option>
-          </select>
-          <input type="file" id="uploadFile" accept=".csv,.xlsx,.xlsm">
-          <button class="btn btn-secondary" id="btnUpload">Subir</button>
-          <span class="hint" id="uploadStatus"></span>
-        </div>
-      </details>
       <h3 style="font-size:.88rem;margin:1rem 0 .4rem">Mapeo de columnas</h3>
       <div class="form-grid">
         <div class="form-group"><label>Proveedor · razón social</label><select id="mapProvRazon"></select></div>

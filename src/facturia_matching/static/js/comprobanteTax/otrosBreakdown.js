@@ -522,6 +522,17 @@ export function claimProvisionalOtrosFromLineLabels(_groupRows) {
   return false;
 }
 
+/** Máximo slot con label Odoo en una fila (ignora montos FacturIA sin label). */
+export function maxOtrosLabelSlotNOnRow(row) {
+  if (!row) return 0;
+  let maxN = 0;
+  for (let n = 1; n <= 20; n++) {
+    if (row[pieMirrorKey(n)]) continue;
+    if (slotLabel(row, n)) maxN = Math.max(maxN, n);
+  }
+  return maxN;
+}
+
 /** Máximo slot con label/monto real en una fila (no cuenta espejos). */
 export function maxOtrosSlotNOnRow(row) {
   if (!row) return 0;

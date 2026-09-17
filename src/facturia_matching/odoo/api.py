@@ -24,6 +24,20 @@ from facturia_matching.odoo.env import (
 
 logger = logging.getLogger(__name__)
 
+# uid autenticado por (base_url|db|login) — evita re-auth en cada execute_kw con email.
+_uid_by_login_cache: Dict[str, int] = {}
+
+
+def clear_odoo_uid_cache() -> None:
+    _uid_by_login_cache.clear()
+
+
+def _uid_login_cache_key(config: Dict[str, Any]) -> str:
+    base = (config.get("base_url") or "").rstrip("/")
+    db = config.get("db") or ""
+    login = config.get("login") or ""
+    return f"{base}|{db}|{login}"
+
 
 def get_active_odoo_config() -> Dict[str, Any]:
     return get_odoo_main_config(current_odoo_profile())
@@ -210,14 +224,23 @@ def get_odoo_uid_from_config(config: Dict[str, Any]) -> Optional[int]:
     if not login or not db or not password or not base:
         return None
 
+    cache_key = _uid_login_cache_key(config)
+    cached = _uid_by_login_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _store(uid: int) -> int:
+        _uid_by_login_cache[cache_key] = uid
+        return uid
+
     try:
         common = xmlrpc.client.ServerProxy(_xmlrpc_url("common", config), allow_none=True)
         uid = common.authenticate(db, login, password, {})
         if uid:
-            return int(uid)
+            return _store(int(uid))
         uid = common.login(db, login, password)
         if uid:
-            return int(uid)
+            return _store(int(uid))
     except Exception as e:
         logger.debug("XML-RPC authenticate (config) falló: %s", e)
 
@@ -229,7 +252,7 @@ def get_odoo_uid_from_config(config: Dict[str, Any]) -> Optional[int]:
                 {"service": "common", "method": method_name, "args": [db, login, password, {}]},
             )
             if uid:
-                return int(uid)
+                return _store(int(uid))
         except Exception as e:
             logger.debug("common.%s (config) falló: %s", method_name, e)
     return None

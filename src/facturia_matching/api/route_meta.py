@@ -30,16 +30,16 @@ def root():
     if not index_path.exists():
         return HTMLResponse("<h3>Falta html/index.html</h3>", status_code=500)
     html = index_path.read_text(encoding="utf-8")
-    # Bust cache de CSS/JS entrypoint con mtime más reciente de assets tocados por UI.
+    # Bust cache del entrypoint (?v=) con el mtime más reciente de *todo* CSS/JS.
+    # Antes solo miraba 4 archivos: un cambio en columns.js / facturaChrome.js no
+    # subía ?v=, el browser reusaba el grafo ES cacheado (ej. columna Cuenta en carrusel).
     mtimes = []
-    for path in (
-        CSS_DIR / "styles.css",
-        JS_DIR / "main.js",
-        JS_DIR / "ocPicker" / "render.js",
-        JS_DIR / "comprobanteView" / "render.js",
-    ):
-        if path.is_file():
-            mtimes.append(int(path.stat().st_mtime))
+    for root in (CSS_DIR, JS_DIR):
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file():
+                mtimes.append(int(path.stat().st_mtime))
     if mtimes:
         v = max(mtimes)
         html = html.replace('href="/css/styles.css"', f'href="/css/styles.css?v={v}"')

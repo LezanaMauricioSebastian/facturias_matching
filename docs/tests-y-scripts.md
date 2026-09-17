@@ -29,6 +29,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_process_conversions.py` | Guardar/cargar conversiones; `infer_otro_impuesto_indices`; strip slots otros impuestos legacy |
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
+| `test_odoo_cold_path.py` | Single-flight `get_catalog`, cache taxes por profile, uid auth cache, tope OCs en enrich |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
 | `test_odoo_import_grouping.py` | Agrupación, validación, `build_move_vals`, NC → `in_refund`, due date. Ver [import-odoo/testing.md](import-odoo/testing.md). |
 | `test_odoo_import_taxes.py` | tax_ids, IIBB, montos esperados, reapply tax amounts |

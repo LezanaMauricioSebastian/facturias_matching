@@ -37,6 +37,7 @@ from facturia_matching.core.comprobante_tax import (
 )
 from facturia_matching.odoo.purchase_matching import enrich_rows_with_purchase_data
 from facturia_matching.infra.normalization import doc_type_label, normalize, normalize_comprobante_number, normalize_date_ddmmyyyy, pick
+from facturia_matching.facturia.archivo import normalize_archivo_path, pick_archivo_raw
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +83,36 @@ _FAC_REFERENCIA_KEYS = [
 
 
 def parse_process_json(
-    process_number: str, empresa: Optional[str] = None
+    process_number: str,
+    empresa: Optional[str] = None,
+    *,
+    excel_user: bool = False,
+    excel_company_id: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
     t0 = time.perf_counter()
-    catalog, odoo_ok = get_catalog()
-    t_catalog = time.perf_counter()
-    maps = (catalog or {}).get("maps") or {}
-    doc_label_map = maps.get("document_type_labels") or {}
-    proveedores_odoo = (catalog or {}).get("proveedores") or []
-    journals_odoo = (catalog or {}).get("journals") or []
-    cuentas_odoo = (catalog or {}).get("cuentas") or []
-    rubros_odoo = (catalog or {}).get("rubros") or []
-    partner_cuit_to_id = (catalog or {}).get("partner_cuit_to_id") or {}
+    excel_padron: Optional[Dict[str, Any]] = None
+    sheet_error: Optional[str] = None
+
+    if excel_user:
+        catalog, odoo_ok = {}, False
+        t_catalog = time.perf_counter()
+        maps: Dict[str, Any] = {}
+        doc_label_map: Dict[str, Any] = {}
+        proveedores_odoo: List[Any] = []
+        journals_odoo: List[Any] = []
+        cuentas_odoo: List[Any] = []
+        rubros_odoo: List[Any] = []
+        partner_cuit_to_id: Dict[str, Any] = {}
+    else:
+        catalog, odoo_ok = get_catalog()
+        t_catalog = time.perf_counter()
+        maps = (catalog or {}).get("maps") or {}
+        doc_label_map = maps.get("document_type_labels") or {}
+        proveedores_odoo = (catalog or {}).get("proveedores") or []
+        journals_odoo = (catalog or {}).get("journals") or []
+        cuentas_odoo = (catalog or {}).get("cuentas") or []
+        rubros_odoo = (catalog or {}).get("rubros") or []
+        partner_cuit_to_id = (catalog or {}).get("partner_cuit_to_id") or {}
 
     row = get_process(int(process_number), empresa=empresa)
     t_mysql = time.perf_counter()
@@ -134,6 +153,33 @@ def parse_process_json(
         if company_raw is not None and str(company_raw).strip().isdigit()
         else None
     )
+
+    if excel_user:
+        from facturia_matching.padron.catalog_excel import load_padron
+        from facturia_matching.padron.excel_user import resolve_excel_company_id
+
+        padron_cid = (
+            int(excel_company_id)
+            if excel_company_id is not None
+            else resolve_excel_company_id(process_company_id=company_id)
+        )
+        try:
+            excel_padron = load_padron(padron_cid, force=True)
+            sheet_error = excel_padron.get("sheet_error") or None
+        except Exception as e:
+            logger.warning("excel_user load_padron failed company_id=%s: %s", padron_cid, e)
+            excel_padron = {
+                "proveedores": [],
+                "productos": [],
+                "conceptos": [],
+                "formas_pago": [],
+                "categoria_map": {},
+                "sheet_error": str(e),
+            }
+            sheet_error = str(e)
+    else:
+        padron_cid = company_id if company_id is not None else 0
+
     header_index = None
     if odoo_ok and company_id is not None:
         try:
@@ -164,6 +210,11 @@ def parse_process_json(
             json.dumps(fac_iva_montos_hdr, ensure_ascii=False) if fac_iva_montos_hdr else ""
         )
         fac_referencia = pick(fac, _FAC_REFERENCIA_KEYS)
+        fac_archivo = normalize_archivo_path(
+            pick_archivo_raw(j),
+            company_id=company_id,
+            process_number=process_number,
+        )
 
         nro = normalize_comprobante_number(fac.get("numero_factura"))
         fecha = normalize_date_ddmmyyyy(fac.get("fecha"))
@@ -178,9 +229,35 @@ def parse_process_json(
         prov_nombre = normalize(prov.get("razon_social") or prov.get("nombre") or "")
         prov_cuit = normalize(prov.get("cuit") or "")
 
-        matched_name, matched_rubro, matched_diario, matched_cuenta, score = match_proveedor(
-            prov_nombre, prov_cuit
-        )
+        excel_prov_hit: Optional[Dict[str, Any]] = None
+        matched_name = ""
+        matched_rubro = ""
+        matched_diario = ""
+        matched_cuenta = ""
+        score = 0.0
+
+        if excel_user and excel_padron is not None:
+            from facturia_matching.padron.excel import match_proveedor_excel
+
+            excel_prov_hit = (
+                match_proveedor_excel(
+                    prov_nombre, prov_cuit, excel_padron.get("proveedores") or []
+                )
+                if (prov_nombre or prov_cuit)
+                else None
+            )
+            if excel_prov_hit:
+                matched_name = normalize(excel_prov_hit.get("match") or "")
+                score = float(excel_prov_hit.get("score") or 0)
+                if matched_name:
+                    prov_nombre = matched_name
+                cuit_hit = normalize(excel_prov_hit.get("cuit") or "")
+                if cuit_hit:
+                    prov_cuit = cuit_hit
+        else:
+            matched_name, matched_rubro, matched_diario, matched_cuenta, score = match_proveedor(
+                prov_nombre, prov_cuit
+            )
 
         if odoo_ok:
             partner_id, score_odoo = resolve_partner_id(
@@ -237,12 +314,20 @@ def parse_process_json(
             account_id = ""
             rubro_id = ""
 
+        # Excel: el "id" de proveedor en UI es el nombre del padrón (listado Sheet).
+        if excel_user and matched_name:
+            partner_id = matched_name
+
         items = fac.get("items") if isinstance(fac.get("items"), list) else []
         if not items:
             items = [{"descripcion": "", "cantidad": "", "precio_unitario": ""}]
 
-        comprobante_tax_match = tax_match_cache.get(prov_nombre, prov_cuit)
-        comprobante_tax_names = get_tax_name_by_id() if comprobante_tax_match[0] else None
+        if excel_user:
+            comprobante_tax_match = (None, None, None, None)
+            comprobante_tax_names = None
+        else:
+            comprobante_tax_match = tax_match_cache.get(prov_nombre, prov_cuit)
+            comprobante_tax_names = get_tax_name_by_id() if comprobante_tax_match[0] else None
 
         for i, it in enumerate(items):
             desc = normalize((it or {}).get("descripcion"))
@@ -258,6 +343,31 @@ def parse_process_json(
             otros_imp = (it or {}).get("otros_impuestos") or (it or {}).get("otros_tributos") or ""
             item_codigo = normalize((it or {}).get("codigo"))
             item_um = normalize((it or {}).get("unidad_medida"))
+
+            excel_prod: Optional[Dict[str, Any]] = None
+            excel_concepto = ""
+            excel_concepto_score = 0.0
+            excel_categoria = ""
+            if excel_user and excel_padron is not None and desc:
+                from facturia_matching.padron.excel import match_one, match_producto
+
+                excel_prod = match_producto(
+                    desc, item_um, excel_padron.get("productos") or []
+                )
+                conceptos = excel_padron.get("conceptos") or []
+                if conceptos:
+                    conc = match_one(desc, conceptos)
+                    if conc:
+                        excel_concepto, excel_concepto_score = conc[0], float(conc[1])
+                        cat_map = excel_padron.get("categoria_map") or {}
+                        excel_categoria = normalize(cat_map.get(excel_concepto) or "")
+
+            producto_nombre = desc
+            if excel_prod and excel_prod.get("match"):
+                producto_nombre = normalize(excel_prod.get("match"))
+                um_padron = normalize(excel_prod.get("unidad_medida") or "")
+                if um_padron:
+                    item_um = um_padron
 
             mismo_comprobante = i > 0
             otros_imp_n = normalize(otros_imp)
@@ -279,7 +389,9 @@ def parse_process_json(
                 "invoice_date_due": "" if mismo_comprobante else venc,
                 "x_studio_category": "" if mismo_comprobante else rubro_id,
                 "invoice_line_ids/name": desc,
-                "invoice_line_ids/product_id": "",
+                "invoice_line_ids/product_id": (
+                    producto_nombre if (excel_user and excel_prod and excel_prod.get("match")) else ""
+                ),
                 "journal_id": "" if mismo_comprobante else journal_id,
                 "invoice_line_ids/account_id": "" if mismo_comprobante else account_id,
                 "invoice_line_ids/quantity": "" if qty is None else format_fac_amount_for_ui(qty),
@@ -290,7 +402,7 @@ def parse_process_json(
                 "otros_impuestos_monto": "",
                 "Nombre de Proveedor": prov_nombre,
                 "CUIT": prov_cuit,
-                "Nombre de producto": desc,
+                "Nombre de producto": producto_nombre,
                 "__item_codigo": item_codigo,
                 "__fac_item_cantidad": (
                     ""
@@ -304,23 +416,40 @@ def parse_process_json(
                 "__fac_iva_monto": fac_iva_monto_hdr if i == 0 else "",
                 "__fac_iva_montos": fac_iva_montos_json if i == 0 else "",
                 "__fac_referencia": fac_referencia if i == 0 else "",
+                "__fac_archivo": fac_archivo if i == 0 else "",
             }
+            if excel_user:
+                row_out["__excel_proveedor"] = (excel_prov_hit or {}).get("match") or ""
+                row_out["__excel_proveedor_score"] = score if excel_prov_hit else 0
+                row_out["__excel_producto"] = (excel_prod or {}).get("match") or ""
+                row_out["__excel_producto_score"] = float((excel_prod or {}).get("score") or 0)
+                row_out["__excel_concepto"] = excel_concepto
+                row_out["__excel_concepto_score"] = excel_concepto_score
+                row_out["__excel_categoria"] = excel_categoria
             if i == 0:
                 apply_fac_percepciones_to_row(fac, row_out)
-            apply_padron_taxes_to_row(
-                row_out,
-                prov_nombre,
-                prov_cuit,
-                tax_match=comprobante_tax_match,
-                name_by_id=comprobante_tax_names,
-            )
+            if not excel_user:
+                apply_padron_taxes_to_row(
+                    row_out,
+                    prov_nombre,
+                    prov_cuit,
+                    tax_match=comprobante_tax_match,
+                    name_by_id=comprobante_tax_names,
+                )
             out_rows.append(row_out)
 
     etiqueta_opts = sorted({p for p in etiqueta_opts if p})
     t_rows = time.perf_counter()
 
     purchase_summary: Dict[str, Any] = {"enabled": False}
-    if odoo_ok and out_rows:
+    if excel_user:
+        purchase_summary = {
+            "enabled": False,
+            "excel_user": True,
+            "sheet_error": sheet_error or None,
+            "company_id": int(padron_cid),
+        }
+    elif odoo_ok and out_rows:
         purchase_summary = enrich_rows_with_purchase_data(
             out_rows, fetch_candidates=False, company_id=company_id
         )
@@ -330,12 +459,13 @@ def parse_process_json(
     propagate_single_footer_iva_to_lines(out_rows)
 
     logger.warning(
-        "timing parse_process_json pn=%s facturas=%s rows=%s odoo_ok=%s "
+        "timing parse_process_json pn=%s facturas=%s rows=%s odoo_ok=%s excel_user=%s "
         "catalog=%.0fms mysql=%.0fms rows_build=%.0fms enrich=%.0fms total=%.0fms",
         process_number,
         len(facturas),
         len(out_rows),
         odoo_ok,
+        excel_user,
         (t_catalog - t0) * 1000,
         (t_mysql - t_catalog) * 1000,
         (t_rows - t_mysql) * 1000,

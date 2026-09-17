@@ -113,6 +113,23 @@ class TestGoogleSheetsHelpers(unittest.TestCase):
         )
         self.assertIsNone(extract_spreadsheet_id(pub))
 
+    def test_friendly_sheet_access_error_403(self):
+        from unittest.mock import patch
+
+        from facturia_matching.padron.google_sheets import friendly_sheet_access_error
+
+        with patch(
+            "facturia_matching.padron.google_sheets.service_account_email",
+            return_value="facturia-padron@fudo-481618.iam.gserviceaccount.com",
+        ):
+            msg = friendly_sheet_access_error(
+                RuntimeError("Google Sheets export HTTP 403 para abc: Forbidden"),
+                spreadsheet_id="abc123",
+            )
+        self.assertIn("no está compartido", msg)
+        self.assertIn("facturia-padron@fudo-481618.iam.gserviceaccount.com", msg)
+        self.assertIn("Lector", msg)
+
     def test_a1_sheet_range_quotes_spaces(self):
         from facturia_matching.padron.google_sheets import _a1_sheet_range
 

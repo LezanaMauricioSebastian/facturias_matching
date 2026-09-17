@@ -131,8 +131,8 @@ build_default_secrets_arg() {
       pairs+=("${env_key}=${gcp_name}:latest")
     fi
   done
-  if secret_exists "ANTHROPIC_API_KEY"; then
-    pairs+=("ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest")
+  if secret_exists "DEEPSEEK_API_KEY"; then
+    pairs+=("DEEPSEEK_API_KEY=DEEPSEEK_API_KEY:latest")
   fi
   local IFS=,
   echo "${pairs[*]}"

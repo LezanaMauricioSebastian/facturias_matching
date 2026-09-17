@@ -1,0 +1,27 @@
+{
+  "0": {
+    "company_id": 0,
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA/edit?usp=sharing",
+    "refresh_minutes": 15,
+    "mapping": {
+      "proveedores": {
+        "razon_social": "Proveedores",
+        "nombre_fantasia": "",
+        "cuit": ""
+      },
+      "productos": {
+        "nombre": "",
+        "unidad_medida": ""
+      },
+      "formas_pago": {
+        "nombre": "Forma de Pago"
+      },
+      "conceptos": {
+        "nombre": "Conceptos",
+        "categoria": ""
+      }
+    },
+    "files": {},
+    "spreadsheet_id": "1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA"
+  }
+}

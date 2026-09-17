@@ -185,7 +185,7 @@ assert updates[0]["new_tax_ids"] == [63, 27]
 | Monto IVA sobrevive F5 (no migración legacy) | `migrateLegacyComprobanteIva keeps modern line Monto IVA (PDF Salta reload)` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | Otros del pie repartidos por fila asignada | `distributes footer amount proportional…` / `puts full amount on the only row…` en `tests/js/comprobante_tax.test.mjs` | [iva-y-import-odoo.md](../iva-y-import-odoo.md) |
 | Montos otros impuestos en multi-línea | `hides otros impuestos monto columns in multi-line` en `tests/js/solo_encabezado.test.mjs` | [guia-usuario.md](../guia-usuario.md) |
-| 1 línea sin pie / multi con pie; proceso sin mezcla | `renderFooterHtml` + `proceso line mode by row count` en `solo_encabezado.test.mjs`; `rejects mixed 1-line…` en `validateRows.test.mjs`; `test_validate_rejects_mixed_one_line_and_multi_line` | [guia-usuario.md](../guia-usuario.md#solo-encabezado--1-línea) |
+| 1 línea sin pie / multi con pie; proceso sin mezcla; colapso pisa IVA FacturIA y destildar restaura líneas | `renderFooterHtml` + `proceso line mode` + `overwrites stale line IVA` + `expand restores` en `solo_encabezado.test.mjs`; `rejects mixed…` en `validateRows.test.mjs`; `test_validate_rejects_mixed_one_line_and_multi_line` | [guia-usuario.md](../guia-usuario.md#solo-encabezado--1-línea) |
 
 ---
 

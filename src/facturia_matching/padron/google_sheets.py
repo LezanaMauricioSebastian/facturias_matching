@@ -50,6 +50,27 @@ def extract_gid(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def friendly_sheet_access_error(exc: BaseException, spreadsheet_id: str = "") -> str:
+    """User-facing message when private Sheet fetch fails (share / not found / etc.)."""
+    msg = str(exc)
+    email = service_account_email() or "la service account de FacturIA"
+    sid_bit = f" (id={spreadsheet_id})" if spreadsheet_id else ""
+    low = msg.lower()
+    if "403" in msg or "permission" in low or "forbidden" in low or "access" in low and "denied" in low:
+        return (
+            f"El Sheet existe pero no está compartido como Lector a {email}. "
+            f"En Google Sheets → Compartir, agregá ese mail.{sid_bit}"
+        )
+    if "404" in msg or "not found" in low:
+        return f"No se encontró el Sheet{sid_bit}. Revisá el link / spreadsheet id."
+    if "401" in msg or "unauthorized" in low:
+        return (
+            f"La service account no pudo autenticarse. "
+            f"Revisá GOOGLE_SERVICE_ACCOUNT_JSON en el server.{sid_bit}"
+        )
+    return f"No se pudo leer el Sheet{sid_bit}: {msg}"
+
+
 def _load_sa_info() -> Dict[str, Any]:
     raw = (GOOGLE_SERVICE_ACCOUNT_JSON or "").strip()
     if not raw:

@@ -11,7 +11,7 @@ import {
   shouldShowOtrosFooter,
   setOtrosFooterAmount,
   ensureOtrosLabelOnFirstRow,
-  maxOtrosSlotNOnRow,
+  maxOtrosLabelSlotNOnRow,
   stripPieMirrorLabelsFromFirstRow,
   missingFacOtrosAssignments,
 } from "../comprobanteTax/index.js";
@@ -189,12 +189,11 @@ function setComprobanteFooterOtrosSlot(state, compIdx, slotN, rawValue) {
   const normalized = normalizeNumericValue(rawValue, "otros_impuestos_monto");
   const n = parseInt(slotN, 10) || 1;
   const first = groupRows[0];
-  const firstHasSlot =
+  const firstHasLabel =
     first &&
-    (String(first[n === 1 ? "otros_impuestos" : `otros_impuestos_${n}`] ?? "").trim() ||
-      String(first[n === 1 ? "otros_impuestos_monto" : `otros_impuestos_${n}_monto`] ?? "").trim());
-  // Impuesto extra en otra línea: no abrir columnas + en la 1ª fila.
-  if (state && n >= 2 && firstHasSlot) ensureOtroImpuestoColumns(state, n);
+    String(first[n === 1 ? "otros_impuestos" : `otros_impuestos_${n}`] ?? "").trim();
+  // Columnas 2+ solo si hay label en 1ª fila (botón +). Montos FacturIA no abren columnas.
+  if (state && n >= 2 && firstHasLabel) ensureOtroImpuestoColumns(state, n);
   setOtrosFooterAmount(groupRows, n, normalized);
 }
 
@@ -219,8 +218,9 @@ export function syncOtrosFooterFromRowSelection(state, rowIdx) {
       if (lab) ensureOtrosLabelOnFirstRow(groupRows, lab, { selectedRow: row });
     }
   }
-  const maxOnRow = maxOtrosSlotNOnRow(row);
-  if (maxOnRow >= 2) ensureOtroImpuestoColumns(state, maxOnRow);
+  // Abrir columnas 2+ solo con label (no montos FacturIA hidratados).
+  const maxLabeled = maxOtrosLabelSlotNOnRow(row);
+  if (maxLabeled >= 2) ensureOtroImpuestoColumns(state, maxLabeled);
   const afterMissing = missingFacOtrosAssignments(groupRows).join("|");
   return beforeMissing !== afterMissing;
 }

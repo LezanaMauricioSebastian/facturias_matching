@@ -86,11 +86,17 @@ def fetch_partner_po_lines(
     """Líneas de OC confirmadas del proveedor.
 
     Por defecto trae **todas** las órdenes (`limit_orders=None` → Odoo `limit=False`).
-    Pasar un entero solo en tests o diagnósticos.
+    Pasar un entero acota a las N más recientes (carga inicial / enrich).
     """
     tenant_cache = _po_cache.setdefault(_tenant_cache_key(), {})
-    if partner_id in tenant_cache:
-        return tenant_cache[partner_id]["lines"]
+    entry = tenant_cache.get(partner_id)
+    if entry is not None:
+        cached_limit = entry.get("limit")
+        # None = fetch completo; reusar si alcanza el pedido actual.
+        if cached_limit is None:
+            return entry["lines"]
+        if limit_orders is not None and int(cached_limit) >= int(limit_orders):
+            return entry["lines"]
 
     # No cachear vacío por config ausente: si después hay credenciales, hay que poder reintentar.
     pm = _pkg()
@@ -117,7 +123,8 @@ def fetch_partner_po_lines(
         config=cfg,
     )
     if not orders:
-        tenant_cache[partner_id] = {"lines": []}
+        # Sin órdenes: resultado completo aunque el pedido fuera limitado.
+        tenant_cache[partner_id] = {"lines": [], "limit": None}
         return []
 
     order_ids = [int(o["id"]) for o in orders]
@@ -174,8 +181,39 @@ def fetch_partner_po_lines(
             }
         )
     _attach_dinner_po_note_labels(enriched)
-    tenant_cache[partner_id] = {"lines": enriched}
+    # Si pedimos N y vinieron menos de N órdenes, es el set completo.
+    stored_limit: Optional[int] = limit_orders
+    if limit_orders is not None and len(orders) < int(limit_orders):
+        stored_limit = None
+    tenant_cache[partner_id] = {"lines": enriched, "limit": stored_limit}
     return enriched
+
+
+def partner_has_confirmed_pos(partner_id: int) -> bool:
+    """True si el proveedor tiene al menos una OC confirmada (RPC liviano, limit=1)."""
+    tenant_cache = _po_cache.setdefault(_tenant_cache_key(), {})
+    entry = tenant_cache.get(partner_id)
+    if entry is not None:
+        return bool(entry.get("lines"))
+
+    pm = _pkg()
+    if not pm.is_purchase_odoo_configured():
+        return False
+
+    cfg = pm._purchase_odoo_config()
+    scope_id = pm._resolve_po_partner_scope(partner_id)
+    orders = pm.odoo_search_read(
+        "purchase.order",
+        _partner_po_search_domain(scope_id),
+        ["id"],
+        limit=1,
+        order="date_order desc, id desc",
+        config=cfg,
+    )
+    if not orders:
+        tenant_cache[partner_id] = {"lines": [], "limit": None}
+        return False
+    return True
 
 
 

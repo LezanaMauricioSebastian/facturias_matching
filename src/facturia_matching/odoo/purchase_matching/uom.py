@@ -512,7 +512,7 @@ def _resolve_target_uom_for_product(
     misma categoría, preferir kg sobre el pack/unidad de compra (uom_po).
 
     Sin señal fuerte (manual / peso), si hay >1 UM en la categoría del producto
-    se consulta Claude (`uom_ai`) antes de caer al default (suele ser Unidades).
+    se consulta DeepSeek (`uom_ai`) antes de caer al default (suele ser Unidades).
     `ai_meta` (dict mutable opcional) recibe `suggested=True` si la IA eligió.
     """
     product_uom_id = _pkg()._product_default_uom_id(product_id)
@@ -530,7 +530,7 @@ def _resolve_target_uom_for_product(
         if found:
             return found
 
-    # Antes del default Units: preguntar a Claude entre las UM de la categoría.
+    # Antes del default Units: preguntar a DeepSeek entre las UM de la categoría.
     if default_uom is not None and _normalize(product_label):
         cat_uoms = _uoms_in_category(_category_id(default_uom), uom_catalog)
         if len(cat_uoms) > 1:

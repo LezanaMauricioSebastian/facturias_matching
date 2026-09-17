@@ -1,14 +1,31 @@
 import { renderSummary, scheduleAutoSave, rematchPurchase, rematchProductUom, selectProductUom } from "../api/index.js";
 import { addOtroImpuesto, removeOtroImpuesto } from "../rows/index.js";
-import { renderComprobantes, updateComprobanteFooters } from "../comprobanteView/index.js";
-import { collapseGroupAtRow, comprobanteHasMultipleLines, prepareSoloEncabezadoRow } from "../singleLine/index.js";
+import {
+  renderComprobantes,
+  updateComprobanteFooters,
+  setViewMode,
+  setUnifiedOneLine,
+  shiftCarousel,
+} from "../comprobanteView/index.js";
+import {
+  collapseGroupAtRow,
+  comprobanteHasMultipleLines,
+  expandSoloEncabezadoAtRow,
+  prepareSoloEncabezadoRow,
+} from "../singleLine/index.js";
 import { renderOcPickerAfterTable } from "../ocPicker/index.js";
 
 function syncActionButtons(refs, state) {
   const hasRows = !!(state.rows && state.rows.length);
   refs.btnDescargar.disabled = !hasRows;
-  if (refs.btnOdooImport) refs.btnOdooImport.disabled = !hasRows;
+  if (refs.btnOdooImport) {
+    refs.btnOdooImport.disabled = !hasRows || !!state.excelUser;
+    if (state.excelUser) refs.btnOdooImport.hidden = true;
+  }
   if (refs.btnRevertir) refs.btnRevertir.disabled = !hasRows;
+  if (refs.btnRematchExcel && state.excelUser) {
+    refs.btnRematchExcel.disabled = !hasRows && !String(state.processNumber || "").trim();
+  }
 }
 
 /**
@@ -51,13 +68,6 @@ export function createHandlers({ state, refs, setStatusBound }) {
       if (!row) return;
       if (checked) {
         if (comprobanteHasMultipleLines(state.rows, rIdx)) {
-          const msg =
-            "¿Colapsar este comprobante a una sola línea? Se eliminan las líneas adicionales. " +
-            "Para deshacer, usá Restaurar original.";
-          if (!window.confirm(msg)) {
-            renderNow();
-            return;
-          }
           const res = collapseGroupAtRow(state.rows, rIdx, state);
           if (!res.changed) {
             prepareSoloEncabezadoRow(row, state);
@@ -66,7 +76,7 @@ export function createHandlers({ state, refs, setStatusBound }) {
           prepareSoloEncabezadoRow(row, state);
         }
       } else {
-        row.__solo_encabezado = false;
+        expandSoloEncabezadoAtRow(state.rows, rIdx);
       }
       renderSummary(refs, state);
       renderNow();
@@ -88,6 +98,10 @@ export function createHandlers({ state, refs, setStatusBound }) {
         scheduleAutoSave(state, refs, setStatusBound);
       });
     },
+    onSetViewMode: (mode) => setViewMode(state, refs, handlers, mode),
+    onSetUnifiedOneLine: (on) => setUnifiedOneLine(state, refs, handlers, on),
+    onCarouselPrev: () => shiftCarousel(state, refs, handlers, -1),
+    onCarouselNext: () => shiftCarousel(state, refs, handlers, 1),
   };
 
   return { handlers, renderNow };

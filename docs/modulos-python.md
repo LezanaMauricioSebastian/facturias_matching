@@ -70,12 +70,12 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `env.py` | Perfiles, URLs, DB name resolution, `build_odoo_*_config`, `get_conversion_template_id`, flags `is_odoo_aliare_profile`, `uses_odoo_padron_first`, idioma RPC `resolve_odoo_lang` (env → primer idioma instalado de `ODOO_LANG_CANDIDATES` → default por perfil). |
-| `request_context.py` | `contextvars` para `odoo_profile` del request actual. |
-| `api.py` | Conexión XML-RPC: `get_odoo_uid`, `odoo_search_read`, `get_active_odoo_config`, health checks, `odoo_model_field_names` / `odoo_available_fields` (campos existentes por tenant+modelo: pedir uno inexistente falla el `search_read` completo). |
-| `catalog.py` | **`get_catalog`** (cache): proveedores/contactos, journals, accounts, rubros, document types; maps para resolve por nombre/CUIT; `invalidate_catalog_cache`. Perfil **aliare**: catálogo de partners sin filtrar `supplier_rank` (todos los contactos). |
+| `catalog.py` | **`get_catalog`** (cache TTL `ODOO_CATALOG_CACHE_TTL`, default 600s): single-flight por perfil (bootstrap∥proceso no duplican cold fetch); RPCs independientes en paralelo (partners, products, journals, accounts, docs, rubros). Maps name→id + CUIT; `invalidate_catalog_cache`. Perfil **aliare**: partners sin filtrar `supplier_rank`. |
+| `request_context.py` | `contextvars` para `odoo_profile` / `empresa`. Catálogo de taxes Odoo: invalidar **solo** al cambiar profile/empresa (no en cada request). |
+| `api.py` | Conexión XML-RPC/JSON-RPC: `get_odoo_uid` (cache de uid si login es email), `odoo_search_read`, `get_active_odoo_config`, health checks, `odoo_model_field_names` / `odoo_available_fields` (campos existentes por tenant+modelo: pedir uno inexistente falla el `search_read` completo). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
 | `import_/` | Paquete de import a Odoo. **Documentación:** [docs/import-odoo/](../docs/import-odoo/README.md). Submódulos: `_utils`, `rows`, `purchase`, `taxes`, `planning`, `move_lines`, `sync`, `create`; `__init__.py` reexporta API pública. |
-| `purchase_matching/` | Paquete (antes un solo `.py`). **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM + aprendizaje (`company_id`). Submódulos: `_util`, `uom`, `uom_ai` (Claude), `scoring`, `oc`, `match`. Docs: [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [purchase-matching-modulos.md](import-odoo/purchase-matching-modulos.md). |
+| `purchase_matching/` | Paquete (antes un solo `.py`). **`enrich_rows_with_purchase_data`**, **`search_oc_candidates_for_comprobante`**, **`apply_oc_selection`**, **`rematch_comprobante_purchase`**, **`apply_product_uom_to_row`**, **`list_uoms_for_product`**: fuzzy match factura ↔ PO + UM + aprendizaje (`company_id`). En carga inicial (`fetch_candidates=False`) limita OCs a `ODOO_PO_ENRICH_ORDER_LIMIT` (default 100); header-only sin OC guardada usa `partner_has_confirmed_pos` (limit=1). Búsqueda completa on-demand vía `search-oc`. Submódulos: `_util`, `uom`, `uom_ai` (DeepSeek), `scoring`, `oc`, `match`. Docs: [import-odoo/purchase-matching.md](import-odoo/purchase-matching.md), [purchase-matching-modulos.md](import-odoo/purchase-matching-modulos.md). |
 | `__init__.py` | Marcador. |
 
 ---
@@ -120,6 +120,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `erp_import_webhook.py` | **`notify_erp_import_webhook`**: `POST /api/erp-imports/webhook` a FacturIA (staging/prod) con `import_id` + `token` tras import Odoo. |
+| `archivo.py` | Rutas `archivo_original` / `file_name` → `__fac_archivo`; URL desde `FACTURIA_FILE_URL_TEMPLATE`; backfill en conversiones. |
 | `__init__.py` | Marcador. |
 
 ---
@@ -175,6 +176,6 @@ Agrupadas por consumidor:
 - **Odoo default**: `ODOO_BASE_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_PASSWORD` / `ODOO_API_KEY`
 - **Odoo Aliare/Sudata**: mismas claves con sufijo `_ALIARE` / `_SUDATA`
 - **Comportamiento**: `PADRON_SOURCE`, `PADRON_TAX_SOURCE_PROFILE`, `PADRON_FUZZY_MIN_SCORE`, `PADRON_LIMIT`
-- **UM con IA**: `FACTURIA_UOM_AI_ENABLED`, `ANTHROPIC_API_KEY`, opcional `FACTURIA_UOM_AI_MODEL`
+- **UM con IA**: `FACTURIA_UOM_AI_ENABLED`, `DEEPSEEK_API_KEY`, opcional `FACTURIA_UOM_AI_MODEL` (default `deepseek-flash`)
 
 Definición en `infra/config.py` y `odoo/env.py`.

@@ -2,9 +2,12 @@
 Catálogos Odoo para dropdowns de la UI (con caché en memoria).
 """
 
+import contextvars
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
@@ -26,6 +29,18 @@ logger = logging.getLogger(__name__)
 DOC_TYPE_LABELS = ("FACTURAS A", "FACTURAS B", "FACTURAS C", "OC-X")
 
 _cache_by_profile: Dict[str, Dict[str, Any]] = {}
+# Single-flight: bootstrap ∥ proceso no deben cold-fetch el mismo perfil a la vez.
+_fetch_locks_guard = threading.Lock()
+_fetch_locks_by_profile: Dict[str, threading.Lock] = {}
+
+
+def _catalog_fetch_lock(profile: str) -> threading.Lock:
+    with _fetch_locks_guard:
+        lock = _fetch_locks_by_profile.get(profile)
+        if lock is None:
+            lock = threading.Lock()
+            _fetch_locks_by_profile[profile] = lock
+        return lock
 
 
 def _normalize_label(s: Any) -> str:
@@ -413,65 +428,96 @@ def _fetch_partners_for_catalog(config: Dict[str, Any], profile: str) -> List[Di
     return partners or []
 
 
-def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[Dict[str, Any]]]:
-    journals = odoo_search_read(
-        "account.journal",
-        [("active", "=", True)],
-        ["id", "name"],
-        limit=500,
-        order="name",
-        config=config,
-    )
-    partners = _fetch_partners_for_catalog(config, profile)
-    accounts = odoo_search_read(
-        "account.account",
-        [],
-        ["id", "name", "code"],
-        limit=5000,
-        order="name",
-        config=config,
-    )
+def _fetch_rubros_for_catalog(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     rubros: List[Dict[str, Any]] = []
-    if supports_rubro_field():
-        for model, domain, flds in (
-            ("x_rubros", [("x_active", "=", True)], ["id", "x_name"]),
-            ("x_rubros", [], ["id", "x_name"]),
-            ("x.rubros", [], ["id", "x_name"]),
-        ):
-            try:
-                rows = odoo_search_read(model, domain, flds, limit=500, order="x_name", config=config)
-                if rows:
-                    rubros = [{"id": r["id"], "name": r.get("x_name") or r.get("name")} for r in rows if r.get("id")]
-                    break
-            except Exception:
-                continue
-        if not rubros:
-            try:
-                rows = odoo_search_read("x_rubros", [], ["id", "x_name"], limit=500, config=config)
-                rubros = [{"id": r["id"], "name": r.get("x_name")} for r in rows if r.get("id")]
-            except Exception:
-                pass
-        if not rubros:
-            rubros = _padron_rubro_options()
-            if rubros:
-                logger.info(
-                    "Rubros: usando padrón Postgres (%d); instalá facturia_x_rubros en Odoo para IDs reales.",
-                    len(rubros),
-                )
+    if not supports_rubro_field():
+        return rubros
+    for model, domain, flds in (
+        ("x_rubros", [("x_active", "=", True)], ["id", "x_name"]),
+        ("x_rubros", [], ["id", "x_name"]),
+        ("x.rubros", [], ["id", "x_name"]),
+    ):
+        try:
+            rows = odoo_search_read(model, domain, flds, limit=500, order="x_name", config=config)
+            if rows:
+                return [
+                    {"id": r["id"], "name": r.get("x_name") or r.get("name")}
+                    for r in rows
+                    if r.get("id")
+                ]
+        except Exception:
+            continue
+    try:
+        rows = odoo_search_read("x_rubros", [], ["id", "x_name"], limit=500, config=config)
+        rubros = [{"id": r["id"], "name": r.get("x_name")} for r in rows if r.get("id")]
+    except Exception:
+        pass
+    if not rubros:
+        rubros = _padron_rubro_options()
+        if rubros:
+            logger.info(
+                "Rubros: usando padrón Postgres (%d); instalá facturia_x_rubros en Odoo para IDs reales.",
+                len(rubros),
+            )
+    return rubros
 
-    doc_types = prepare_document_types_for_ui(get_odoo_document_types(config))
-    products = odoo_search_read(
-        "product.product",
-        [("active", "=", True)],
-        odoo_available_fields(
+
+def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[Dict[str, Any]]]:
+    # Paralelizar RPCs independientes; copiar ContextVar (perfil/lang) a cada worker.
+    ctx = contextvars.copy_context()
+
+    def _journals() -> List[Dict[str, Any]]:
+        return odoo_search_read(
+            "account.journal",
+            [("active", "=", True)],
+            ["id", "name"],
+            limit=500,
+            order="name",
+            config=config,
+        )
+
+    def _accounts() -> List[Dict[str, Any]]:
+        return odoo_search_read(
+            "account.account",
+            [],
+            ["id", "name", "code"],
+            limit=5000,
+            order="name",
+            config=config,
+        )
+
+    def _products() -> List[Dict[str, Any]]:
+        return odoo_search_read(
             "product.product",
-            ["id", "name", "default_code", "uom_id", "uom_po_id"],
-            config,
-        ),
-        limit=20000,
-        order="name",
-        config=config,
-    )
+            [("active", "=", True)],
+            odoo_available_fields(
+                "product.product",
+                ["id", "name", "default_code", "uom_id", "uom_po_id"],
+                config,
+            ),
+            limit=20000,
+            order="name",
+            config=config,
+        )
+
+    def _doc_types() -> List[Dict[str, Any]]:
+        return prepare_document_types_for_ui(get_odoo_document_types(config))
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        fut_journals = pool.submit(ctx.run, _journals)
+        fut_partners = pool.submit(ctx.run, _fetch_partners_for_catalog, config, profile)
+        fut_accounts = pool.submit(ctx.run, _accounts)
+        fut_products = pool.submit(ctx.run, _products)
+        fut_docs = pool.submit(ctx.run, _doc_types)
+        # Rubros: retries de modelo; en paralelo con el resto pero un solo worker.
+        fut_rubros = pool.submit(ctx.run, _fetch_rubros_for_catalog, config)
+
+        journals = fut_journals.result()
+        partners = fut_partners.result()
+        accounts = fut_accounts.result()
+        products = fut_products.result()
+        doc_types = fut_docs.result()
+        rubros = fut_rubros.result()
 
     def _clean(items: List[Dict], extra: Optional[str] = None) -> List[Dict[str, Any]]:
         out = []
@@ -533,6 +579,40 @@ def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[D
     }
 
 
+def _build_catalog_from_raw(raw: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+    proveedores_cuit_map: Dict[str, str] = {}
+    for p in raw.get("proveedores") or []:
+        pid = str(p["id"])
+        vat = (p.get("vat") or "").strip()
+        if vat:
+            proveedores_cuit_map[pid] = vat
+
+    doc_types = raw.get("document_types") or []
+    doc_type_label_map = build_doc_type_label_map(doc_types)
+    partner_cuit_to_id = build_partner_cuit_to_id(raw.get("proveedores") or [])
+
+    return {
+        **raw,
+        "maps": {
+            "journals": build_name_to_id_map(raw.get("journals") or []),
+            "document_types": build_name_to_id_map(doc_types),
+            "document_type_labels": doc_type_label_map,
+            "proveedores": build_name_to_id_map(raw.get("proveedores") or []),
+            "cuentas": build_name_to_id_map(raw.get("cuentas") or []),
+            "accounts": build_account_maps(raw.get("cuentas") or []),
+            "rubros": build_name_to_id_map(raw.get("rubros") or []),
+            "productos": build_name_to_id_map(raw.get("productos") or []),
+        },
+        "partner_cuit_to_id": partner_cuit_to_id,
+        "proveedores_cuit_map": proveedores_cuit_map,
+        "facturas_c_type_ids": [
+            str(doc_type_label_map["FACTURAS C"])
+            for _ in [0]
+            if "FACTURAS C" in doc_type_label_map
+        ],
+    }
+
+
 def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], bool]:
     """
     Retorna (catalog, from_odoo).
@@ -563,48 +643,29 @@ def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Opt
     if not force and cache.get("data") and (now - float(cache.get("ts") or 0)) < ODOO_CATALOG_CACHE_TTL:
         return cache["data"], True
 
-    try:
-        raw = _fetch_catalog_raw(config, profile)
-    except Exception as e:
-        logger.warning("No se pudo cargar catálogo Odoo: %s", e)
-        return None, False
+    # Single-flight por perfil: el segundo caller espera y reusa el cache.
+    with _catalog_fetch_lock(profile):
+        now = time.time()
+        if (
+            not force
+            and cache.get("data")
+            and (now - float(cache.get("ts") or 0)) < ODOO_CATALOG_CACHE_TTL
+        ):
+            return cache["data"], True
 
-    proveedores_cuit_map: Dict[str, str] = {}
-    for p in raw.get("proveedores") or []:
-        pid = str(p["id"])
-        vat = (p.get("vat") or "").strip()
-        if vat:
-            proveedores_cuit_map[pid] = vat
+        try:
+            raw = _fetch_catalog_raw(config, profile)
+        except Exception as e:
+            logger.warning("No se pudo cargar catálogo Odoo: %s", e)
+            return None, False
 
-    doc_types = raw.get("document_types") or []
-    doc_type_label_map = build_doc_type_label_map(doc_types)
-    partner_cuit_to_id = build_partner_cuit_to_id(raw.get("proveedores") or [])
-
-    catalog = {
-        **raw,
-        "maps": {
-            "journals": build_name_to_id_map(raw.get("journals") or []),
-            "document_types": build_name_to_id_map(doc_types),
-            "document_type_labels": doc_type_label_map,
-            "proveedores": build_name_to_id_map(raw.get("proveedores") or []),
-            "cuentas": build_name_to_id_map(raw.get("cuentas") or []),
-            "accounts": build_account_maps(raw.get("cuentas") or []),
-            "rubros": build_name_to_id_map(raw.get("rubros") or []),
-            "productos": build_name_to_id_map(raw.get("productos") or []),
-        },
-        "partner_cuit_to_id": partner_cuit_to_id,
-        "proveedores_cuit_map": proveedores_cuit_map,
-        "facturas_c_type_ids": [
-            str(doc_type_label_map["FACTURAS C"])
-            for _ in [0]
-            if "FACTURAS C" in doc_type_label_map
-        ],
-    }
-    cache["ts"] = now
-    cache["data"] = catalog
-    return catalog, True
+        catalog = _build_catalog_from_raw(raw)
+        cache["ts"] = time.time()
+        cache["data"] = catalog
+        return catalog, True
 
 
 def invalidate_catalog_cache() -> None:
-    _cache["ts"] = 0.0
-    _cache["data"] = None
+    for entry in _cache_by_profile.values():
+        entry["ts"] = 0.0
+        entry["data"] = None

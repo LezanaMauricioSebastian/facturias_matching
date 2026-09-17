@@ -4,9 +4,12 @@ import { renderComprobantes } from "../comprobanteView/index.js";
 import { clearAutoSaveTimer } from "./autoSave.js";
 import {
   applyProcesoPayload,
+  applyExcelUserChrome,
+  loadExcelPadronOptions,
   purchaseStatusPart,
   updateSummaryFromState,
 } from "./procesoShared.js";
+import { fetchProcesoPayload } from "./proceso.js";
 
 const UOM_ROW_KEYS = [
   "__um_proveedor",
@@ -278,18 +281,81 @@ export async function selectProductUom(state, refs, setStatusFn, handlers, rowId
   }
 }
 
+export async function rematchearExcelPadron(state, refs, setStatusFn, handlers) {
+  const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
+  const empresa = String(state.empresa || refs.companyNumberEl?.value || "").trim();
+  if (!pn) {
+    setStatusFn?.("Indicá un número de proceso.", "bad");
+    return;
+  }
+  const msg =
+    "¿Re-matchear contra el padrón Excel actual? Se vuelve a leer el Sheet " +
+    "y se recalculan proveedor, productos y conceptos.";
+  if (!window.confirm(msg)) return;
+
+  setStatusFn("Re-matcheando con padrón Excel…");
+  state.skipAutoSave = true;
+  clearAutoSaveTimer(state);
+  if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = true;
+  if (refs.btnRevertir) refs.btnRevertir.disabled = true;
+  try {
+    state.excelUser = true;
+    const { res, data } = await fetchProcesoPayload(state, pn, empresa, {
+      excel_user: "1",
+      empresa,
+      proceso: pn,
+    });
+    if (!res.ok) throw new Error(data?.detail || "No se pudo re-matchear");
+    applyProcesoPayload(state, refs, data, pn, empresa);
+    applyExcelUserChrome(state, refs);
+    try {
+      state.padronLoading = true;
+      state.productosLoading = true;
+      if (handlers?.onRerender) handlers.onRerender();
+      await loadExcelPadronOptions(state, { force: true });
+      applyExcelUserChrome(state, refs);
+    } catch (e) {
+      state.padronLoading = false;
+      state.productosLoading = false;
+      setStatusFn(e?.message || String(e), "bad");
+    }
+    updateSummaryFromState(refs, state);
+    if (handlers?.onRerender) handlers.onRerender();
+    else renderComprobantes(state, refs, handlers);
+    const sheetErr = data.excel_padron?.sheet_error || state.excelPadron?.sheet_error;
+    if (sheetErr) {
+      setStatusFn(`Padrón Excel: ${sheetErr}`, "bad");
+    } else {
+      const nProv = state.options?.proveedores?.length || 0;
+      setStatusFn(`Re-match listo · ${nProv} proveedores del Sheet.`, "ok");
+    }
+    if (refs.btnRevertir) refs.btnRevertir.disabled = false;
+    if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = false;
+    if (refs.btnDescargar && state.rows?.length) refs.btnDescargar.disabled = false;
+  } catch (e) {
+    setStatusFn(e?.message || String(e), "bad");
+    if (refs.btnRevertir && (state.rows?.length || pn)) refs.btnRevertir.disabled = false;
+    if (refs.btnRematchExcel && (state.rows?.length || pn)) refs.btnRematchExcel.disabled = false;
+  } finally {
+    state.skipAutoSave = false;
+  }
+}
+
 export async function revertirOriginal(state, refs, setStatusFn, handlers) {
   const pn = String(state.processNumber || refs.processNumberEl?.value || "").trim();
   if (!pn || !(state.rows && state.rows.length)) return;
-  const msg =
-    "¿Restaurar el estado original del proceso? Se descartará la conversión guardada " +
-    "y se volverá a generar desde FacturIA.";
+  const msg = state.excelUser
+    ? "¿Restaurar el estado original del proceso? Se descartará la conversión guardada " +
+      "y se volverá a generar desde FacturIA (con el padrón Excel)."
+    : "¿Restaurar el estado original del proceso? Se descartará la conversión guardada " +
+      "y se volverá a generar desde FacturIA.";
   if (!window.confirm(msg)) return;
 
   setStatusFn("Restaurando estado original…");
   state.skipAutoSave = true;
   clearAutoSaveTimer(state);
   if (refs.btnRevertir) refs.btnRevertir.disabled = true;
+  if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = true;
   try {
     const body = apiContextBody(state);
     const res = await fetch(`/api/proceso/${encodeURIComponent(pn)}/revert`, {
@@ -300,15 +366,33 @@ export async function revertirOriginal(state, refs, setStatusFn, handlers) {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || "No se pudo restaurar");
     applyProcesoPayload(state, refs, data, pn, state.empresa);
+    if (state.excelUser) {
+      applyExcelUserChrome(state, refs);
+      try {
+        state.padronLoading = true;
+        state.productosLoading = true;
+        if (handlers?.onRerender) handlers.onRerender();
+        await loadExcelPadronOptions(state, { force: true });
+        applyExcelUserChrome(state, refs);
+      } catch (e) {
+        state.padronLoading = false;
+        state.productosLoading = false;
+        setStatusFn(e?.message || String(e), "bad");
+      }
+    }
     updateSummaryFromState(refs, state);
     if (handlers?.onRerender) handlers.onRerender();
     else renderComprobantes(state, refs, handlers);
-    const pmPart = purchaseStatusPart(data.purchase_matching || {});
+    const pmPart = state.excelUser ? "" : purchaseStatusPart(data.purchase_matching || {});
     setStatusFn(`Estado original restaurado.${pmPart}`, "ok");
     if (refs.btnRevertir) refs.btnRevertir.disabled = false;
+    if (refs.btnRematchExcel && state.excelUser) refs.btnRematchExcel.disabled = false;
   } catch (e) {
     setStatusFn(e?.message || String(e), "bad");
     if (refs.btnRevertir && state.rows?.length) refs.btnRevertir.disabled = false;
+    if (refs.btnRematchExcel && state.excelUser && state.rows?.length) {
+      refs.btnRematchExcel.disabled = false;
+    }
   } finally {
     state.skipAutoSave = false;
   }

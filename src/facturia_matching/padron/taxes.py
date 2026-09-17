@@ -190,6 +190,12 @@ def clear_odoo_tax_catalog_cache() -> None:
     _IVA_TAX_IDS_CACHE = None
     _PADRON_SOURCE_IVA_SEMANTICS_CACHE = None
     _PADRON_SOURCE_TAX_NAMES_CACHE = None
+    try:
+        from facturia_matching.odoo.request_context import reset_tax_cache_scope
+
+        reset_tax_cache_scope()
+    except Exception:
+        pass
 
 
 def clear_tax_padron_cache() -> None:

@@ -34,6 +34,7 @@ async def no_cache_static_modules(request, call_next):
     response = await call_next(request)
     path = request.url.path or ""
     if path.startswith("/js/") or path.startswith("/css/"):
-        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        # no-store: el grafo de ES modules no debe reutilizarse tras un deploy de UI.
+        response.headers["Cache-Control"] = "no-store"
     return response
 

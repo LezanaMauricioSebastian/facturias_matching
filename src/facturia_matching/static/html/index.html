@@ -23,6 +23,7 @@
             <div class="btnGroupWrap">
               <div class="btnGroup btnGroupSecondary">
                 <button id="btnRevertir" class="secondary btnRevert" type="button" disabled>Restaurar original</button>
+                <button id="btnRematchExcel" class="secondary btnRematch" type="button" disabled hidden>Re-matchear</button>
               </div>
               <div class="btnGroup btnGroupPrimary">
                 <button id="btnOdooImport" class="secondary" type="button" disabled>Importar a Odoo</button>
@@ -51,7 +52,27 @@
             <button type="button" class="processTab" data-process-tab="facturia">FacturIA</button>
           </div>
           <div class="processTabPanel" data-process-panel="edit">
-            <div class="hint summaryHint" id="summary"></div>
+            <div class="processViewBar">
+              <div class="hint summaryHint" id="summary"></div>
+              <div class="processViewActions">
+                <label class="unifiedOneLineToggle" id="unifiedOneLineToggle" hidden title="Une todas las facturas de 1 línea en una sola tabla (un encabezado y un scroller)">
+                  <input type="checkbox" id="chkUnifiedOneLine" />
+                  <span>Vista unificada</span>
+                </label>
+                <div class="viewModeToggle" role="group" aria-label="Vista de comprobantes">
+                  <button type="button" class="viewModeBtn active" data-view-mode="lista" id="btnViewLista">Lista</button>
+                  <button type="button" class="viewModeBtn" data-view-mode="carrusel" id="btnViewCarrusel">Carrusel</button>
+                </div>
+                <button type="button" class="expandViewBtn secondary" id="btnExpandView" aria-pressed="false" title="Ampliar" aria-label="Ampliar vista">
+                  <span class="expandViewIcon" aria-hidden="true">▢</span>
+                </button>
+              </div>
+            </div>
+            <div id="carouselNav" class="carouselNav" hidden>
+              <button type="button" class="secondary carouselNavBtn" id="btnCarouselPrev" aria-label="Comprobante anterior">‹</button>
+              <span class="carouselNavLabel" id="carouselNavLabel">1 / 1</span>
+              <button type="button" class="secondary carouselNavBtn" id="btnCarouselNext" aria-label="Comprobante siguiente">›</button>
+            </div>
             <div id="ocPickerBar" class="ocPickerBar" hidden></div>
             <div class="tableScroll">
               <div id="tableWrap"></div>
