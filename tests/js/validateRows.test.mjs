@@ -92,7 +92,7 @@ describe("validateRows", () => {
     assert.equal(row.invoice_date, "15/01/2024");
   });
 
-  it("rejects mixed 1-line and multi-line comprobantes in the same proceso", () => {
+  it("allows mixed 1-line and multi-line comprobantes in the same proceso", () => {
     const rows = [
       lineRow({ __comprobante_idx: 0 }),
       lineRow({
@@ -106,6 +106,6 @@ describe("validateRows", () => {
       }),
     ];
     const err = validateRows(baseState(rows));
-    assert.match(err, /mezcla/);
+    assert.equal(err, null);
   });
 });

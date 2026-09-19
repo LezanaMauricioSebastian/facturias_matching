@@ -344,7 +344,7 @@ export function createFallbackHandlers(state, refs, setStatusFn) {
   const handlers = {
     onRerender: () => renderComprobantes(state, refs, handlers),
     onUpdateComprobanteFooters: () => updateComprobanteFooters(state, refs),
-    onCollapseComprobante: () => {},
+    onToggleSoloEncabezadoAll: () => {},
     onDeleteRow: () => {},
     onAutoSave: () => scheduleAutoSave(state, refs, setStatusFn),
   };

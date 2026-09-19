@@ -66,6 +66,7 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
   setStatusFn("Buscando proceso y ejecutando matching…");
   refs.btnBuscar.disabled = true;
   refs.btnDescargar.disabled = true;
+  if (refs.btnCopiarCsv) refs.btnCopiarCsv.disabled = true;
   if (refs.btnOdooImport) refs.btnOdooImport.disabled = true;
   if (refs.btnRevertir) refs.btnRevertir.disabled = true;
   if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = true;
@@ -165,6 +166,7 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
         setStatusFn(`${msg}${pmPart}`, "ok");
       }
       refs.btnDescargar.disabled = false;
+      if (refs.btnCopiarCsv) refs.btnCopiarCsv.disabled = false;
       if (refs.btnOdooImport && !state.excelUser) refs.btnOdooImport.disabled = false;
       if (refs.btnRevertir) refs.btnRevertir.disabled = false;
       if (refs.btnRematchExcel && state.excelUser) refs.btnRematchExcel.disabled = false;

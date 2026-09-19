@@ -12,19 +12,8 @@ import {
   ensureAddOtroImpuestoActionColumn,
 } from "../rows/index.js";
 
-const SOLO_ENCABEZADO_KEY = "__solo_encabezado";
 const SUBTOTAL_KEY = "__subtotal";
-
-function ensureSoloEncabezadoColumn(state) {
-  if (state.columns.some((c) => c.key === SOLO_ENCABEZADO_KEY)) return;
-  state.columns.unshift({
-    key: SOLO_ENCABEZADO_KEY,
-    label: "Solo encabezado",
-    type: "checkbox",
-    readonly: true,
-    editable: false,
-  });
-}
+const SOLO_ENCABEZADO_COL_KEY = "__solo_encabezado";
 
 /** Columna calculada (qty×precio, sin impuestos); siempre visible, antes de Total. */
 function ensureSubtotalColumn(state) {
@@ -38,6 +27,11 @@ function ensureSubtotalColumn(state) {
   const totalIdx = state.columns.findIndex((c) => c.key === "__total_linea");
   if (totalIdx >= 0) state.columns.splice(totalIdx, 0, col);
   else state.columns.push(col);
+}
+
+/** Quita la columna legacy de tilde por factura (ahora el control es global). */
+function dropSoloEncabezadoColumn(state) {
+  state.columns = (state.columns || []).filter((c) => c.key !== SOLO_ENCABEZADO_COL_KEY);
 }
 
 export function odooImportButtonLabel() {
@@ -118,7 +112,7 @@ export async function loadMetaAndOptions(state, urlParams = {}) {
   state.columns = [...state.columns, { key: "__total_linea", label: "Total", type: "computed" }];
   ensureOtroImpuestoColumns(state, 1);
   ensureAddOtroImpuestoActionColumn(state);
-  ensureSoloEncabezadoColumn(state);
+  dropSoloEncabezadoColumn(state);
   ensureSubtotalColumn(state);
   state.purchaseColumnDefs = (state.columns || []).filter((c) =>
     PURCHASE_COLUMN_KEYS.includes(c.key)

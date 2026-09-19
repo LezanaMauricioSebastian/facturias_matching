@@ -47,7 +47,7 @@ class TestOdooImport(unittest.TestCase):
         err = validate_rows_for_import(rows)
         self.assertIn("proveedor", err or "")
 
-    def test_validate_rejects_mixed_one_line_and_multi_line(self):
+    def test_validate_allows_mixed_one_line_and_multi_line(self):
         rows = [
             {
                 "partner_id": "5",
@@ -77,8 +77,7 @@ class TestOdooImport(unittest.TestCase):
             },
         ]
         err = validate_rows_for_import(rows)
-        self.assertIn("mezcla", err or "")
-
+        self.assertIsNone(err)
     def test_propagate_header(self):
         rows = [
             {

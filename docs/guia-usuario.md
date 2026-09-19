@@ -75,8 +75,8 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 
 - Si un comprobante tiene **1 sola línea**, se trata como **Encabezado**: **sin pie** (no se muestra Base imponible / IVA / Total abajo). Los montos de IVA y otros van **en la fila**.
 - Si tiene **varias líneas**, el **pie** queda visible (montos ahí, como Odoo).
-- Un **proceso** puede ser solo Encabezado (todos los comprobantes de 1 línea) **o** solo con Líneas (todos con varias). **No** puede mezclar ambos.
-- El tilde **Solo encabezado** en la primera fila colapsa multi-línea a una (precio = subtotal FacturIA; IVA y otros del encabezado van a la fila). **Destildar** restaura las líneas originales del comprobante; **Restaurar original** sigue siendo el reset completo del proceso. Al quedar 1 línea se oculta el pie.
+- Un **proceso puede mezclar** comprobantes de Encabezado (1 línea) y con varias líneas. En **Lista**, si hay **≥2** comprobantes y **todos** son de 1 línea, la vista unificada (una sola tabla) se aplica **sola** — ya no hay tilde «Vista unificada».
+- El tilde global **Solo encabezado** (barra superior del proceso) colapsa **todas** las facturas multi-línea a una (precio = subtotal FacturIA; IVA y otros del encabezado van a la fila). **Destildar** restaura las líneas originales de cada comprobante; **Restaurar original** sigue siendo el reset completo del proceso. Al quedar 1 línea se oculta el pie (y, con ≥2 facturas, entra la vista unificada). Ya no hay tilde por factura.
 
 La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**.
 

@@ -70,7 +70,7 @@ npm run test:js
 | Archivo | Qué cubre |
 |---------|-----------|
 | `tests/js/comprobante_tax.test.mjs` | Paridad lógica tax en browser |
-| `tests/js/solo_encabezado.test.mjs` | Flag Solo encabezado, columnas, colapso |
+| `tests/js/solo_encabezado.test.mjs` | Flag Solo encabezado, tilde global (`applySoloEncabezadoToAll`), columnas, colapso |
 | `tests/js/rows_migration.test.mjs` | Migración de filas (cuenta, proveedor) |
 | `tests/js/numbers.test.mjs` | Parseo de montos |
 | `tests/js/validateRows.test.mjs` | Validación pre-export (partner, journal, IVA por modo, cuenta, fechas) |
@@ -105,7 +105,7 @@ Uso típico de diagnóstico cuando el matching falla en un proveedor o rubro.
 | Cambiaste… | Agregar/actualizar |
 |------------|-------------------|
 | Fórmula IVA | `tax_scenarios.json` + test JS (`comprobante_tax.test.mjs`, incl. `header footer IVA fixed when price changes`) + `test_comprobante_tax.py` + `test_js_python_parity.py` |
-| Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, 1 línea sin pie, multi con pie, proceso sin mezcla) |
+| Solo encabezado | `tests/js/solo_encabezado.test.mjs` (flag, tilde global aplica a todos, 1 línea sin pie, multi con pie, clasificación mixed sin bloqueo) |
 | Nueva columna UI/CSV | `test` de `constants` o snapshot headers en export |
 | Import Odoo | `test_odoo_import_*.py` con filas mínimas agrupadas |
 | Matching OC | `test_purchase_matching_{uom,oc,match}.py` |

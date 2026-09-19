@@ -32,7 +32,6 @@ const COL_SPEC = {
   otros_impuestos: { min: 120, max: 240, flex: true },
   otros_impuestos_monto: { min: 88, max: 150, fit: true, ignoreHeader: true, money: true },
   "invoice_line_ids/tax_ids": { min: 120, max: 240, flex: true },
-  __solo_encabezado: { min: 72, max: 90, fit: true },
   __subtotal: { min: 100, max: 170, fit: true, ignoreHeader: true, money: true },
   __total_linea: { min: 100, max: 170, fit: true, ignoreHeader: true, money: true },
   __um_empresa: { min: 56, max: 100, fit: true },
@@ -207,7 +206,6 @@ export function colCellAttrs(colWidths, key, label, extraClass = "") {
   if (key === "invoice_line_ids/price_unit") classes.push("colPrice");
   if (key === "iva_pct") classes.push("colIvaPct");
   if (key === "__um_empresa") classes.push("colUm");
-  if (key === "__solo_encabezado") classes.push("colSoloEnc");
   if (key === ADD_OTRO_IMPUESTO_KEY) classes.push("headerAddTaxCell");
 
   const cls = classes.filter(Boolean).join(" ").trim();

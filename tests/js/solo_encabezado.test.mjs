@@ -3,7 +3,13 @@ import { describe, it } from "node:test";
 
 import { isSoloEncabezado, isEncabezadoOneLineUi } from "../../src/facturia_matching/static/js/singleLine/groups.js";
 import { columnsForTaxMode } from "../../src/facturia_matching/static/js/table/columns.js";
-import { collapseGroupAtRow, prepareSoloEncabezadoRow, expandSoloEncabezadoAtRow } from "../../src/facturia_matching/static/js/singleLine/collapse.js";
+import {
+  collapseGroupAtRow,
+  prepareSoloEncabezadoRow,
+  expandSoloEncabezadoAtRow,
+  applySoloEncabezadoToAll,
+  allComprobantesAreSoloEncabezado,
+} from "../../src/facturia_matching/static/js/singleLine/collapse.js";
 import {
   classifyProcesoLineMode,
   mixedProcesoLineModeError,
@@ -267,7 +273,74 @@ describe("collapseGroupAtRow", () => {
   });
 });
 
-describe("proceso line mode by row count (1 línea XOR multi)", () => {
+describe("applySoloEncabezadoToAll / allComprobantesAreSoloEncabezado", () => {
+  function multiGroupRows() {
+    return [
+      {
+        __comprobante_idx: 0,
+        __fac_subtotal: "100",
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "50",
+        "invoice_line_ids/name": "A1",
+      },
+      {
+        __comprobante_idx: 0,
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "50",
+        "invoice_line_ids/name": "A2",
+      },
+      {
+        __comprobante_idx: 1,
+        __fac_subtotal: "200",
+        "invoice_line_ids/quantity": "2",
+        "invoice_line_ids/price_unit": "40",
+        "invoice_line_ids/name": "B1",
+      },
+      {
+        __comprobante_idx: 1,
+        "invoice_line_ids/quantity": "1",
+        "invoice_line_ids/price_unit": "80",
+        "invoice_line_ids/name": "B2",
+      },
+    ];
+  }
+
+  it("allComprobantesAreSoloEncabezado false when mixed or empty", () => {
+    assert.equal(allComprobantesAreSoloEncabezado([]), false);
+    const rows = multiGroupRows();
+    assert.equal(allComprobantesAreSoloEncabezado(rows), false);
+    prepareSoloEncabezadoRow(rows[0]);
+    assert.equal(allComprobantesAreSoloEncabezado(rows), false);
+  });
+
+  it("applySoloEncabezadoToAll(true) collapses every multi-line group", () => {
+    const rows = multiGroupRows();
+    const res = applySoloEncabezadoToAll(rows, true);
+    assert.equal(res.changed, true);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].__comprobante_idx, 0);
+    assert.equal(rows[1].__comprobante_idx, 1);
+    assert.equal(rows[0].__solo_encabezado, true);
+    assert.equal(rows[1].__solo_encabezado, true);
+    assert.equal(allComprobantesAreSoloEncabezado(rows), true);
+  });
+
+  it("applySoloEncabezadoToAll(false) restores backups", () => {
+    const rows = multiGroupRows();
+    applySoloEncabezadoToAll(rows, true);
+    assert.equal(rows.length, 2);
+    const res = applySoloEncabezadoToAll(rows, false);
+    assert.equal(res.changed, true);
+    assert.equal(rows.length, 4);
+    assert.equal(rows[0]["invoice_line_ids/name"], "A1");
+    assert.equal(rows[1]["invoice_line_ids/name"], "A2");
+    assert.equal(rows[2]["invoice_line_ids/name"], "B1");
+    assert.equal(rows[3]["invoice_line_ids/name"], "B2");
+    assert.equal(allComprobantesAreSoloEncabezado(rows), false);
+  });
+});
+
+describe("proceso line mode by row count (1 línea / multi; mixed permitido)", () => {
   it("classifyProcesoLineMode detects encabezado, lineas and mixed", () => {
     assert.equal(
       classifyProcesoLineMode([
@@ -295,13 +368,15 @@ describe("proceso line mode by row count (1 línea XOR multi)", () => {
     );
   });
 
-  it("mixedProcesoLineModeError when mixed line counts", () => {
-    const err = mixedProcesoLineModeError([
-      { __comprobante_idx: 0 },
-      { __comprobante_idx: 1 },
-      { __comprobante_idx: 1 },
-    ]);
-    assert.match(err, /mezcla/);
+  it("mixedProcesoLineModeError never blocks mixed line counts", () => {
+    assert.equal(
+      mixedProcesoLineModeError([
+        { __comprobante_idx: 0 },
+        { __comprobante_idx: 1 },
+        { __comprobante_idx: 1 },
+      ]),
+      null
+    );
     assert.equal(
       mixedProcesoLineModeError([
         { __comprobante_idx: 0 },

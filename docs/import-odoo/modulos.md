@@ -51,7 +51,7 @@ Agrupación, validación y construcción de líneas para create.
 | `_invoice_group_key` | Clave estable: `idx:N`, `doc:…` o `row:N` |
 | `group_rows_into_invoices` | `List[fila]` → `List[List[fila]]` por comprobante |
 | `propagate_invoice_headers` | Copia cabecera a líneas hijas (como CSV) |
-| `validate_rows_for_import` | Valida partner, journal, doc, fecha, cuenta; rechaza proceso mixto 1 línea / multi-línea; devuelve `str` error o `None` |
+| `validate_rows_for_import` | Valida partner, journal, doc, fecha, cuenta; permite mezclar comprobantes 1 línea y multi-línea; devuelve `str` error o `None` |
 | `_invoice_origin_from_group` | Texto `invoice_origin` desde `__selected_oc_name` o `__oc_name` |
 | `_build_line_command` | `(0, 0, vals)` con qty, price, account, product, tax_ids |
 | `_invoice_due_date_from_group` | `invoice_date_due` o fallback `invoice_date` |

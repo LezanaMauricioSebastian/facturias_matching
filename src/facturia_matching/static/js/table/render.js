@@ -14,7 +14,6 @@ import {
 } from "../utils/index.js";
 import { normalizeComprobanteNumber } from "../validation/index.js";
 import {
-  comprobanteHasMultipleLines,
   isFirstRowOfComprobante,
   groupBounds,
   isSoloEncabezado,
@@ -231,19 +230,6 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
       const tdAttrs = colCellAttrs(colWidths, key, c.label);
       if (c.type === "header_action") {
         html.push(`<td${colCellAttrs(colWidths, key, c.label, "headerActionBodyCell")}></td>`);
-      } else if (c.type === "checkbox") {
-        if (isFirstRowOfComprobante(state.rows, rIdx)) {
-          const checked = isSoloEncabezado(r) ? " checked" : "";
-          const multi = comprobanteHasMultipleLines(state.rows, rIdx);
-          const title = multi
-            ? "Solo encabezado: colapsa a una línea (guarda las líneas para poder destildar). Con 1 línea se oculta el pie y los montos van en la fila"
-            : "1 línea: sin pie (Base/IVA/Total abajo). Montos IVA/Otros en la fila";
-          html.push(
-            `<td${colCellAttrs(colWidths, key, c.label, "soloEncabezadoCell")}><input type="checkbox" data-solo-encabezado-r="${rIdx}"${checked} title="${title}" aria-label="Solo encabezado" /></td>`
-          );
-        } else {
-          html.push(`<td${tdAttrs}></td>`);
-        }
       } else if (c.type === "computed") {
         const n = key === "__subtotal" ? computeSubtotalCell(r) : computeRowTotal(r, rowTaxMode);
         const dataAttr =
@@ -353,16 +339,6 @@ export function renderComprobanteTable(state, rowIndices, containerEl, refs, han
   }
   html.push("</tbody></table>");
   containerEl.innerHTML = html.join("");
-
-  containerEl.querySelectorAll("input[data-solo-encabezado-r]").forEach((cb) => {
-    cb.addEventListener("change", (e) => {
-      const t = e.target;
-      if (!(t instanceof HTMLInputElement) || t.type !== "checkbox") return;
-      const r = parseInt(t.getAttribute("data-solo-encabezado-r"), 10);
-      if (!Number.isFinite(r)) return;
-      handlers.onToggleSoloEncabezado?.(r, t.checked);
-    });
-  });
 
   containerEl.querySelectorAll("input[data-r][data-k]").forEach((inp) => {
     inp.addEventListener("input", (e) => {

@@ -1,7 +1,9 @@
 /**
- * Modo de línea del proceso por cantidad de filas por comprobante:
- * Encabezado (1 línea) XOR con Líneas (>1). No mezclar en el mismo proceso.
+ * Modo de línea del proceso por cantidad de filas por comprobante.
+ * Encabezado (1 línea) y con Líneas (>1) pueden coexistir en el mismo proceso.
  * Con 1 línea: sin pie (montos en la fila). Con varias: pie visible.
+ * `classifyProcesoLineMode === "encabezado"` activa la Vista unificada por defecto
+ * (una sola tabla cuando todos son de 1 línea; sin checkbox).
  */
 import { groupBounds, isFirstRowOfComprobante } from "./groups.js";
 
@@ -20,6 +22,7 @@ export function isOneLineComprobante(rows, idx) {
 
 /**
  * Clasifica el proceso: todos 1 línea → encabezado; todos >1 → lineas; si no → mixed.
+ * Usado para UI (Vista unificada), no como restricción de validación/import.
  * @param {object[]} rows
  * @returns {ProcesoLineMode}
  */
@@ -38,11 +41,10 @@ export function classifyProcesoLineMode(rows) {
   return "empty";
 }
 
-/** Mensaje si el proceso mezcla comprobantes de 1 línea y de varias. */
-export function mixedProcesoLineModeError(rows) {
-  if (classifyProcesoLineMode(rows) !== "mixed") return null;
-  return (
-    "El proceso mezcla comprobantes de 1 línea (Encabezado, sin pie) y con varias líneas. " +
-    "Un proceso debe ser solo Encabezado (1 línea) o solo con Líneas (no ambos)."
-  );
+/**
+ * @deprecated Ya no se bloquea mezclar Encabezado y Líneas; siempre null.
+ * Se mantiene por compatibilidad de imports en tests viejos.
+ */
+export function mixedProcesoLineModeError(_rows) {
+  return null;
 }

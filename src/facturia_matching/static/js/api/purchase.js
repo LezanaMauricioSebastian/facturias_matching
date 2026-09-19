@@ -330,8 +330,9 @@ export async function rematchearExcelPadron(state, refs, setStatusFn, handlers) 
       setStatusFn(`Re-match listo · ${nProv} proveedores del Sheet.`, "ok");
     }
     if (refs.btnRevertir) refs.btnRevertir.disabled = false;
-    if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = false;
     if (refs.btnDescargar && state.rows?.length) refs.btnDescargar.disabled = false;
+    if (refs.btnCopiarCsv && state.rows?.length) refs.btnCopiarCsv.disabled = false;
+    if (refs.btnRematchExcel) refs.btnRematchExcel.disabled = false;
   } catch (e) {
     setStatusFn(e?.message || String(e), "bad");
     if (refs.btnRevertir && (state.rows?.length || pn)) refs.btnRevertir.disabled = false;

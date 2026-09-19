@@ -434,9 +434,6 @@ td.colFlex {
   /* Crece con el contenido / espacio libre (Etiqueta, Producto, etc.). */
   min-width: 0;
 }
-td.colSoloEnc {
-  text-align: center;
-}
 
 .combobox {
   position: relative;

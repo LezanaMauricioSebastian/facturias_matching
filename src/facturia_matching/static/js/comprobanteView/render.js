@@ -9,12 +9,12 @@ import { captureTableUiState, restoreTableUiState } from "./uiState.js";
 import { renderFooterHtml, attachComprobanteFooterHandlers, updateComprobanteFooters } from "./footer.js";
 import { renderOcHeaderControls } from "../ocPicker/render.js";
 import { renderFacturaChromeHtml, wireFacturaChromeFields } from "./facturaChrome.js";
-import { persistViewMode, persistUnifiedOneLine } from "../core/state.js";
+import { persistViewMode } from "../core/state.js";
 import {
   attachArchivoViewerHandlers,
   renderVerFacturaButtonHtml,
 } from "./archivoViewer.js";
-import { classifyProcesoLineMode } from "../singleLine/index.js";
+import { classifyProcesoLineMode, allComprobantesAreSoloEncabezado } from "../singleLine/index.js";
 
 function comprobanteTitle(state, groupRows, compIdx) {
   const first = groupRows[0] || {};
@@ -26,7 +26,9 @@ function comprobanteTitle(state, groupRows, compIdx) {
   return partner ? `${label} · ${partner}` : label;
 }
 
-/** Checkbox visible solo en Lista, con ≥2 facturas y todas de 1 línea. */
+/**
+ * En Lista, con ≥2 facturas todas de 1 línea: una sola tabla (default, sin tilde).
+ */
 export function canUseUnifiedOneLine(state, groups = null) {
   if (state.viewMode === "carrusel") return false;
   const gs = groups || listComprobanteGroups(state.rows);
@@ -40,17 +42,18 @@ function syncViewModeToggle(state, refs) {
   if (refs.btnViewCarrusel) refs.btnViewCarrusel.classList.toggle("active", mode === "carrusel");
 }
 
-function syncUnifiedOneLineToggle(state, refs, groups) {
-  const wrap = refs.unifiedOneLineToggle;
-  const chk = refs.chkUnifiedOneLine;
-  const available = canUseUnifiedOneLine(state, groups);
-  if (wrap) wrap.hidden = !available;
-  if (!available) {
+function syncSoloEncabezadoToggle(state, refs) {
+  const wrap = refs.soloEncabezadoToggle;
+  const chk = refs.chkSoloEncabezado;
+  const hasRows = !!(state.rows && state.rows.length);
+  if (wrap) wrap.hidden = !hasRows;
+  if (!hasRows) {
     if (chk) chk.checked = false;
     return false;
   }
-  if (chk) chk.checked = !!state.unifiedOneLine;
-  return !!state.unifiedOneLine;
+  const allOn = allComprobantesAreSoloEncabezado(state.rows);
+  if (chk) chk.checked = allOn;
+  return allOn;
 }
 
 function syncCarouselNav(state, refs, groupCount) {
@@ -143,7 +146,7 @@ export function renderComprobantes(state, refs, handlers) {
     state.domRefs = { totalCells: [], ivaInputs: [], subtotalCells: [] };
     if (refs.totalGeneralEl) refs.totalGeneralEl.textContent = formatMoney(0);
     syncViewModeToggle(state, refs);
-    syncUnifiedOneLineToggle(state, refs, []);
+    syncSoloEncabezadoToggle(state, refs);
     syncCarouselNav(state, refs, 0);
     return;
   }
@@ -158,7 +161,8 @@ export function renderComprobantes(state, refs, handlers) {
   }
 
   syncViewModeToggle(state, refs);
-  const unifiedOn = syncUnifiedOneLineToggle(state, refs, groups);
+  syncSoloEncabezadoToggle(state, refs);
+  const unifiedOn = canUseUnifiedOneLine(state, groups);
   syncCarouselNav(state, refs, groups.length);
 
   let activeGroups = groups;
@@ -221,20 +225,10 @@ export function setViewMode(state, refs, handlers, mode) {
   const next = persistViewMode(mode === "carrusel" ? "carrusel" : "lista");
   if (state.viewMode === next) {
     syncViewModeToggle(state, refs);
-    syncUnifiedOneLineToggle(state, refs);
+    syncSoloEncabezadoToggle(state, refs);
     return;
   }
   state.viewMode = next;
-  handlers.onRerender?.();
-}
-
-export function setUnifiedOneLine(state, refs, handlers, on) {
-  const next = persistUnifiedOneLine(!!on);
-  if (state.unifiedOneLine === next) {
-    syncUnifiedOneLineToggle(state, refs);
-    return;
-  }
-  state.unifiedOneLine = next;
   handlers.onRerender?.();
 }
 

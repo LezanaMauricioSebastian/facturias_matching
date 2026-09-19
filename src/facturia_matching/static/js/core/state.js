@@ -1,5 +1,4 @@
 const VIEW_MODE_KEY = "facturia.viewMode";
-const UNIFIED_ONE_LINE_KEY = "facturia.unifiedOneLine";
 
 function loadViewMode() {
   try {
@@ -15,24 +14,6 @@ export function persistViewMode(mode) {
   const v = mode === "carrusel" ? "carrusel" : "lista";
   try {
     localStorage.setItem(VIEW_MODE_KEY, v);
-  } catch (_) {
-    /* ignore */
-  }
-  return v;
-}
-
-function loadUnifiedOneLine() {
-  try {
-    return String(localStorage.getItem(UNIFIED_ONE_LINE_KEY) || "").trim() === "1";
-  } catch (_) {
-    return false;
-  }
-}
-
-export function persistUnifiedOneLine(on) {
-  const v = !!on;
-  try {
-    localStorage.setItem(UNIFIED_ONE_LINE_KEY, v ? "1" : "0");
   } catch (_) {
     /* ignore */
   }
@@ -80,11 +61,6 @@ export function createState() {
     comprobanteTaxModes: {},
     /** 'lista' | 'carrusel' — preferencia en localStorage `facturia.viewMode`. */
     viewMode: loadViewMode(),
-    /**
-     * Lista: una sola tabla (1 thead + 1 scroller) cuando todas las facturas son 1 línea.
-     * Preferencia en localStorage `facturia.unifiedOneLine`.
-     */
-    unifiedOneLine: loadUnifiedOneLine(),
     /** Índice del comprobante activo en modo carrusel. */
     carouselIndex: 0,
     uiEnv: "prod",

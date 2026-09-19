@@ -4,7 +4,12 @@
  */
 import { formatNumberEsAR, normalizeNumericValue, toNumberLoose } from "../utils/index.js";
 import { ensureOtroImpuestoColumns } from "../rows/index.js";
-import { groupBounds } from "./groups.js";
+import {
+  groupBounds,
+  isFirstRowOfComprobante,
+  comprobanteHasMultipleLines,
+  isSoloEncabezado,
+} from "./groups.js";
 
 const BACKUP_KEY = "__solo_encabezado_backup";
 
@@ -164,4 +169,52 @@ export function expandSoloEncabezadoAtRow(rows, rIdx) {
   row.__solo_encabezado = false;
   delete row[BACKUP_KEY];
   return { changed: true, restored: 0 };
+}
+
+/** True si todas las primeras filas de comprobante tienen el tilde Solo encabezado. */
+export function allComprobantesAreSoloEncabezado(rows) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  let found = false;
+  for (let i = 0; i < rows.length; i++) {
+    if (!isFirstRowOfComprobante(rows, i)) continue;
+    found = true;
+    if (!isSoloEncabezado(rows[i])) return false;
+  }
+  return found;
+}
+
+/**
+ * Aplica o quita Solo encabezado en todos los comprobantes.
+ * Itera de atrás hacia adelante porque collapse/expand mutan índices.
+ * @returns {{ changed: boolean }}
+ */
+export function applySoloEncabezadoToAll(rows, checked, state = null) {
+  if (!Array.isArray(rows) || !rows.length) return { changed: false };
+
+  const firstIndices = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (isFirstRowOfComprobante(rows, i)) firstIndices.push(i);
+  }
+
+  let anyChanged = false;
+  for (let i = firstIndices.length - 1; i >= 0; i--) {
+    const rIdx = firstIndices[i];
+    const row = rows[rIdx];
+    if (!row) continue;
+
+    if (checked) {
+      if (comprobanteHasMultipleLines(rows, rIdx)) {
+        const res = collapseGroupAtRow(rows, rIdx, state);
+        if (!res.changed) prepareSoloEncabezadoRow(row, state);
+        anyChanged = true;
+      } else if (!isSoloEncabezado(row)) {
+        prepareSoloEncabezadoRow(row, state);
+        anyChanged = true;
+      }
+    } else if (isSoloEncabezado(row) || row[BACKUP_KEY]) {
+      const res = expandSoloEncabezadoAtRow(rows, rIdx);
+      if (res.changed) anyChanged = true;
+    }
+  }
+  return { changed: anyChanged };
 }

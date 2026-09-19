@@ -7,6 +7,7 @@ import {
   fetchProcesoPayload,
   buscarProceso,
   descargarCsv,
+  copiarCsv,
   importarOdoo,
   revertirOriginal,
   rematchearExcelPadron,
@@ -48,6 +49,7 @@ async function init() {
 
   refs.btnBuscar.disabled = true;
   refs.btnDescargar.disabled = true;
+  if (refs.btnCopiarCsv) refs.btnCopiarCsv.disabled = true;
   try {
     await loadMetaAndOptions(state, urlParams);
     if (refs.btnOdooImport) {
@@ -76,10 +78,10 @@ async function init() {
     refs.btnViewCarrusel?.addEventListener("click", () => onMode("carrusel"));
     refs.btnCarouselPrev?.addEventListener("click", () => handlers.onCarouselPrev?.());
     refs.btnCarouselNext?.addEventListener("click", () => handlers.onCarouselNext?.());
-    refs.chkUnifiedOneLine?.addEventListener("change", (e) => {
+    refs.chkSoloEncabezado?.addEventListener("change", (e) => {
       const t = e.target;
       if (!(t instanceof HTMLInputElement)) return;
-      handlers.onSetUnifiedOneLine?.(t.checked);
+      handlers.onToggleSoloEncabezadoAll?.(t.checked);
     });
     // Sync initial toggle from persisted state.
     handlers.onSetViewMode?.(state.viewMode);
@@ -137,6 +139,11 @@ async function init() {
 
   refs.btnBuscar.addEventListener("click", () => buscarProceso(state, refs, setStatusBound, handlers));
   refs.btnDescargar.addEventListener("click", () => descargarCsv(state, setStatusBound, validateRows, refs));
+  if (refs.btnCopiarCsv) {
+    refs.btnCopiarCsv.addEventListener("click", () =>
+      copiarCsv(state, setStatusBound, validateRows, refs)
+    );
+  }
   refs.btnOdooImport.addEventListener("click", () =>
     importarOdoo(state, setStatusBound, validateRows, refs)
   );

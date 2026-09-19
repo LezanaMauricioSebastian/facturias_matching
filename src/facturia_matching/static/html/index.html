@@ -27,6 +27,9 @@
               </div>
               <div class="btnGroup btnGroupPrimary">
                 <button id="btnOdooImport" class="secondary" type="button" disabled>Importar a Odoo</button>
+                <button id="btnCopiarCsv" class="secondary" type="button" disabled title="Copia el CSV al portapapeles para pegarlo en Excel o Sheets">
+                  Copiar CSV
+                </button>
                 <button id="btnDescargar" class="downloadBtn" type="button" disabled>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -55,9 +58,9 @@
             <div class="processViewBar">
               <div class="hint summaryHint" id="summary"></div>
               <div class="processViewActions">
-                <label class="unifiedOneLineToggle" id="unifiedOneLineToggle" hidden title="Une todas las facturas de 1 línea en una sola tabla (un encabezado y un scroller)">
-                  <input type="checkbox" id="chkUnifiedOneLine" />
-                  <span>Vista unificada</span>
+                <label class="unifiedOneLineToggle" id="soloEncabezadoToggle" hidden title="Colapsa todas las facturas a una línea (guarda las líneas para poder destildar). Con 1 línea se oculta el pie y los montos van en la fila">
+                  <input type="checkbox" id="chkSoloEncabezado" />
+                  <span>Solo encabezado</span>
                 </label>
                 <div class="viewModeToggle" role="group" aria-label="Vista de comprobantes">
                   <button type="button" class="viewModeBtn active" data-view-mode="lista" id="btnViewLista">Lista</button>

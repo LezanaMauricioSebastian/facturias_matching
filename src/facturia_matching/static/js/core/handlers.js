@@ -4,20 +4,15 @@ import {
   renderComprobantes,
   updateComprobanteFooters,
   setViewMode,
-  setUnifiedOneLine,
   shiftCarousel,
 } from "../comprobanteView/index.js";
-import {
-  collapseGroupAtRow,
-  comprobanteHasMultipleLines,
-  expandSoloEncabezadoAtRow,
-  prepareSoloEncabezadoRow,
-} from "../singleLine/index.js";
+import { applySoloEncabezadoToAll } from "../singleLine/index.js";
 import { renderOcPickerAfterTable } from "../ocPicker/index.js";
 
 function syncActionButtons(refs, state) {
   const hasRows = !!(state.rows && state.rows.length);
   refs.btnDescargar.disabled = !hasRows;
+  if (refs.btnCopiarCsv) refs.btnCopiarCsv.disabled = !hasRows;
   if (refs.btnOdooImport) {
     refs.btnOdooImport.disabled = !hasRows || !!state.excelUser;
     if (state.excelUser) refs.btnOdooImport.hidden = true;
@@ -63,27 +58,12 @@ export function createHandlers({ state, refs, setStatusBound }) {
       renderNow();
       scheduleAutoSave(state, refs, setStatusBound);
     },
-    onToggleSoloEncabezado: (rIdx, checked) => {
-      const row = state.rows[rIdx];
-      if (!row) return;
-      if (checked) {
-        if (comprobanteHasMultipleLines(state.rows, rIdx)) {
-          const res = collapseGroupAtRow(state.rows, rIdx, state);
-          if (!res.changed) {
-            prepareSoloEncabezadoRow(row, state);
-          }
-        } else {
-          prepareSoloEncabezadoRow(row, state);
-        }
-      } else {
-        expandSoloEncabezadoAtRow(state.rows, rIdx);
-      }
+    onToggleSoloEncabezadoAll: (checked) => {
+      if (!(state.rows && state.rows.length)) return;
+      applySoloEncabezadoToAll(state.rows, checked, state);
       renderSummary(refs, state);
       renderNow();
       scheduleAutoSave(state, refs, setStatusBound);
-    },
-    onCollapseComprobante: (rIdx) => {
-      handlers.onToggleSoloEncabezado(rIdx, true);
     },
     onRematchPurchase: (rIdx) => {
       rematchPurchase(state, refs, setStatusBound, handlers, rIdx);
@@ -99,7 +79,6 @@ export function createHandlers({ state, refs, setStatusBound }) {
       });
     },
     onSetViewMode: (mode) => setViewMode(state, refs, handlers, mode),
-    onSetUnifiedOneLine: (on) => setUnifiedOneLine(state, refs, handlers, on),
     onCarouselPrev: () => shiftCarousel(state, refs, handlers, -1),
     onCarouselNext: () => shiftCarousel(state, refs, handlers, 1),
   };
