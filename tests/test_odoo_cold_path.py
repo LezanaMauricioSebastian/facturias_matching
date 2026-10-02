@@ -81,6 +81,106 @@ class TestCatalogSingleFlight(unittest.TestCase):
         self.assertEqual(fetch_count["n"], 1)
 
 
+class TestCatalogParallelContext(unittest.TestCase):
+    def test_fetch_catalog_raw_copies_context_per_worker(self):
+        """Regression: same Context.run() in parallel → 'already entered'."""
+        config = {"base_url": "https://odoo.test", "db": "db", "password": "x", "uid": 2}
+
+        def fake_sr(model, domain, fields, limit=500, order=None, offset=None, config=None):
+            time.sleep(0.02)
+            if model == "res.partner":
+                return [{"id": 1, "name": "P", "vat": "201"}]
+            if model == "product.product":
+                return [{"id": 2, "name": "Prod", "default_code": "X"}]
+            if model == "account.journal":
+                return [{"id": 3, "name": "J"}]
+            if model == "account.account":
+                return [{"id": 4, "name": "A", "code": "1"}]
+            return []
+
+        with patch(
+            "facturia_matching.odoo.catalog.odoo_search_read", side_effect=fake_sr
+        ), patch(
+            "facturia_matching.odoo.catalog.odoo_available_fields",
+            side_effect=lambda model, fields, cfg: fields,
+        ), patch(
+            "facturia_matching.odoo.catalog.get_odoo_document_types", return_value=[]
+        ), patch(
+            "facturia_matching.odoo.catalog.prepare_document_types_for_ui",
+            return_value=[],
+        ), patch(
+            "facturia_matching.odoo.catalog.supports_rubro_field", return_value=False
+        ):
+            raw = catalog_mod._fetch_catalog_raw(config, "default")
+
+        self.assertEqual(len(raw.get("proveedores") or []), 1)
+        self.assertEqual(len(raw.get("productos") or []), 1)
+        self.assertEqual(len(raw.get("journals") or []), 1)
+
+
+class TestCatalogStaleWhileRevalidate(unittest.TestCase):
+    def setUp(self):
+        catalog_mod.invalidate_catalog_cache()
+        catalog_mod._cache_by_profile.clear()
+
+    def tearDown(self):
+        catalog_mod.invalidate_catalog_cache()
+        catalog_mod._cache_by_profile.clear()
+
+    def test_expired_cache_returns_stale_and_schedules_refresh(self):
+        config = {
+            "base_url": "https://odoo.test",
+            "db": "db",
+            "password": "x",
+            "uid": 2,
+            "login": "",
+        }
+        stale = {
+            "journals": [],
+            "document_types": [],
+            "proveedores": [{"id": 1, "name": "OLD"}],
+            "cuentas": [],
+            "rubros": [],
+            "productos": [],
+            "maps": {},
+            "partner_cuit_to_id": {},
+            "proveedores_cuit_map": {},
+            "facturas_c_type_ids": [],
+        }
+        catalog_mod._cache_by_profile["default"] = {
+            "ts": time.time() - catalog_mod.ODOO_CATALOG_CACHE_TTL - 10,
+            "data": stale,
+        }
+        scheduled = {"n": 0}
+
+        def fake_schedule(profile, cfg):
+            scheduled["n"] += 1
+
+        with patch(
+            "facturia_matching.odoo.catalog.get_odoo_main_config", return_value=config
+        ), patch(
+            "facturia_matching.odoo.catalog.is_odoo_config_ready", return_value=True
+        ), patch(
+            "facturia_matching.odoo.catalog.get_odoo_uid_from_config", return_value=2
+        ), patch(
+            "facturia_matching.odoo.catalog.probe_odoo_db_exists",
+            return_value=(True, None, None),
+        ), patch(
+            "facturia_matching.odoo.catalog._schedule_catalog_background_refresh",
+            side_effect=fake_schedule,
+        ), patch(
+            "facturia_matching.odoo.catalog.current_odoo_profile", return_value="default"
+        ), patch(
+            "facturia_matching.odoo.catalog._fetch_catalog_raw"
+        ) as fetch_raw:
+            cat, ok = catalog_mod.get_catalog(profile="default")
+
+        self.assertTrue(ok)
+        self.assertIs(cat, stale)
+        self.assertEqual(scheduled["n"], 1)
+        fetch_raw.assert_not_called()
+
+
 class TestTaxCacheScope(unittest.TestCase):
     def setUp(self):
         clear_odoo_tax_catalog_cache()

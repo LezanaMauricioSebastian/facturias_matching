@@ -28,7 +28,13 @@ DEFAULT_MAPPING = {
     "productos": {"nombre": "", "unidad_medida": ""},
     "formas_pago": {"nombre": "Forma de Pago"},
     "conceptos": {"nombre": "Conceptos", "categoria": ""},
+    # Listas auxiliares (hoja Config Pepe): Mes / Sucursal como valores únicos.
+    "meses": {"nombre": "Mes"},
+    "sucursales": {"nombre": "Sucursal"},
 }
+
+# Pestaña Gastos 2026 (historial = memoria para concept_ai). Pepe default.
+DEFAULT_GASTOS_SHEET_GID = "541219037"
 
 
 def default_config(company_id: int = 0) -> Dict[str, Any]:
@@ -37,6 +43,7 @@ def default_config(company_id: int = 0) -> Dict[str, Any]:
         "sheet_url": DEFAULT_SHEET_URL,
         "spreadsheet_id": "1klqwF-8c-xnXvHB1GJ2f8x9vOoJi4-PB-HavIh1wULA",
         "sheet_gid": "",
+        "gastos_sheet_gid": DEFAULT_GASTOS_SHEET_GID,
         "refresh_minutes": 2,
         "mapping": {k: dict(v) for k, v in DEFAULT_MAPPING.items()},
         "files": {},
@@ -100,6 +107,8 @@ def save_config(company_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
             cfg["spreadsheet_id"] = str(updates["spreadsheet_id"]).strip()
         if "sheet_gid" in updates and updates["sheet_gid"] is not None:
             cfg["sheet_gid"] = str(updates["sheet_gid"]).strip()
+        if "gastos_sheet_gid" in updates and updates["gastos_sheet_gid"] is not None:
+            cfg["gastos_sheet_gid"] = str(updates["gastos_sheet_gid"]).strip()
         if "refresh_minutes" in updates and updates["refresh_minutes"] is not None:
             cfg["refresh_minutes"] = int(updates["refresh_minutes"])
         if updates.get("mapping"):

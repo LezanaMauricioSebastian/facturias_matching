@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from facturia_matching.api.proceso_response import (
     _build_proceso_response,
@@ -157,19 +157,20 @@ def get_proceso_archivo(
     comprobante_idx: int = Query(0, ge=0),
     empresa: Optional[str] = None,
 ):
-    """Proxy del PDF/foto original del comprobante (ruta en json_data FacturIA).
+    """Sirve el PDF/foto original del comprobante (ruta en json_data FacturIA).
 
-    Requiere ``FACTURIA_FILE_URL_TEMPLATE`` apuntando a un endpoint FacturIA que
-    sirva el archivo. Sin template → 503.
+    Primero intenta GCS ``gs://facturias-sudata`` (``conversion`` /
+    ``conversion-staging``). Fallback opcional: ``FACTURIA_FILE_URL_TEMPLATE``.
     """
-    import requests
-
     from facturia_matching.facturia.archivo import (
         archivo_paths_by_comprobante,
         build_facturia_file_url,
+        fetch_archivo_bytes_from_gcs,
         guess_content_type,
         resolve_file_url_template,
+        resolve_gcs_bucket,
     )
+    from facturia_matching.infra.config import PROCESS_SCHEMA
     from facturia_matching.persistence.back_check import (
         MySQLUnavailableError,
         ProcessTableError,
@@ -200,14 +201,43 @@ def get_proceso_archivo(
             detail="No hay archivo original para ese comprobante.",
         )
 
+    filename = path.rsplit("/", 1)[-1] or "factura"
+    headers = {
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "private, max-age=300",
+    }
+
+    # 1) GCS (bucket facturias-sudata)
+    try:
+        data, content_type, blob_name = fetch_archivo_bytes_from_gcs(
+            path, process_schema=PROCESS_SCHEMA
+        )
+        logger.debug(
+            "archivo GCS ok pn=%s idx=%s blob=%s bytes=%s",
+            process_number,
+            comprobante_idx,
+            blob_name,
+            len(data),
+        )
+        return Response(content=data, media_type=content_type, headers=headers)
+    except FileNotFoundError as e:
+        gcs_miss = str(e)
+        logger.info("archivo GCS miss pn=%s path=%s: %s", process_number, path, e)
+    except Exception as e:
+        gcs_miss = str(e)
+        logger.warning("archivo GCS error pn=%s path=%s: %s", process_number, path, e)
+
+    # 2) Fallback HTTP template (si está configurado)
     if not resolve_file_url_template():
         raise HTTPException(
-            status_code=503,
+            status_code=404,
             detail=(
-                "Archivo no disponible: falta configurar FACTURIA_FILE_URL_TEMPLATE "
-                "(endpoint FacturIA que sirva conversion/…)."
+                f"Archivo no encontrado en gs://{resolve_gcs_bucket()}/ "
+                f"({gcs_miss})"
             ),
         )
+
+    import requests
 
     url = build_facturia_file_url(
         path=path,
@@ -232,21 +262,11 @@ def get_proceso_archivo(
         ) from e
 
     if upstream.status_code >= 400:
-        detail = (
-            f"FacturIA no devolvió el archivo (HTTP {upstream.status_code})."
-        )
+        detail = f"FacturIA no devolvió el archivo (HTTP {upstream.status_code})."
         upstream.close()
         raise HTTPException(status_code=502, detail=detail)
 
-    content_type = (
-        upstream.headers.get("Content-Type")
-        or guess_content_type(path)
-    )
-    filename = path.rsplit("/", 1)[-1] or "factura"
-    headers = {
-        "Content-Disposition": f'inline; filename="{filename}"',
-        "Cache-Control": "private, max-age=300",
-    }
+    content_type = upstream.headers.get("Content-Type") or guess_content_type(path)
 
     def _iter():
         try:

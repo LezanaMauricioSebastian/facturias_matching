@@ -414,6 +414,7 @@ def odoo_search_read(
     limit: Any = 500,
     order: Optional[str] = None,
     *,
+    offset: Optional[int] = None,
     config: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
@@ -423,6 +424,8 @@ def odoo_search_read(
     kwargs: Dict[str, Any] = {"fields": fields or ["id", "name"], "limit": limit}
     if order:
         kwargs["order"] = order
+    if offset is not None:
+        kwargs["offset"] = int(offset)
     if context:
         kwargs["context"] = {**(kwargs.get("context") or {}), **context}
     kwargs = _merge_odoo_call_kwargs(kwargs, current_odoo_profile())

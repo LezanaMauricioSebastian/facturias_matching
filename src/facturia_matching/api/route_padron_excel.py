@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -26,6 +27,10 @@ from facturia_matching.padron.google_sheets import (
     list_spreadsheet_sheets,
     service_account_configured,
     service_account_email,
+)
+from facturia_matching.padron.pepe_schema import (
+    PEPE_GASTOS_COLUMNS as EXPORT_COLUMNS,
+    pepe_gastos_values,
 )
 from facturia_matching.padron.process_to_invoice import invoices_from_process_row
 from facturia_matching.padron.sheet_loader import (
@@ -93,6 +98,11 @@ class InvoiceInput(BaseModel):
     forma_pago: str = ""
     estado_deuda: str = ""
     tipo_comprobante: str = ""
+    fecha: str = ""
+    fecha_pago: str = ""
+    mes_pago: str = ""
+    monto: str = ""
+    observacion: str = ""
     company_id: int = 0
 
 
@@ -155,6 +165,11 @@ def _match_invoice(inv: InvoiceInput, force_refresh: bool = True) -> Dict[str, A
         "forma_pago_score": fp_hit[1] if fp_hit else 0.0,
         "estado_deuda": inv.estado_deuda,
         "tipo_comprobante": inv.tipo_comprobante,
+        "fecha": inv.fecha,
+        "fecha_pago": inv.fecha_pago,
+        "mes_pago": inv.mes_pago,
+        "monto": inv.monto,
+        "observacion": inv.observacion,
         "lineas": inv.lineas,
         "unidades_medida": inv.unidades_medida,
         "line_matches": line_matches,
@@ -248,6 +263,9 @@ def get_data(
         "productos": padron["productos"],
         "formas_pago": padron["formas_pago"],
         "conceptos": padron["conceptos"],
+        "meses": padron.get("meses") or [],
+        "sucursales": padron.get("sucursales") or [],
+        "categorias_gasto": padron.get("categorias_gasto") or [],
         "categoria_map": padron["categoria_map"],
         "config": padron["config"],
         "sheet_source_mode": padron.get("sheet_source_mode"),
@@ -262,6 +280,9 @@ def get_data(
             "productos": len(padron["productos"]),
             "formas_pago": len(padron["formas_pago"]),
             "conceptos": len(padron["conceptos"]),
+            "meses": len(padron.get("meses") or []),
+            "sucursales": len(padron.get("sucursales") or []),
+            "categorias_gasto": len(padron.get("categorias_gasto") or []),
         },
     }
 
@@ -325,6 +346,88 @@ def sheet_first_row(body: SheetRowRequest):
         )
     except Exception as e:
         raise HTTPException(400, f"Error leyendo fila: {e}") from e
+
+
+@router.get("/entrega")
+def entrega_template(
+    id_cliente: int = Query(..., description="company_id FacturIA (el ?empresa= de Odoo)"),
+    proceso: str = Query(..., description="process_number"),
+    id_template: int = Query(..., description="export_templates.id"),
+):
+    """Columnas del template para un proceso, con match Excel e is_dropdown."""
+    from facturia_matching.core.process import ProcessParseError, parse_process_json
+    from facturia_matching.padron.template_entrega import (
+        facturas_from_json_data,
+        project_template,
+    )
+    from facturia_matching.padron.template_lookup import build_lookup_index
+    from facturia_matching.persistence.back_check import (
+        MySQLUnavailableError,
+        ProcessTableError,
+        get_process,
+    )
+    from facturia_matching.persistence.export_template_store import (
+        ExportTemplateNotFound,
+        load_export_template,
+    )
+
+    try:
+        pn = int(str(proceso).strip())
+    except ValueError as e:
+        raise HTTPException(400, "proceso inválido") from e
+
+    try:
+        template = load_export_template(int(id_template), int(id_cliente))
+    except ExportTemplateNotFound as e:
+        raise HTTPException(404, str(e)) from e
+    except MySQLUnavailableError as e:
+        raise HTTPException(503, str(e)) from e
+    except ProcessTableError as e:
+        raise HTTPException(500, str(e)) from e
+
+    try:
+        row = get_process(pn, empresa=id_cliente)
+    except MySQLUnavailableError as e:
+        raise HTTPException(503, str(e)) from e
+    except ProcessTableError as e:
+        raise HTTPException(500, str(e)) from e
+    if not row:
+        raise HTTPException(404, f"No se encontró el proceso {proceso}.")
+    if not row.get("json_data"):
+        raise HTTPException(404, "El proceso no tiene json_data.")
+
+    try:
+        facturas = facturas_from_json_data(row.get("json_data"))
+        excel_rows, _etiquetas, purchase = parse_process_json(
+            str(pn),
+            empresa=str(id_cliente),
+            excel_user=True,
+            excel_company_id=int(id_cliente),
+        )
+    except ProcessParseError as e:
+        raise HTTPException(getattr(e, "status_code", 400) or 400, str(e)) from e
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"json_data no es JSON válido: {e}") from e
+
+    try:
+        padron = load_padron(int(id_cliente), force=False)
+    except Exception:
+        padron = {}
+
+    return {
+        "id_cliente": int(id_cliente),
+        "proceso": str(pn),
+        "id_template": int(template["id"]),
+        "template_name": template.get("name") or "",
+        "sheets": project_template(
+            template,
+            facturas,
+            excel_rows,
+            padron,
+            lookups=build_lookup_index(template),
+        ),
+        "sheet_error": (purchase or {}).get("sheet_error") or (padron or {}).get("sheet_error"),
+    }
 
 
 @router.get("/proceso/{process_number}")
@@ -453,21 +556,6 @@ def list_facturas(limit: int = Query(500)):
     return excel_store.list_records(limit=limit)
 
 
-EXPORT_COLUMNS = [
-    "Mes",
-    "Sucursal",
-    "Proveedores",
-    "CUIT",
-    "Conceptos",
-    "Producto",
-    "Unidad de Medida",
-    "Forma de Pago",
-    "Estado de Deuda",
-    "Tipo Comprobante",
-    "Categoría",
-]
-
-
 @router.get("/facturas/export/csv")
 def export_csv():
     records = excel_store.list_records()
@@ -475,26 +563,12 @@ def export_csv():
     writer = csv.writer(buf)
     writer.writerow(EXPORT_COLUMNS)
     for r in records:
-        writer.writerow(
-            [
-                r.get("mes", ""),
-                r.get("sucursal", ""),
-                r.get("proveedor_match") or r.get("proveedor", ""),
-                r.get("proveedor_cuit") or r.get("cuit", ""),
-                r.get("concepto", ""),
-                r.get("producto", ""),
-                r.get("unidad_medida", ""),
-                r.get("forma_pago_match") or r.get("forma_pago", ""),
-                r.get("estado_deuda", ""),
-                r.get("tipo_comprobante", ""),
-                r.get("categoria", ""),
-            ]
-        )
+        writer.writerow(pepe_gastos_values(r))
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=facturas_padron.csv"},
+        headers={"Content-Disposition": "attachment; filename=gastos_pepe.csv"},
     )
 
 

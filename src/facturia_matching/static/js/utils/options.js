@@ -16,19 +16,39 @@ export function isComboboxOptionKey(k) {
     k === "journals" ||
     k === "cuentas" ||
     k === "productos" ||
-    k === "conceptos"
+    k === "conceptos" ||
+    k === "formas_pago" ||
+    k === "meses" ||
+    k === "sucursales" ||
+    k === "categorias_gasto"
   );
 }
 
+/** Texto indexable para búsqueda: label + id + CUIT/VAT (si viene en la opción). */
+function optionSearchText(opt) {
+  const lab = optionLabel(opt).toLowerCase();
+  const val = optionValue(opt).toLowerCase();
+  const vat =
+    opt && typeof opt === "object" && opt.vat != null
+      ? String(opt.vat).toLowerCase()
+      : "";
+  const vatDigits = vat.replace(/\D/g, "");
+  return `${lab} ${val} ${vat} ${vatDigits}`.trim();
+}
+
+/**
+ * Combobox: todos los tokens del query deben aparecer (orden libre).
+ * Así "gordo dan alan" encuentra "GORDON DAN ALAN" y el CUIT matchea digits.
+ */
 export function filterOptions(opts, query, limit = 50) {
   const list = Array.isArray(opts) ? opts : [];
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return list.slice(0, limit);
+  const tokens = q.split(/\s+/).filter(Boolean);
   const out = [];
   for (const o of list) {
-    const lab = optionLabel(o).toLowerCase();
-    const val = optionValue(o).toLowerCase();
-    if (lab.includes(q) || val.includes(q)) {
+    const hay = optionSearchText(o);
+    if (tokens.every((t) => hay.includes(t))) {
       out.push(o);
       if (out.length >= limit) break;
     }

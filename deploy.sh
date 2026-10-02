@@ -510,6 +510,7 @@ default_dinner_env_pairs() {
   merge_env_pairs \
     "FACTURIA_ODOO_PROFILE=default" \
     "FACTURIA_UOM_AI_ENABLED=1" \
+    "FACTURIA_CONCEPT_AI_ENABLED=1" \
     "$(default_mysql_env_pairs)"
 }
 

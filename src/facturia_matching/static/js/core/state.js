@@ -56,6 +56,8 @@ export function createState() {
     empresaOdooLabels: {},
     purchaseMatching: {},
     excelUser: false,
+    /** Alias de cliente Excel (?pepe=1) o "". */
+    excelAlias: "",
     excelPadron: null,
     uomOptionsByProductId: {},
     comprobanteTaxModes: {},

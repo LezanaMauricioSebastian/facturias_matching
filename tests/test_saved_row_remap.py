@@ -83,6 +83,15 @@ class TestRemapSavedRowsToCatalog(unittest.TestCase):
         out = remap_saved_rows_to_catalog(rows)
         self.assertEqual(out[0]["partner_id"], "1419")
 
+    @patch("facturia_matching.persistence.saved_row_remap.ODOO_CATALOG_FORCE_ON_MATCH", True)
+    @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
+    def test_force_catalog_on_match_when_flag_on(self, mock_catalog):
+        mock_catalog.return_value = (_aliare_catalog(), True)
+        remap_saved_rows_to_catalog(
+            [{"partner_id": "", "CUIT": "30710552602", "Nombre de Proveedor": "LA MADRID"}]
+        )
+        mock_catalog.assert_called_once_with(force=True)
+
     @patch("facturia_matching.persistence.saved_row_remap.get_catalog")
     @patch("facturia_matching.persistence.saved_row_remap.match_proveedor")
     def test_remaps_stale_partner_on_continuation_rows(self, mock_match, mock_catalog):

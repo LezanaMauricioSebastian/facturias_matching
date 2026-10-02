@@ -223,8 +223,8 @@ def options_from_postgres(padron: bool) -> Dict[str, Any]:
     return out
 
 
-def get_options(padron: bool = False) -> Dict[str, Any]:
-    catalog, from_odoo = get_catalog()
+def get_options(padron: bool = False, *, force_catalog: bool = False) -> Dict[str, Any]:
+    catalog, from_odoo = get_catalog(force=force_catalog)
     if from_odoo and catalog:
         out = options_from_odoo_catalog(catalog)
     else:

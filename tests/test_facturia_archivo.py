@@ -12,6 +12,7 @@ from facturia_matching.facturia.archivo import (
     guess_content_type,
     normalize_archivo_path,
     pick_archivo_raw,
+    to_gcs_blob_candidates,
 )
 
 
@@ -104,6 +105,63 @@ class TestGuessContentType(unittest.TestCase):
 
     def test_jpeg(self):
         self.assertEqual(guess_content_type("a.jpeg"), "image/jpeg")
+
+
+class TestGcsCandidates(unittest.TestCase):
+    @patch(
+        "facturia_matching.facturia.archivo.is_staging_process_schema",
+        return_value=True,
+    )
+    def test_staging_prefers_conversion_staging(self, _stg):
+        cands = to_gcs_blob_candidates("conversion/5/79/a.pdf")
+        self.assertEqual(
+            cands,
+            ["conversion-staging/5/79/a.pdf", "conversion/5/79/a.pdf"],
+        )
+
+    @patch(
+        "facturia_matching.facturia.archivo.is_staging_process_schema",
+        return_value=False,
+    )
+    def test_prod_prefers_conversion(self, _stg):
+        cands = to_gcs_blob_candidates("conversion/5/79/a.pdf")
+        self.assertEqual(
+            cands,
+            ["conversion/5/79/a.pdf", "conversion-staging/5/79/a.pdf"],
+        )
+
+    @patch(
+        "facturia_matching.facturia.archivo.is_staging_process_schema",
+        return_value=False,
+    )
+    def test_underscore_basename_also_tries_space(self, _stg):
+        """Regresión Central Ticket 88: json tiene _ y GCS tiene espacio."""
+        cands = to_gcs_blob_candidates("conversion/5/88/PATRICIO_ALEANDRI.pdf")
+        self.assertEqual(
+            cands,
+            [
+                "conversion/5/88/PATRICIO_ALEANDRI.pdf",
+                "conversion/5/88/PATRICIO ALEANDRI.pdf",
+                "conversion-staging/5/88/PATRICIO_ALEANDRI.pdf",
+                "conversion-staging/5/88/PATRICIO ALEANDRI.pdf",
+            ],
+        )
+
+    @patch(
+        "facturia_matching.facturia.archivo.is_staging_process_schema",
+        return_value=False,
+    )
+    def test_space_basename_also_tries_underscore(self, _stg):
+        cands = to_gcs_blob_candidates("conversion/5/88/PATRICIO ALEANDRI.pdf")
+        self.assertEqual(
+            cands,
+            [
+                "conversion/5/88/PATRICIO ALEANDRI.pdf",
+                "conversion/5/88/PATRICIO_ALEANDRI.pdf",
+                "conversion-staging/5/88/PATRICIO ALEANDRI.pdf",
+                "conversion-staging/5/88/PATRICIO_ALEANDRI.pdf",
+            ],
+        )
 
 
 class TestAttach(unittest.TestCase):

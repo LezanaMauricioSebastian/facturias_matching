@@ -30,19 +30,32 @@ export function isExcelUserFlag(raw) {
   return isOdooCloudFlag(raw);
 }
 
+/** Alias activo (?pepe=1) o null. */
+export function matchedExcelAlias(urlParams = null) {
+  try {
+    const url = urlParams ? { ...getUrlParams(), ...urlParams } : getUrlParams();
+    for (const alias of EXCEL_USER_ALIASES) {
+      if (isExcelUserFlag(url[alias])) return alias;
+    }
+    const params = new URLSearchParams(window.location.search);
+    for (const alias of EXCEL_USER_ALIASES) {
+      if (isExcelUserFlag(params.get(alias))) return alias;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /** true si la URL pide matching con padrón Excel/Sheets. */
 export function isExcelUserMode(urlParams = null) {
   try {
     const url = urlParams ? { ...getUrlParams(), ...urlParams } : getUrlParams();
     if (isExcelUserFlag(url.excel_user)) return true;
-    for (const alias of EXCEL_USER_ALIASES) {
-      if (isExcelUserFlag(url[alias])) return true;
-    }
+    if (matchedExcelAlias(url)) return true;
     const params = new URLSearchParams(window.location.search);
     if (isExcelUserFlag(params.get("excel_user"))) return true;
-    for (const alias of EXCEL_USER_ALIASES) {
-      if (isExcelUserFlag(params.get(alias))) return true;
-    }
+    if (matchedExcelAlias()) return true;
   } catch {
     /* ignore */
   }
@@ -56,6 +69,8 @@ export function apiExcelQueryParams(state, urlParams = {}) {
   const empresa = String(url.empresa || state?.empresa || "").trim();
   const out = { excel_user: "1" };
   if (empresa) out.empresa = empresa;
+  const alias = matchedExcelAlias(urlParams) || state?.excelAlias;
+  if (alias) out[alias] = "1";
   return out;
 }
 

@@ -2,11 +2,14 @@
 
 import csv
 import io
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 _cache: Dict[str, Dict[str, Any]] = {}
 
@@ -38,6 +41,48 @@ def _normalize_sheet_url(url: str) -> str:
 
 def _cache_key_private(spreadsheet_id: str, gid: Optional[str]) -> str:
     return f"private:{spreadsheet_id}:gid={gid or ''}"
+
+
+def _store_csv_text(key: str, text: str) -> None:
+    _cache[key] = {"text": text, "ts": time.time()}
+
+
+def _get_stale_text(key: str) -> Optional[str]:
+    cached = _cache.get(key)
+    if cached and cached.get("text"):
+        return str(cached["text"])
+    return None
+
+
+def _fetch_csv_text_cached(
+    *,
+    key: str,
+    ttl: int,
+    force: bool,
+    fetch_fn,
+) -> str:
+    """Return CSV text; honor TTL; on fetch error reuse stale cache if any."""
+    now = time.time()
+    cached = _cache.get(key)
+    if (
+        cached
+        and not force
+        and cached.get("text") is not None
+        and (now - float(cached.get("ts") or 0)) < ttl
+    ):
+        return str(cached["text"])
+    try:
+        text = fetch_fn()
+        _store_csv_text(key, text)
+        return text
+    except Exception as e:
+        stale = _get_stale_text(key)
+        if stale is not None:
+            logger.warning(
+                "sheet fetch failed (%s); using stale cache key=%s", e, key
+            )
+            return stale
+        raise
 
 
 def parse_csv_text(raw: str) -> List[Dict[str, str]]:
@@ -104,22 +149,6 @@ def parse_file_path(path: Union[str, Path]) -> List[Dict[str, str]]:
     return parse_file_bytes(p.read_bytes(), p.name)
 
 
-def fetch_csv(url: str, timeout: int = 15) -> List[Dict[str, str]]:
-    """Download CSV from URL and return list of row dicts."""
-    req = urllib.request.Request(url, headers={"User-Agent": "FacturIA/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8-sig")
-    return parse_csv_text(raw)
-
-
-def fetch_csv_raw(url: str, timeout: int = 15) -> List[List[str]]:
-    """Download CSV and return raw rows (list of lists) including header."""
-    req = urllib.request.Request(url, headers={"User-Agent": "FacturIA/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8-sig")
-    return list(csv.reader(io.StringIO(raw)))
-
-
 def fetch_sheet(
     url: str = "",
     ttl: int = DEFAULT_TTL_SECONDS,
@@ -140,25 +169,40 @@ def fetch_sheet(
                 "spreadsheet_id configurado pero falta GOOGLE_SERVICE_ACCOUNT_JSON"
             )
         key = _cache_key_private(sid, gid)
-        now = time.time()
-        cached = _cache.get(key)
-        if cached and not force and (now - cached["ts"]) < ttl:
-            return cached["rows"]
-        raw = fetch_spreadsheet_csv_text(sid, gid=gid)
-        rows = parse_csv_text(raw)
-        _cache[key] = {"rows": rows, "ts": now}
-        return rows
+        text = _fetch_csv_text_cached(
+            key=key,
+            ttl=ttl,
+            force=force,
+            fetch_fn=lambda: fetch_spreadsheet_csv_text(sid, gid=gid),
+        )
+        return parse_csv_text(text)
 
     if not (url or "").strip():
         return []
     norm_url = _normalize_sheet_url(url)
-    now = time.time()
-    cached = _cache.get(norm_url)
-    if cached and not force and (now - cached["ts"]) < ttl:
-        return cached["rows"]
-    rows = fetch_csv(norm_url)
-    _cache[norm_url] = {"rows": rows, "ts": now}
-    return rows
+    text = _fetch_csv_text_cached(
+        key=norm_url,
+        ttl=ttl,
+        force=force,
+        fetch_fn=lambda: _download_csv_text(norm_url),
+    )
+    return parse_csv_text(text)
+
+
+def _download_csv_text(url: str, timeout: int = 15) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "FacturIA/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8-sig")
+
+
+def fetch_csv(url: str, timeout: int = 15) -> List[Dict[str, str]]:
+    """Download CSV from URL and return list of row dicts."""
+    return parse_csv_text(_download_csv_text(url, timeout=timeout))
+
+
+def fetch_csv_raw(url: str, timeout: int = 15) -> List[List[str]]:
+    """Download CSV and return raw rows (list of lists) including header."""
+    return list(csv.reader(io.StringIO(_download_csv_text(url, timeout=timeout))))
 
 
 def fetch_sheet_raw_rows(
@@ -166,17 +210,39 @@ def fetch_sheet_raw_rows(
     spreadsheet_id: Optional[str] = None,
     gid: Optional[str] = None,
     timeout: int = 15,
+    ttl: int = DEFAULT_TTL_SECONDS,
+    force: bool = False,
 ) -> List[List[str]]:
-    """Download CSV as list-of-lists (incl. header) from private or public source."""
+    """Download CSV as list-of-lists (incl. header). Shares cache with ``fetch_sheet``."""
     sid = (spreadsheet_id or "").strip()
     if sid:
-        from facturia_matching.padron.google_sheets import fetch_spreadsheet_csv_text
+        from facturia_matching.padron.google_sheets import (
+            fetch_spreadsheet_csv_text,
+            service_account_configured,
+        )
 
-        raw = fetch_spreadsheet_csv_text(sid, gid=gid, timeout=timeout)
-        return list(csv.reader(io.StringIO(raw)))
+        if not service_account_configured():
+            raise RuntimeError(
+                "spreadsheet_id configurado pero falta GOOGLE_SERVICE_ACCOUNT_JSON"
+            )
+        key = _cache_key_private(sid, gid)
+        text = _fetch_csv_text_cached(
+            key=key,
+            ttl=ttl,
+            force=force,
+            fetch_fn=lambda: fetch_spreadsheet_csv_text(sid, gid=gid, timeout=timeout),
+        )
+        return list(csv.reader(io.StringIO(text)))
     if not (url or "").strip():
         return []
-    return fetch_csv_raw(_normalize_sheet_url(url), timeout=timeout)
+    norm_url = _normalize_sheet_url(url)
+    text = _fetch_csv_text_cached(
+        key=norm_url,
+        ttl=ttl,
+        force=force,
+        fetch_fn=lambda: _download_csv_text(norm_url, timeout=timeout),
+    )
+    return list(csv.reader(io.StringIO(text)))
 
 
 def extract_column_values(rows: List[Dict[str, str]], column: str) -> List[str]:
@@ -225,6 +291,8 @@ def extract_category_map(
     timeout: int = 15,
     spreadsheet_id: Optional[str] = None,
     gid: Optional[str] = None,
+    ttl: int = DEFAULT_TTL_SECONDS,
+    force: bool = False,
 ) -> Dict[str, str]:
     """Build a Concepto → Categoría de Gasto lookup from unnamed columns 8 & 9.
 
@@ -232,7 +300,12 @@ def extract_category_map(
     two-column lookup: col-index 8 = concepto, col-index 9 = categoría.
     """
     raw_rows = fetch_sheet_raw_rows(
-        url=url, spreadsheet_id=spreadsheet_id, gid=gid, timeout=timeout
+        url=url,
+        spreadsheet_id=spreadsheet_id,
+        gid=gid,
+        timeout=timeout,
+        ttl=ttl,
+        force=force,
     )
     mapping: Dict[str, str] = {}
     for row in raw_rows[1:]:  # skip header

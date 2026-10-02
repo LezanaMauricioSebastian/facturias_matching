@@ -13,18 +13,19 @@ import {
   rematchearExcelPadron,
 } from "./api/index.js";
 import { validateRows } from "./validation/index.js";
-import { getUrlParams, isEmbedMode, isExcelUserMode, syncErpImportCallbackState } from "./utils/index.js";
+import { getUrlParams, isEmbedMode, isExcelUserMode, matchedExcelAlias, syncErpImportCallbackState } from "./utils/index.js";
 import { wireOcPicker } from "./ocPicker/index.js";
 import { createHandlers } from "./core/handlers.js";
 import { wireFacturiaTab } from "./facturiaRaw/tab.js";
 import { applyExcelUserChrome } from "./api/procesoShared.js";
+import { syncTableHScroll, wireTableHScroll } from "./comprobanteView/hScroll.js";
 
 async function init() {
   const state = createState();
   const refs = getDomRefs();
   const setStatusBound = (msg, kind) => setStatus(refs.statusEl, msg, kind);
   const { handlers } = createHandlers({ state, refs, setStatusBound });
-
+  wireTableHScroll(refs);
   if (isEmbedMode()) {
     document.documentElement.classList.add("embed-mode");
     document.body.classList.add("embed-mode");
@@ -33,6 +34,7 @@ async function init() {
   const urlParams = getUrlParams();
   syncErpImportCallbackState(state, urlParams);
   state.excelUser = isExcelUserMode(urlParams);
+  state.excelAlias = matchedExcelAlias(urlParams) || "";
   if (state.excelUser) applyExcelUserChrome(state, refs);
   const deepLinkProceso = Boolean(urlParams.proceso);
 
@@ -103,6 +105,11 @@ async function init() {
     document.body.classList.toggle("view-expanded", expanded);
     document.documentElement.classList.toggle("view-expanded", expanded);
     syncExpandButton(expanded);
+    // Tras el reflow de Ampliar/Reducir, re-medir overflow-x del sticky scroller.
+    requestAnimationFrame(() => {
+      syncTableHScroll(refs);
+      requestAnimationFrame(() => syncTableHScroll(refs));
+    });
   };
 
   refs.btnExpandView?.addEventListener("click", () => {
@@ -110,16 +117,18 @@ async function init() {
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && document.body.classList.contains("view-expanded")) {
-      const t = e.target;
-      if (
-        t instanceof HTMLElement &&
-        t.closest("input, textarea, select, .combobox, [contenteditable='true']")
-      ) {
-        return;
-      }
-      setExpandedView(false);
+    if (e.key !== "Escape") return;
+    // El panel de foto/PDF (estilo Odoo) se cierra primero; no colapsar Ampliar en el mismo Esc.
+    if (document.body.classList.contains("archivo-split-open")) return;
+    if (!document.body.classList.contains("view-expanded")) return;
+    const t = e.target;
+    if (
+      t instanceof HTMLElement &&
+      t.closest("input, textarea, select, .combobox, [contenteditable='true']")
+    ) {
+      return;
     }
+    setExpandedView(false);
   });
 
   document.addEventListener("keydown", (e) => {
@@ -140,9 +149,40 @@ async function init() {
   refs.btnBuscar.addEventListener("click", () => buscarProceso(state, refs, setStatusBound, handlers));
   refs.btnDescargar.addEventListener("click", () => descargarCsv(state, setStatusBound, validateRows, refs));
   if (refs.btnCopiarCsv) {
-    refs.btnCopiarCsv.addEventListener("click", () =>
-      copiarCsv(state, setStatusBound, validateRows, refs)
-    );
+    const setCopyMenuOpen = (open) => {
+      const dd = refs.csvCopyDropdown;
+      if (!dd) return;
+      dd.hidden = !open;
+      refs.btnCopiarCsv.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    refs.btnCopiarCsv.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (refs.btnCopiarCsv.disabled) return;
+      const open = !!refs.csvCopyDropdown?.hidden;
+      setCopyMenuOpen(open);
+    });
+    refs.csvCopyDropdown?.addEventListener("click", (e) => {
+      const btn = e.target instanceof Element ? e.target.closest("[data-csv-copy]") : null;
+      if (!(btn instanceof HTMLElement)) return;
+      e.stopPropagation();
+      const mode = btn.getAttribute("data-csv-copy");
+      setCopyMenuOpen(false);
+      copiarCsv(state, setStatusBound, validateRows, refs, {
+        includeHeader: mode !== "body",
+      });
+    });
+    document.addEventListener("click", (e) => {
+      if (!refs.csvCopyMenu) return;
+      if (refs.csvCopyDropdown?.hidden) return;
+      const t = e.target;
+      if (t instanceof Node && refs.csvCopyMenu.contains(t)) return;
+      setCopyMenuOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && refs.csvCopyDropdown && !refs.csvCopyDropdown.hidden) {
+        setCopyMenuOpen(false);
+      }
+    });
   }
   refs.btnOdooImport.addEventListener("click", () =>
     importarOdoo(state, setStatusBound, validateRows, refs)

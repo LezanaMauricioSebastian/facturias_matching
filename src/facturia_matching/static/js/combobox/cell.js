@@ -7,6 +7,10 @@ export function renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, lo
     !cellVal ||
     optKey === "productos" ||
     optKey === "conceptos" ||
+    optKey === "formas_pago" ||
+    optKey === "meses" ||
+    optKey === "sucursales" ||
+    optKey === "categorias_gasto" ||
     opts.some((o) => optionValue(o) === String(cellVal));
   const safeVal = known ? cellVal : "";
   let display =
@@ -14,9 +18,17 @@ export function renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, lo
       ? "Cargando…"
       : safeVal
         ? findOptionLabel(opts, safeVal) ||
-          (optKey === "productos" || optKey === "conceptos" ? safeVal : "")
+          (optKey === "productos" ||
+          optKey === "conceptos" ||
+          optKey === "formas_pago" ||
+          optKey === "meses" ||
+          optKey === "sucursales" ||
+          optKey === "categorias_gasto"
+            ? safeVal
+            : "")
         : "";
   // Modo Excel: Proveedor/Producto son matches de texto del Sheet, no ids Odoo.
+  // Conceptos / forma de pago: mismo patrón (texto libre del padrón).
   let excelTitle = "";
   if (state?.excelUser && row && !(loading && !opts.length)) {
     if (key === "partner_id") {
@@ -39,6 +51,20 @@ export function renderComboboxCellHtml({ rIdx, key, optKey, cellVal, tdStyle, lo
             ? `Match Excel ${Math.round(Number(sc))}%`
             : "Match padrón Excel";
       }
+    } else if (key === "__excel_concepto" && cellVal) {
+      display = cellVal;
+      const sc = row.__excel_concepto_score;
+      excelTitle =
+        sc != null && Number(sc) > 0
+          ? `Match Excel ${Math.round(Number(sc))}%`
+          : "Match padrón Excel";
+    } else if (key === "__excel_forma_pago" && cellVal) {
+      display = cellVal;
+      const sc = row.__excel_forma_pago_score;
+      excelTitle =
+        sc != null && Number(sc) > 0
+          ? `Match Excel ${Math.round(Number(sc))}%`
+          : "Match padrón Excel";
     }
   }
   const dis = loading ? " disabled" : "";
@@ -64,6 +90,10 @@ export function isComboboxLoading(state, optKey) {
   return (
     (isPadronOptionKey(optKey) && state.padronLoading && (!opts || opts.length === 0)) ||
     (optKey === "productos" && state.productosLoading && (!opts || opts.length === 0)) ||
-    (optKey === "conceptos" && state.padronLoading && (!opts || opts.length === 0))
+    (optKey === "conceptos" && state.padronLoading && (!opts || opts.length === 0)) ||
+    (optKey === "formas_pago" && state.padronLoading && (!opts || opts.length === 0)) ||
+    (optKey === "meses" && state.padronLoading && (!opts || opts.length === 0)) ||
+    (optKey === "sucursales" && state.padronLoading && (!opts || opts.length === 0)) ||
+    (optKey === "categorias_gasto" && state.padronLoading && (!opts || opts.length === 0))
   );
 }

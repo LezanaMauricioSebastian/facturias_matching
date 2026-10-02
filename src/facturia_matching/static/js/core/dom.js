@@ -13,6 +13,8 @@ export function getDomRefs() {
     btnOdooImport: el("btnOdooImport"),
     btnDescargar: el("btnDescargar"),
     btnCopiarCsv: el("btnCopiarCsv"),
+    csvCopyMenu: el("csvCopyMenu"),
+    csvCopyDropdown: el("csvCopyDropdown"),
     btnRevertir: el("btnRevertir"),
     btnRematchExcel: el("btnRematchExcel"),
     odooTenantBadge: el("odooTenantBadge"),
@@ -32,6 +34,8 @@ export function getDomRefs() {
     btnCarouselPrev: el("btnCarouselPrev"),
     btnCarouselNext: el("btnCarouselNext"),
     btnExpandView: el("btnExpandView"),
+    tableHScroll: el("tableHScroll"),
+    tableHScrollInner: el("tableHScrollInner"),
   };
 }
 

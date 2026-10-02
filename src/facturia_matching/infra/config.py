@@ -160,6 +160,15 @@ from facturia_matching.odoo.env import build_odoo_main_config
 ODOO_CONFIG = build_odoo_main_config("default")
 
 ODOO_CATALOG_CACHE_TTL = int(_env_strip("ODOO_CATALOG_CACHE_TTL", "600") or "600")
+# TEMP: al cargar/parsear proceso, forzar re-fetch del catálogo Odoo para que
+# partners/productos recién creados matcheen solos. Apagar (0) cuando el
+# matching live + TTL baste y prioricen velocidad de carga.
+ODOO_CATALOG_FORCE_ON_MATCH = (_env_strip("ODOO_CATALOG_FORCE_ON_MATCH", "1") or "1").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 # Tope de OCs recientes al enriquecer proceso (fetch_candidates=False). 0 = sin tope.
 ODOO_PO_ENRICH_ORDER_LIMIT = int(_env_strip("ODOO_PO_ENRICH_ORDER_LIMIT", "100") or "100")
 # Idioma para search_read / execute_kw (nombres traducibles en catálogo). Vacío = sin forzar.

@@ -11,6 +11,7 @@ from facturia_matching.padron.google_sheets import (
 from facturia_matching.padron.sheet_loader import (
     extract_category_map,
     extract_category_map_from_rows,
+    extract_column_values,
     fetch_sheet,
     parse_file_path,
     rows_to_named,
@@ -54,7 +55,10 @@ def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
             sheet_rows = []
         if not sheet_error:
             try:
-                cat_map = extract_category_map(spreadsheet_id=source, gid=gid)
+                # force=False: reusa el CSV recién cacheado por fetch_sheet (evita 2° hit → 429).
+                cat_map = extract_category_map(
+                    spreadsheet_id=source, gid=gid, force=False
+                )
             except Exception:
                 cat_map = {}
     elif mode == "public" and source:
@@ -65,7 +69,7 @@ def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
             sheet_rows = []
         if not sheet_error:
             try:
-                cat_map = extract_category_map(url=source)
+                cat_map = extract_category_map(url=source, force=False)
             except Exception:
                 cat_map = {}
     elif mode == "private_unconfigured":
@@ -78,6 +82,8 @@ def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
     m_prod = mapping.get("productos") or {}
     m_fp = mapping.get("formas_pago") or {}
     m_conc = mapping.get("conceptos") or {}
+    m_mes = mapping.get("meses") or {}
+    m_suc = mapping.get("sucursales") or {}
 
     prov_rows = _rows_for_kind(cfg, "proveedores", sheet_rows)
     prod_rows = _rows_for_kind(cfg, "productos", sheet_rows)
@@ -98,6 +104,12 @@ def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
     formas_pago = rows_to_named(fp_rows, m_fp.get("nombre") or "")
     conceptos = rows_to_named(conc_rows, m_conc.get("nombre") or "")
 
+    # Mes / Sucursal: valores únicos de columnas Config (mismo sheet_rows).
+    col_mes = (m_mes.get("nombre") or "Mes").strip()
+    col_suc = (m_suc.get("nombre") or "Sucursal").strip()
+    meses = extract_column_values(sheet_rows or [], col_mes) if col_mes else []
+    sucursales = extract_column_values(sheet_rows or [], col_suc) if col_suc else []
+
     mapped_cat = extract_category_map_from_rows(
         conc_rows,
         m_conc.get("nombre") or "",
@@ -106,11 +118,43 @@ def load_padron(company_id: int = 0, force: bool = True) -> Dict[str, Any]:
     if mapped_cat:
         cat_map = mapped_cat
 
+    # Categorías desde hoja Gastos (única fuente real; fallback Pepe).
+    categorias_gasto: List[str] = []
+    sid = (cfg.get("spreadsheet_id") or "").strip()
+    if not sid and mode == "private" and source:
+        sid = str(source).strip()
+    gastos_gid = (cfg.get("gastos_sheet_gid") or "").strip()
+    if sid and not sheet_error:
+        try:
+            from facturia_matching.padron.gastos_history import (
+                load_gastos_history,
+                unique_categorias,
+            )
+
+            recs = load_gastos_history(
+                spreadsheet_id=sid, gid=gastos_gid or "541219037", force=False
+            )
+            categorias_gasto = unique_categorias(recs or [])
+        except Exception:
+            categorias_gasto = []
+    if not categorias_gasto:
+        categorias_gasto = [
+            "Gastos Fijos",
+            "Gastos Var",
+            "CMV",
+            "Financieros",
+            "Impuestos",
+            "Retiro Socios",
+        ]
+
     data = {
         "proveedores": proveedores,
         "productos": productos,
         "formas_pago": [r["nombre"] for r in formas_pago],
         "conceptos": [r["nombre"] for r in conceptos],
+        "meses": meses,
+        "sucursales": sucursales,
+        "categorias_gasto": categorias_gasto,
         "categoria_map": cat_map,
         "config": cfg,
         "sheet_source_mode": mode or "none",

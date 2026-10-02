@@ -15,6 +15,7 @@ import {
   renderVerFacturaButtonHtml,
 } from "./archivoViewer.js";
 import { classifyProcesoLineMode, allComprobantesAreSoloEncabezado } from "../singleLine/index.js";
+import { syncTableHScroll } from "./hScroll.js";
 
 function comprobanteTitle(state, groupRows, compIdx) {
   const first = groupRows[0] || {};
@@ -148,6 +149,7 @@ export function renderComprobantes(state, refs, handlers) {
     syncViewModeToggle(state, refs);
     syncSoloEncabezadoToggle(state, refs);
     syncCarouselNav(state, refs, 0);
+    syncTableHScroll(refs);
     return;
   }
 
@@ -219,6 +221,7 @@ export function renderComprobantes(state, refs, handlers) {
   wrap.querySelectorAll(".comprobanteModeHint, .comprobanteWarnings").forEach((el) => el.remove());
   restoreTableUiState(refs, uiState);
   updateTotals(state, refs);
+  syncTableHScroll(refs);
 }
 
 export function setViewMode(state, refs, handlers, mode) {

@@ -121,7 +121,8 @@ Sudata no tiene instalado el español de Argentina (`es_AR`) sino el latinoameri
 | `FACTURIA_UI_ENV` | Opcional: `dev` fuerza pestaña FacturIA; `prod` la oculta. Sin setear, se infiere si `PROCESS_SCHEMA` contiene `staging` |
 | `FACTURIA_BASE_URL` | Base FacturIA para el webhook erp-imports (default staging/prod según `PROCESS_SCHEMA`) |
 | `FACTURIA_ERP_WEBHOOK_URL` | Override de la URL completa `POST …/api/erp-imports/webhook` |
-| `FACTURIA_FILE_URL_TEMPLATE` | Plantilla para proxy de PDF/foto original (`GET /api/proceso/{n}/archivo`). Sin setear, el botón **Ver factura** muestra error |
+| `FACTURIA_GCS_BUCKET` | Bucket de PDFs/fotos (default `facturias-sudata`). Prefijos `conversion/` / `conversion-staging/` |
+| `FACTURIA_FILE_URL_TEMPLATE` | Fallback HTTP si GCS no tiene el objeto |
 
 Ver `.env.example` para la lista completa.
 
@@ -186,6 +187,12 @@ Si elegís **Sin OC**, el selector no desaparece: queda **«OC: Sin OC ▾»** p
 ### La OC no aparece en el selector
 
 Se listan **todas** las órdenes de compra **confirmadas** del proveedor (`purchase` / `done`), incluidas las ya recepcionadas y las aún sin recepción. El ranking prioriza el **% de matching** (Score de la tarjeta) y, a igualdad de %, coincidencia de **referencia de pedido** (`partner_ref` ↔ referencia FacturIA, p. ej. `PEDIDO 26.05`); no oculta OCs. Por defecto el modal filtra **Desde** ene-2026 (editable / vaciable). Si ya sabés cuál es, usá también el **buscador** (nombre, ref. proveedor, producto). Si no ves la OC correcta: verificá el filtro de fecha, que el proveedor de la factura sea el mismo partner comercial en Odoo y que la OC no esté en borrador o cancelada. Tras **Buscar OCs similares**, hay que **elegir** la OC en el modal (no se auto-selecciona).
+
+### No encuentro un proveedor que acabo de crear en Odoo
+
+**Temporal (deploy actual):** al **abrir o regenerar** un proceso la app vuelve a pedir el catálogo a Odoo, así el matching automático por CUIT/nombre debería encontrar el partner recién creado (sin tener que elegirlo a mano). Eso puede hacer que esa carga tarde más (~varios segundos). Se puede apagar con `ODOO_CATALOG_FORCE_ON_MATCH=0`.
+
+Además, al escribir en Proveedor (≥2 caracteres) la UI **busca en vivo en Odoo**. Usá palabras sueltas o CUIT: `gordo dan alan` / `dan alan` / `20413168091`. El listado del bootstrap sigue cacheado; `?refresh=1` fuerza el listado completo en la UI. En Dinner/Sudata el contacto tiene que estar marcado como proveedor; en **Central Ticket (Aliare)** se listan todos los contactos.
 
 ### Proveedor con id que Odoo rechaza (`res.partner(…)` no existe)
 

@@ -33,9 +33,11 @@ Metadata estática de la app (columnas, flags de perfil). Ver `build_metadata_pa
 
 ### `GET /api/bootstrap`
 
-Carga inicial de la UI: metadata + opciones ligeras (sin padrón completo). Cold path: `get_catalog()` contra Odoo (cache en memoria `ODOO_CATALOG_CACHE_TTL`, single-flight por perfil; RPCs de catálogo en paralelo). Warm path ≈ instantáneo si el proceso ya cargó ese perfil.
+Carga inicial de la UI: metadata + opciones (sin padrón completo). Reusa el catálogo Odoo en memoria (`ODOO_CATALOG_CACHE_TTL`, default 600s) con **stale-while-revalidate**: si el cache expiró, responde con el catálogo viejo y refresca en background. Cold start (sin cache) sigue pegándole a Odoo (partners paginados + products/journals/…). Partners recién creados: búsqueda live `GET /api/partners/search` al tipear en Proveedor, o `?refresh=1` en bootstrap para forzar re-fetch.
 
-**Query**: `empresa`, `perfil`, `odoo_profile_test`, `odoo_cloud`
+**Temporal — matching automático:** al cargar/parsear un proceso (`GET /api/proceso`, remap de conversión guardada) se fuerza refresh del catálogo si `ODOO_CATALOG_FORCE_ON_MATCH=1` (default), para que partners/productos recién subidos a Odoo matcheen solos. Apagar con `0` cuando prioricen velocidad.
+
+**Query**: `empresa`, `perfil`, `odoo_profile_test`, `odoo_cloud`, `refresh`
 
 **Respuesta**:
 ```json
@@ -44,6 +46,17 @@ Carga inicial de la UI: metadata + opciones ligeras (sin padrón completo). Cold
   "options": { "proveedores": [], "journals": [], ... },
   "odoo_profile": "default"
 }
+```
+
+### `GET /api/partners/search`
+
+Búsqueda **live** de proveedores en Odoo (`name` / CUIT). Complementa el catálogo precargado (Central Ticket tiene decenas de miles de contactos).
+
+**Query**: `q` (mín. 2 chars), `limit` (1–100), más los params de perfil/`empresa` habituales.
+
+**Respuesta**:
+```json
+{ "query": "dan alan", "count": 1, "proveedores": [ { "id": 7, "name": "GORDON DAN ALAN", "vat": "20-41316809-1" } ] }
 ```
 
 ### `GET /api/options`
@@ -155,15 +168,21 @@ Con `excel_user=1` (o `?pepe=1`): matching contra padrón Excel/Sheets (`force` 
 
 ### `GET /api/proceso/{process_number}/archivo`
 
-Proxy del PDF/foto original del comprobante. La ruta sale de `json_data` (`facturas[i].json.archivo_original` o `factura.file_name`); los bytes viven en FacturIA.
+Sirve el PDF/foto original del comprobante. La ruta sale de `json_data` (`facturas[i].json.archivo_original` o `factura.file_name`).
+
+**Origen de bytes** (en orden):
+
+1. **GCS** `gs://facturias-sudata/` (override `FACTURIA_GCS_BUCKET`):
+   - staging (`PROCESS_SCHEMA` con `staging`): `conversion-staging/{company}/{process}/{file}` (fallback `conversion/…`)
+   - prod: `conversion/{company}/{process}/{file}` (fallback `conversion-staging/…`)
+   - si el basename no existe, también prueba espacio ↔ `_` (ej. `PATRICIO_ALEANDRI.pdf` ↔ `PATRICIO ALEANDRI.pdf`)
+2. **HTTP** opcional vía `FACTURIA_FILE_URL_TEMPLATE` si GCS no encuentra el objeto.
 
 **Query**: `comprobante_idx` (0-based), `empresa`
 
-**Env**: `FACTURIA_FILE_URL_TEMPLATE` (obligatorio para servir). Placeholders: `{base}`, `{path}`, `{path_encoded}`, `{process_id}`, `{process_number}`, `{company_id}`, `{comprobante_idx}`. Base vía `FACTURIA_BASE_URL` / `PROCESS_SCHEMA`.
-
-**Respuesta**: stream `inline` del archivo. Sin path → 404; sin template → 503; FacturIA falla → 502.
-
 Las filas de `GET /api/proceso` incluyen `__fac_archivo` en la 1ª línea de cada comprobante cuando hay ruta.
+
+**Auth GCS**: ADC del Cloud Run SA (`…-compute@developer.gserviceaccount.com`) con `roles/storage.objectViewer` en el bucket.
 
 ### `GET /api/proceso/{process_number}/facturia-raw`
 
@@ -314,10 +333,11 @@ Página: `/static/padron_excel.html`. Detalle: [padron-excel.md](padron-excel.md
 | POST | `/api/padron-excel/preview` | Columnas y sample (URL pub o `spreadsheet_id` + SA) |
 | POST | `/api/padron-excel/sheets` | URL/`spreadsheet_id` compartido al SA → lista de hojas (`title`, `gid`, `index`) |
 | POST | `/api/padron-excel/sheets/row` | Primera fila (headers) de una hoja (`sheet_gid` y/o `sheet_title`). Alias: `/sheets/column` |
+| GET | `/api/padron-excel/entrega` | Columnas del `export_template` para un proceso (`id_cliente`, `proceso`, `id_template`) + `is_dropdown` |
 | GET | `/api/padron-excel/proceso/{n}` | FacturIA `json_data` → fuzzy match contra padrón actual (`force_refresh` default true) |
 | POST | `/api/padron-excel/match` | `field`: `proveedor` \| `producto` \| `concepto` \| `forma_pago`; opcional `cuit`, `unidades_medida` |
 | GET/POST | `/api/padron-excel/facturas` | CRUD de facturas con matching |
-| GET | `/api/padron-excel/facturas/export/csv` | Export formato Excel del cliente |
+| GET | `/api/padron-excel/facturas/export/csv` | Export layout Gastos Pepe (`pepe_schema.PEPE_GASTOS_COLUMNS`) |
 
 ### `POST /api/padron-excel/sheets`
 
@@ -330,6 +350,18 @@ Respuesta: `{ "spreadsheet_id", "title", "sheets": [{ "title", "sheet_id", "gid"
 Body: `{ "url"|"spreadsheet_id", "sheet_gid"?, "sheet_title"?, "skip_empty": true }`. Si no pasás hoja, usa la primera pestaña. Alias legacy: `/sheets/column` (misma respuesta).
 
 Respuesta: `{ "spreadsheet_id", "sheet_title", "sheet_gid", "values": [...], "count" }` — celdas de la **fila 1** (headers).
+
+### Entrega por template
+
+`GET /api/padron-excel/entrega?id_cliente=&proceso=&id_template=`
+
+Lee `export_templates` / `export_template_sheets` / `export_template_columns` del schema `PROCESS_SCHEMA` (`deleted_at` nulo; el template es de ese `company_id` o global). Matchea el proceso como `?excel_user=1` y devuelve solo las columnas del template.
+
+`is_dropdown: true` si la columna apunta a una lista del Sheet o si el origen es un catálogo (`cabecera.proveedor.*`, `cabecera.concepto`, forma de pago, `items[].producto`, rubro, diario). `options` son los valores de `lookup_return_column`, o de `lookup_match_column` si el retorno viene vacío. La tilde `lookup_suggest` llena la celda con el matching Excel: proveedor por CUIT/nombre, y concepto + categoría con historial de Gastos e IA. Sin tilde, la lista queda para elegir y la celda no se autocompleta. Fecha, Monto, Fecha de pago y Observación se completan con la factura del proceso (fecha, total, vencimiento, observaciones).
+
+Una hoja con alguna columna `items[]` devuelve una fila por ítem (`should_repeat=0` deja la cabecera vacía desde la segunda línea). Sin columnas de ítem, una fila por comprobante.
+
+`sheet_error` avisa si no se pudo leer el Sheet. Para ver los templates de staging el server tiene que correr con `PROCESS_SCHEMA=sudataco_staging`.
 
 ### Matching proceso FacturIA
 

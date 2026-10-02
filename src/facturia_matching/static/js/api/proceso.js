@@ -8,6 +8,7 @@ import {
   currentEmpresa,
   isDebugMode,
   isExcelUserMode,
+  matchedExcelAlias,
 } from "../utils/index.js";
 import { renderComprobantes } from "../comprobanteView/index.js";
 import { clearAutoSaveTimer } from "./autoSave.js";
@@ -30,6 +31,7 @@ export async function fetchProcesoPayload(state, pn, empresa, urlOverrides = {})
   if (emp) state.empresa = emp;
   syncOdooProfileState(state, urlOverrides);
   state.excelUser = !!(state.excelUser || isExcelUserMode(urlOverrides));
+  if (!state.excelAlias) state.excelAlias = matchedExcelAlias(urlOverrides) || "";
   const apiUrl = `/api/proceso/${encodeURIComponent(pn)}${buildApiQuery({
     empresa: emp || undefined,
     ...apiOdooQueryParams(state),
@@ -61,6 +63,7 @@ export async function buscarProceso(state, refs, setStatusFn, handlers, urlOverr
   if (empresa) state.empresa = empresa;
   syncOdooProfileState(state, urlOverrides);
   state.excelUser = !!(state.excelUser || isExcelUserMode(urlOverrides));
+  if (!state.excelAlias) state.excelAlias = matchedExcelAlias(urlOverrides) || "";
   if (!pn) return;
 
   setStatusFn("Buscando proceso y ejecutando matching…");

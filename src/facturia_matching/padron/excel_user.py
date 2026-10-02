@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional, Union
 
+from facturia_matching.padron.pepe_schema import PEPE_GASTOS_COLUMNS
+
 # Aliases de cliente demo → override opcional de company_id del padrón Sheet.
 # company_id None = usar el del proceso FacturIA (o 0).
+# gastos_columns: layout CSV hardcodeado para pegar en la planilla del cliente.
 EXCEL_USER_ALIASES: Dict[str, Dict[str, Any]] = {
-    "pepe": {"company_id": 0},
+    "pepe": {
+        "company_id": 0,
+        "gastos_columns": PEPE_GASTOS_COLUMNS,
+    },
 }
 
 

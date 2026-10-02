@@ -32,6 +32,9 @@ _cache_by_profile: Dict[str, Dict[str, Any]] = {}
 # Single-flight: bootstrap ∥ proceso no deben cold-fetch el mismo perfil a la vez.
 _fetch_locks_guard = threading.Lock()
 _fetch_locks_by_profile: Dict[str, threading.Lock] = {}
+# Stale-while-revalidate: un refresh en background por perfil a la vez.
+_bg_refresh_guard = threading.Lock()
+_bg_refresh_inflight: Dict[str, bool] = {}
 
 
 def _catalog_fetch_lock(profile: str) -> threading.Lock:
@@ -41,6 +44,41 @@ def _catalog_fetch_lock(profile: str) -> threading.Lock:
             lock = threading.Lock()
             _fetch_locks_by_profile[profile] = lock
         return lock
+
+
+def _schedule_catalog_background_refresh(profile: str, config: Dict[str, Any]) -> None:
+    """Tras TTL: devolver cache stale y refrescar sin bloquear el request."""
+    with _bg_refresh_guard:
+        if _bg_refresh_inflight.get(profile):
+            return
+        _bg_refresh_inflight[profile] = True
+
+    ctx = contextvars.copy_context()
+
+    def _worker() -> None:
+        try:
+            with _catalog_fetch_lock(profile):
+                try:
+                    raw = _fetch_catalog_raw(config, profile)
+                except Exception as e:
+                    logger.warning(
+                        "Refresh background catálogo Odoo (%s) falló: %s", profile, e
+                    )
+                    return
+                catalog = _build_catalog_from_raw(raw)
+                cache = _cache_by_profile.setdefault(profile, {"ts": 0.0, "data": None})
+                cache["ts"] = time.time()
+                cache["data"] = catalog
+                logger.info("Catálogo Odoo refresheado en background (profile=%s)", profile)
+        finally:
+            with _bg_refresh_guard:
+                _bg_refresh_inflight[profile] = False
+
+    threading.Thread(
+        target=lambda: ctx.run(_worker),
+        name=f"odoo-catalog-refresh-{profile}",
+        daemon=True,
+    ).start()
 
 
 def _normalize_label(s: Any) -> str:
@@ -406,26 +444,141 @@ def _partner_catalog_domain(profile: str) -> List[Any]:
     return [("supplier_rank", ">", 0)]
 
 
+_PARTNER_FETCH_PAGE = 5000
+_PARTNER_FETCH_MAX = 100_000
+
+
+def _search_partners_paginated(
+    config: Dict[str, Any],
+    domain: List[Any],
+    *,
+    page_size: int = _PARTNER_FETCH_PAGE,
+    max_rows: int = _PARTNER_FETCH_MAX,
+) -> List[Dict[str, Any]]:
+    """
+    Trae res.partner en páginas por id (no offset).
+
+    Varios Odoo/proxies topean ~20k con offset; Central Ticket tenía exactamente
+    20k contactos en el combobox y proveedores nuevos no aparecían.
+    """
+    out: List[Dict[str, Any]] = []
+    last_id = 0
+    while len(out) < max_rows:
+        page_domain = list(domain or []) + [("id", ">", last_id)]
+        batch = odoo_search_read(
+            "res.partner",
+            page_domain,
+            ["id", "name", "vat"],
+            limit=page_size,
+            order="id",
+            config=config,
+        )
+        if not batch:
+            break
+        out.extend(batch)
+        last_id = max(int(r["id"]) for r in batch if r.get("id") is not None)
+        if len(batch) < page_size:
+            break
+    if len(out) >= max_rows:
+        logger.warning(
+            "Catálogo partners truncado en %s filas (domain=%s)", max_rows, domain
+        )
+    else:
+        logger.info("Catálogo partners: %s filas (domain=%s)", len(out), domain)
+    return out
+
+
+def _merge_partners_by_id(*groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id: Dict[Any, Dict[str, Any]] = {}
+    for group in groups:
+        for row in group or []:
+            pid = row.get("id")
+            if pid is None:
+                continue
+            by_id[pid] = row
+    return list(by_id.values())
+
+
 def _fetch_partners_for_catalog(config: Dict[str, Any], profile: str) -> List[Dict[str, Any]]:
     domain = _partner_catalog_domain(profile)
-    partners = odoo_search_read(
+    partners = _search_partners_paginated(config, domain)
+    if not partners and domain:
+        partners = _search_partners_paginated(config, [])
+    # Aliare: domain vacío = todos los contactos. El pass extra de suppliers solo
+    # aporta si el listado general se truncó (tope) o hay reglas de acceso raras.
+    if profile == "aliare" and len(partners) >= _PARTNER_FETCH_MAX:
+        suppliers = _search_partners_paginated(config, [("supplier_rank", ">", 0)])
+        partners = _merge_partners_by_id(partners, suppliers)
+    return partners or []
+
+
+def search_partners_by_query(
+    query: str,
+    *,
+    limit: int = 50,
+    profile: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Búsqueda live en Odoo (name/VAT) para el combobox Proveedor.
+
+    Complementa el catálogo precargado cuando el tenant tiene muchos contactos
+    o el partner no entró en el listado inicial.
+    """
+    q = " ".join(str(query or "").strip().split())
+    if len(q) < 2:
+        return []
+
+    profile = profile or current_odoo_profile()
+    config = get_odoo_main_config(profile)
+    if not is_odoo_config_ready(config) or get_odoo_uid_from_config(config) is None:
+        return []
+
+    tokens = [t for t in q.split() if t]
+    digits = "".join(ch for ch in q if ch.isdigit())
+
+    clauses: List[Any] = []
+    if tokens:
+        if len(tokens) == 1:
+            name_dom: Any = [("name", "ilike", tokens[0])]
+        else:
+            # ['&', '&', ('name','ilike',a), ('name','ilike',b), ('name','ilike',c)]
+            name_dom = ["&"] * (len(tokens) - 1) + [("name", "ilike", t) for t in tokens]
+        clauses.append(name_dom)
+    if len(digits) >= 3:
+        clauses.append([("vat", "ilike", digits)])
+
+    if not clauses:
+        return []
+    if len(clauses) == 1:
+        domain = clauses[0]
+    else:
+        # OR between name-block and vat-block
+        domain = ["|"] + clauses[0] + clauses[1]
+
+    rows = odoo_search_read(
         "res.partner",
         domain,
         ["id", "name", "vat"],
-        limit=20000,
+        limit=max(1, min(int(limit), 100)),
         order="name",
         config=config,
     )
-    if not partners and domain:
-        partners = odoo_search_read(
-            "res.partner",
-            [],
-            ["id", "name", "vat"],
-            limit=20000,
-            order="name",
-            config=config,
-        )
-    return partners or []
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for r in rows or []:
+        pid = r.get("id")
+        name = (r.get("name") or "").strip()
+        if pid is None or not name:
+            continue
+        key = int(pid)
+        if key in seen:
+            continue
+        seen.add(key)
+        item: Dict[str, Any] = {"id": key, "name": name}
+        if r.get("vat"):
+            item["vat"] = str(r.get("vat")).strip()
+        out.append(item)
+    return out
 
 
 def _fetch_rubros_for_catalog(config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -463,8 +616,11 @@ def _fetch_rubros_for_catalog(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[Dict[str, Any]]]:
-    # Paralelizar RPCs independientes; copiar ContextVar (perfil/lang) a cada worker.
-    ctx = contextvars.copy_context()
+    # Paralelizar RPCs independientes. Un ContextVar Context no se puede
+    # ctx.run() en paralelo desde varios threads (RuntimeError: already entered);
+    # copiar el contexto *por* submit.
+    def _submit(pool: ThreadPoolExecutor, fn, *args):
+        return pool.submit(contextvars.copy_context().run, fn, *args)
 
     def _journals() -> List[Dict[str, Any]]:
         return odoo_search_read(
@@ -504,13 +660,13 @@ def _fetch_catalog_raw(config: Dict[str, Any], profile: str) -> Dict[str, List[D
         return prepare_document_types_for_ui(get_odoo_document_types(config))
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        fut_journals = pool.submit(ctx.run, _journals)
-        fut_partners = pool.submit(ctx.run, _fetch_partners_for_catalog, config, profile)
-        fut_accounts = pool.submit(ctx.run, _accounts)
-        fut_products = pool.submit(ctx.run, _products)
-        fut_docs = pool.submit(ctx.run, _doc_types)
+        fut_journals = _submit(pool, _journals)
+        fut_partners = _submit(pool, _fetch_partners_for_catalog, config, profile)
+        fut_accounts = _submit(pool, _accounts)
+        fut_products = _submit(pool, _products)
+        fut_docs = _submit(pool, _doc_types)
         # Rubros: retries de modelo; en paralelo con el resto pero un solo worker.
-        fut_rubros = pool.submit(ctx.run, _fetch_rubros_for_catalog, config)
+        fut_rubros = _submit(pool, _fetch_rubros_for_catalog, config)
 
         journals = fut_journals.result()
         partners = fut_partners.result()
@@ -617,6 +773,9 @@ def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Opt
     """
     Retorna (catalog, from_odoo).
     catalog incluye listas + mapas name->id + proveedores_cuit_map por partner id.
+
+    Sin force: usa cache en memoria (TTL). Si el cache existe pero expiró,
+    lo devuelve de inmediato y refresca en background (stale-while-revalidate).
     """
     profile = profile or current_odoo_profile()
     config = get_odoo_main_config(profile)
@@ -640,23 +799,37 @@ def get_catalog(force: bool = False, profile: Optional[str] = None) -> Tuple[Opt
 
     cache = _cache_by_profile.setdefault(profile, {"ts": 0.0, "data": None})
     now = time.time()
-    if not force and cache.get("data") and (now - float(cache.get("ts") or 0)) < ODOO_CATALOG_CACHE_TTL:
-        return cache["data"], True
+    cached = cache.get("data")
+    age = now - float(cache.get("ts") or 0)
+    if not force and cached is not None:
+        if age < ODOO_CATALOG_CACHE_TTL:
+            return cached, True
+        # Stale: servir ya y refrescar sin bloquear bootstrap / proceso.
+        _schedule_catalog_background_refresh(profile, config)
+        return cached, True
 
     # Single-flight por perfil: el segundo caller espera y reusa el cache.
     with _catalog_fetch_lock(profile):
         now = time.time()
-        if (
-            not force
-            and cache.get("data")
-            and (now - float(cache.get("ts") or 0)) < ODOO_CATALOG_CACHE_TTL
-        ):
-            return cache["data"], True
+        cached = cache.get("data")
+        age = now - float(cache.get("ts") or 0)
+        if not force and cached is not None:
+            # Fresco o stale recién poblado por otro thread: no bloquear de nuevo.
+            if age >= ODOO_CATALOG_CACHE_TTL:
+                _schedule_catalog_background_refresh(profile, config)
+            return cached, True
 
         try:
             raw = _fetch_catalog_raw(config, profile)
         except Exception as e:
             logger.warning("No se pudo cargar catálogo Odoo: %s", e)
+            # Si el force falló pero hay cache previo, no dejar el matching sin Odoo.
+            if cached is not None:
+                logger.warning(
+                    "Usando catálogo Odoo en cache tras error de fetch (profile=%s)",
+                    profile,
+                )
+                return cached, True
             return None, False
 
         catalog = _build_catalog_from_raw(raw)
@@ -669,3 +842,5 @@ def invalidate_catalog_cache() -> None:
     for entry in _cache_by_profile.values():
         entry["ts"] = 0.0
         entry["data"] = None
+    with _bg_refresh_guard:
+        _bg_refresh_inflight.clear()

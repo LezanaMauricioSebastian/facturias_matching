@@ -15,7 +15,11 @@ from facturia_matching.core.amounts import (
     resolve_fac_item_qty_price,
 )
 from facturia_matching.persistence.back_check import get_process
-from facturia_matching.infra.config import DEFAULT_JOURNAL_NAME, DEFAULT_RUBRO_NAME
+from facturia_matching.infra.config import (
+    DEFAULT_JOURNAL_NAME,
+    DEFAULT_RUBRO_NAME,
+    ODOO_CATALOG_FORCE_ON_MATCH,
+)
 from facturia_matching.core.constants import IVA_SPECIAL_OPTIONS
 from facturia_matching.odoo.catalog import (
     get_catalog,
@@ -104,7 +108,9 @@ def parse_process_json(
         rubros_odoo: List[Any] = []
         partner_cuit_to_id: Dict[str, Any] = {}
     else:
-        catalog, odoo_ok = get_catalog()
+        # TEMP: force=True (default via env) para ver partners/productos recién
+        # subidos a Odoo en el matching automático de esta carga.
+        catalog, odoo_ok = get_catalog(force=ODOO_CATALOG_FORCE_ON_MATCH)
         t_catalog = time.perf_counter()
         maps = (catalog or {}).get("maps") or {}
         doc_label_map = maps.get("document_type_labels") or {}
@@ -154,9 +160,13 @@ def parse_process_json(
         else None
     )
 
+    gastos_records: Optional[List[Dict[str, str]]] = None
+    gastos_categorias: List[str] = []
+    excel_cfg: Optional[Dict[str, Any]] = None
     if excel_user:
         from facturia_matching.padron.catalog_excel import load_padron
         from facturia_matching.padron.excel_user import resolve_excel_company_id
+        from facturia_matching.padron.padron_config_store import get_config
 
         padron_cid = (
             int(excel_company_id)
@@ -164,7 +174,9 @@ def parse_process_json(
             else resolve_excel_company_id(process_company_id=company_id)
         )
         try:
-            excel_padron = load_padron(padron_cid, force=True)
+            # force=False: respeta TTL (evita 429 de Google al rematch/F5).
+            # Re-matchear / admin pueden seguir forzando vía API force_refresh.
+            excel_padron = load_padron(padron_cid, force=False)
             sheet_error = excel_padron.get("sheet_error") or None
         except Exception as e:
             logger.warning("excel_user load_padron failed company_id=%s: %s", padron_cid, e)
@@ -177,6 +189,37 @@ def parse_process_json(
                 "sheet_error": str(e),
             }
             sheet_error = str(e)
+        try:
+            excel_cfg = get_config(padron_cid)
+        except Exception:
+            excel_cfg = None
+        # Historial Gastos: categorías + ejemplos (cache; no depende del flag IA).
+        if excel_cfg:
+            sid = (excel_cfg.get("spreadsheet_id") or "").strip()
+            gid = (excel_cfg.get("gastos_sheet_gid") or "").strip()
+            if sid:
+                try:
+                    from facturia_matching.padron.gastos_history import (
+                        load_gastos_history,
+                        unique_categorias,
+                    )
+
+                    gastos_records = load_gastos_history(
+                        spreadsheet_id=sid, gid=gid or None
+                    )
+                    gastos_categorias = unique_categorias(gastos_records or [])
+                    if not gastos_categorias:
+                        gastos_categorias = list(
+                            excel_padron.get("categorias_gasto") or []
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "excel_user gastos_history failed company_id=%s: %s",
+                        padron_cid,
+                        e,
+                    )
+                    gastos_records = []
+                    gastos_categorias = list(excel_padron.get("categorias_gasto") or [])
     else:
         padron_cid = company_id if company_id is not None else 0
 
@@ -230,6 +273,8 @@ def parse_process_json(
         prov_cuit = normalize(prov.get("cuit") or "")
 
         excel_prov_hit: Optional[Dict[str, Any]] = None
+        excel_forma_pago = ""
+        excel_forma_pago_score = 0.0
         matched_name = ""
         matched_rubro = ""
         matched_diario = ""
@@ -237,7 +282,10 @@ def parse_process_json(
         score = 0.0
 
         if excel_user and excel_padron is not None:
-            from facturia_matching.padron.excel import match_proveedor_excel
+            from facturia_matching.padron.excel import (
+                match_forma_pago,
+                match_proveedor_excel,
+            )
 
             excel_prov_hit = (
                 match_proveedor_excel(
@@ -254,6 +302,21 @@ def parse_process_json(
                 cuit_hit = normalize(excel_prov_hit.get("cuit") or "")
                 if cuit_hit:
                     prov_cuit = cuit_hit
+
+            fp_raw = normalize(
+                fac.get("forma_de_pago")
+                or fac.get("forma_pago")
+                or fac.get("medio_de_pago")
+                or fac.get("metodo_de_pago")
+                or fac.get("condicion_pago")
+                or ""
+            )
+            if fp_raw:
+                fp_hit = match_forma_pago(fp_raw, excel_padron.get("formas_pago") or [])
+                if fp_hit:
+                    excel_forma_pago, excel_forma_pago_score = fp_hit[0], float(fp_hit[1])
+                else:
+                    excel_forma_pago = fp_raw
         else:
             matched_name, matched_rubro, matched_diario, matched_cuenta, score = match_proveedor(
                 prov_nombre, prov_cuit
@@ -329,6 +392,138 @@ def parse_process_json(
             comprobante_tax_match = tax_match_cache.get(prov_nombre, prov_cuit)
             comprobante_tax_names = get_tax_name_by_id() if comprobante_tax_match[0] else None
 
+        # Un concepto por proveedor (así clasifican en Gastos).
+        excel_line_concepts: List[Dict[str, Any]] = []
+        if excel_user and excel_padron is not None:
+            from facturia_matching.padron.excel import match_one
+            from facturia_matching.padron.gastos_history import (
+                canonicalize_categoria,
+                dominant_concepto,
+                infer_categoria,
+            )
+
+            conceptos = excel_padron.get("conceptos") or []
+            cat_map = excel_padron.get("categoria_map") or {}
+            prov_for_concept = matched_name or prov_nombre or ""
+            for it in items:
+                excel_line_concepts.append(
+                    {
+                        "descripcion": normalize((it or {}).get("descripcion")),
+                        "concepto": "",
+                        "score": 0.0,
+                        "categoria": "",
+                    }
+                )
+
+            def _fill_concept(concepto: str, categoria: str, score: float) -> None:
+                cat = canonicalize_categoria(categoria) if categoria else ""
+                for row in excel_line_concepts:
+                    row["concepto"] = concepto
+                    row["categoria"] = cat
+                    row["score"] = score
+
+            def _categoria_for(concepto: str, hinted: str = "") -> str:
+                cat = normalize(hinted or cat_map.get(concepto) or "")
+                if cat:
+                    return cat
+                if gastos_records:
+                    return infer_categoria(
+                        gastos_records,
+                        concepto=concepto,
+                        proveedor=prov_for_concept,
+                    )
+                return ""
+
+            dom = dominant_concepto(
+                gastos_records or [],
+                proveedor=prov_for_concept,
+                allowed=conceptos,
+            )
+            if dom:
+                _fill_concept(dom, _categoria_for(dom), 100.0)
+            else:
+                filled = False
+                has_desc = any(r.get("descripcion") for r in excel_line_concepts)
+                if has_desc and conceptos:
+                    from facturia_matching.padron.concept_ai import (
+                        is_concept_ai_enabled,
+                        suggest_concepto_categoria_batch,
+                    )
+
+                    if is_concept_ai_enabled():
+                        from facturia_matching.padron.gastos_history import top_k_examples
+
+                        hint_desc = next(
+                            (
+                                r.get("descripcion") or ""
+                                for r in excel_line_concepts
+                                if r.get("descripcion")
+                            ),
+                            "",
+                        )
+                        examples = top_k_examples(
+                            gastos_records or [],
+                            proveedor=prov_for_concept,
+                            descripcion=hint_desc,
+                            k=15,
+                        )
+                        cats = list(gastos_categorias or [])
+                        for v in cat_map.values():
+                            vv = normalize(v)
+                            if vv and vv not in cats:
+                                cats.append(vv)
+                        for canon in ("Gastos Fijos", "Gastos Var"):
+                            if canon not in cats:
+                                cats.append(canon)
+                        suggestions = suggest_concepto_categoria_batch(
+                            company_id=int(padron_cid),
+                            proveedor=prov_for_concept,
+                            lines=[
+                                {"descripcion": r.get("descripcion") or ""}
+                                for r in excel_line_concepts
+                            ],
+                            conceptos=conceptos,
+                            categorias=cats or None,
+                            examples=examples,
+                            one_per_proveedor=True,
+                        )
+                        sug = next(
+                            (s for s in suggestions if s and s.get("concepto")),
+                            None,
+                        )
+                        if sug:
+                            _fill_concept(
+                                sug["concepto"],
+                                _categoria_for(sug["concepto"], sug.get("categoria") or ""),
+                                80.0,
+                            )
+                            filled = True
+                if not filled and conceptos:
+                    from collections import Counter
+
+                    votes: Counter = Counter()
+                    best_score: Dict[str, float] = {}
+                    for row in excel_line_concepts:
+                        desc_i = row.get("descripcion") or ""
+                        if not desc_i:
+                            continue
+                        hit = match_one(desc_i, conceptos)
+                        if not hit:
+                            continue
+                        votes[hit[0]] += 1
+                        best_score[hit[0]] = max(best_score.get(hit[0], 0.0), float(hit[1]))
+                    if votes:
+                        winner = sorted(
+                            votes,
+                            key=lambda c: (votes[c], best_score.get(c, 0.0)),
+                            reverse=True,
+                        )[0]
+                        _fill_concept(
+                            winner,
+                            _categoria_for(winner),
+                            best_score.get(winner, 0.0),
+                        )
+
         for i, it in enumerate(items):
             desc = normalize((it or {}).get("descripcion"))
             if desc:
@@ -349,18 +544,16 @@ def parse_process_json(
             excel_concepto_score = 0.0
             excel_categoria = ""
             if excel_user and excel_padron is not None and desc:
-                from facturia_matching.padron.excel import match_one, match_producto
+                from facturia_matching.padron.excel import match_producto
 
                 excel_prod = match_producto(
                     desc, item_um, excel_padron.get("productos") or []
                 )
-                conceptos = excel_padron.get("conceptos") or []
-                if conceptos:
-                    conc = match_one(desc, conceptos)
-                    if conc:
-                        excel_concepto, excel_concepto_score = conc[0], float(conc[1])
-                        cat_map = excel_padron.get("categoria_map") or {}
-                        excel_categoria = normalize(cat_map.get(excel_concepto) or "")
+            if excel_user and i < len(excel_line_concepts):
+                pre = excel_line_concepts[i]
+                excel_concepto = pre.get("concepto") or ""
+                excel_concepto_score = float(pre.get("score") or 0)
+                excel_categoria = pre.get("categoria") or ""
 
             producto_nombre = desc
             if excel_prod and excel_prod.get("match"):
@@ -426,6 +619,12 @@ def parse_process_json(
                 row_out["__excel_concepto"] = excel_concepto
                 row_out["__excel_concepto_score"] = excel_concepto_score
                 row_out["__excel_categoria"] = excel_categoria
+                if i == 0:
+                    row_out["__excel_forma_pago"] = excel_forma_pago
+                    row_out["__excel_forma_pago_score"] = excel_forma_pago_score
+                else:
+                    row_out["__excel_forma_pago"] = ""
+                    row_out["__excel_forma_pago_score"] = 0
             if i == 0:
                 apply_fac_percepciones_to_row(fac, row_out)
             if not excel_user:

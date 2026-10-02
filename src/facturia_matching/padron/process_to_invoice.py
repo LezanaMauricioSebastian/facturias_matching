@@ -5,9 +5,24 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from facturia_matching.padron.pepe_schema import month_name_es_from_date
+
 
 def _pick(d: Dict[str, Any], *keys: str) -> str:
     for k in keys:
+        v = d.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s:
+            return s
+    return ""
+
+
+def _pick_amount(d: Dict[str, Any], *keys: str) -> str:
+    for k in keys:
+        if k not in d:
+            continue
         v = d.get(k)
         if v is None:
             continue
@@ -55,8 +70,31 @@ def factura_to_invoice_input(
                 tipo = letter
                 break
 
+    fecha = _pick(fac, "fecha", "fecha_factura", "fecha_emision")
+    fecha_pago = _pick(
+        fac,
+        "fecha_de_pago",
+        "fecha_pago",
+        "fecha_de_vencimiento",
+        "fecha_vencimiento",
+        "vencimiento",
+    )
+    mes = _pick(fac, "mes", "periodo") or month_name_es_from_date(fecha)
+    mes_pago = _pick(fac, "mes_pago", "mes_de_pago") or month_name_es_from_date(
+        fecha_pago
+    )
+    monto = _pick_amount(
+        fac,
+        "total",
+        "importe_total",
+        "monto_total",
+        "monto",
+        "total_factura",
+        "importe",
+    )
+
     return {
-        "mes": _pick(fac, "mes", "periodo"),
+        "mes": mes,
         "sucursal": _pick(fac, "sucursal", "local", "branch"),
         "proveedor": proveedor,
         "cuit": cuit,
@@ -65,6 +103,13 @@ def factura_to_invoice_input(
         "forma_pago": forma_pago,
         "estado_deuda": _pick(fac, "estado_deuda", "estado", "estado_pago"),
         "tipo_comprobante": tipo,
+        "fecha": fecha,
+        "fecha_pago": fecha_pago,
+        "mes_pago": mes_pago,
+        "monto": monto,
+        "observacion": _pick(
+            fac, "observacion", "observaciones", "nota", "notas", "comentario"
+        ),
         "company_id": company_id,
     }
 

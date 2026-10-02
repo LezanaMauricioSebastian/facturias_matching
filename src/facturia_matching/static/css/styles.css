@@ -38,6 +38,11 @@ body {
   flex-wrap: wrap;
 }
 
+.btnGroupPrimary {
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
 .contextRow {
   display: flex;
   flex-direction: column;
@@ -89,7 +94,9 @@ body {
 
 body.embed-mode .odooTenantBadge {
   font-size: 10px;
+  font-weight: 500;
   padding: 2px 8px;
+  opacity: 0.9;
 }
 
 /* Embed: la página no scrollea; scrollea .tableScroll y el Total queda fijo abajo. */
@@ -128,7 +135,7 @@ body.embed-mode .actionCard {
   flex: 0 0 auto;
   position: relative;
   z-index: 10;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
 }
@@ -139,12 +146,41 @@ body.embed-mode .controlsRow {
 }
 body.embed-mode .btnGroupWrap {
   width: 100%;
-  justify-content: space-between;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
 }
-body.embed-mode .contextRow { margin-top: 6px; min-height: 14px; }
+body.embed-mode .btnGroupPrimary {
+  align-items: center;
+}
+body.embed-mode .btnGroupSecondary {
+  align-items: center;
+}
+body.embed-mode .contextRow {
+  margin-top: 8px;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+body.embed-mode .contextRowTop {
+  order: 2;
+  justify-content: flex-end;
+}
+body.embed-mode .contextRow .status {
+  order: 1;
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.92;
+}
 body.embed-mode .summaryHint { margin-bottom: 6px; }
 body.embed-mode .ocPickerBar { margin-bottom: 8px; padding: 8px 10px; }
-body.embed-mode .contextRow .status { margin-top: 0; }
 body.embed-mode .card { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05); }
 body.embed-mode .processCard {
   flex: 1 1 auto;
@@ -171,12 +207,17 @@ body.embed-mode .tableScroll {
 body.embed-mode .footerBar {
   flex: 0 0 auto;
   position: static;
-  box-shadow: none;
+  margin-top: 6px;
+  padding: 9px 12px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.04);
 }
 body.embed-mode .comprobanteCardTitle { display: none; }
 body.embed-mode .comprobanteCardHeader {
   padding: 8px 10px;
-  background: #eef2f7;
+  background: #f8fafc;
   border-bottom: 1px solid var(--line);
 }
 body.embed-mode .comprobanteOcControls {
@@ -219,6 +260,18 @@ input, select {
   padding: 10px 12px;
   outline: none;
   min-width: 260px;
+}
+
+/* Los checkboxes/radios no deben heredar el min-width de inputs de texto. */
+input[type="checkbox"],
+input[type="radio"] {
+  min-width: 0;
+  width: auto;
+  padding: 0;
+  border-radius: 0;
+  border: initial;
+  background: initial;
+  box-shadow: none;
 }
 
 input:focus, select:focus {
@@ -289,11 +342,13 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .metaBadge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 9px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1;
   background: #f1f5f9;
   color: var(--muted);
   border: 1px solid var(--line);
@@ -335,7 +390,9 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 .tableScroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  /* overflow-x en .comprobanteTableMount + barra sticky #tableHScroll (no acá: si no, la barra queda al fondo del panel alto). */
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: min(720px, 78vh);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -363,27 +420,28 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 }
 
 .tableScroll #tableWrap {
-  min-width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
   padding-bottom: 28px;
   box-sizing: border-box;
 }
 
-.footerInside { padding-top: 12px; }
-
 table { width:100%; border-collapse:separate; border-spacing:0; font-size:11px; }
 thead th {
   background: var(--head);
-  border-bottom: 1px solid var(--line);
-  color: #0b1324;
-  font-weight: 700;
-  padding: 4px 6px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  font-weight: 600;
+  padding: 5px 6px;
   font-size: 10px;
-  line-height: 1.2;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
 }
 
 th, td {
   padding: 4px 6px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #f1f5f9;
   vertical-align: top;
 }
 td {
@@ -391,7 +449,7 @@ td {
   overflow: hidden;
 }
 th { text-align:left; position:sticky; top:0; z-index:1; }
-tbody tr:hover td { background: rgba(37,99,235,.03); }
+tbody tr:hover td { background: rgba(37, 99, 235, 0.045); }
 td input, td select {
   box-sizing: border-box;
   /* 0 (no auto): en flex/grid el min intrínseco del <input> empuja a la col. siguiente */
@@ -399,15 +457,27 @@ td input, td select {
   width: 100%;
   max-width: 100%;
   padding: 4px 7px;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 11px;
+  border-color: transparent;
+  background: transparent;
+  transition: border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+td input:hover, td select:hover {
+  border-color: #e2e8f0;
+  background: #fff;
+}
+td input:focus, td select:focus {
+  border-color: rgba(37, 99, 235, 0.65);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
 }
 /* Select IVA %: padding derecho para que el valor no quede bajo la flecha */
 td.colIvaPct select {
   padding-right: 18px;
 }
 td.readonly {
-  color: rgba(15,23,42,.75);
+  color: #64748b;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -448,8 +518,21 @@ td.colFlex {
   width: 100%;
   max-width: 100%;
   padding: 4px 7px;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 11px;
+  border-color: transparent;
+  background: transparent;
+  transition: border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+td .combobox-input:hover {
+  border-color: #e2e8f0;
+  background: #fff;
+}
+
+td .combobox-input:focus,
+.combobox-open .combobox-input {
+  background: #fff;
 }
 
 .combobox-list {
@@ -512,16 +595,70 @@ select.selectLoading {
   gap: 12px;
   align-items: center;
   flex: 0 0 auto;
-  padding: 12px 0 2px;
-  background: var(--card);
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.footerInside { padding: 10px 14px; }
+
+/* Scroller horizontal fijo (espejo del mount); siempre visible sobre el total */
+.tableHScroll {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f1f5f9;
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #e2e8f0;
+}
+
+.tableHScroll[hidden] {
+  display: none !important;
+}
+
+.tableHScroll::-webkit-scrollbar {
+  height: 12px;
+}
+
+.tableHScroll::-webkit-scrollbar-thumb {
+  background: #64748b;
+  border-radius: 999px;
+}
+
+.tableHScroll::-webkit-scrollbar-track {
+  background: #e2e8f0;
+}
+
+.tableHScrollInner {
+  height: 1px;
+  pointer-events: none;
+}
+
+body.embed-mode .tableHScroll {
+  margin-top: 4px;
+  margin-bottom: 0;
 }
 
 .totalBox {
   font-size: 12px;
   color: var(--muted);
+  margin-left: auto;
 }
 
-.totalBox strong { color: var(--text); font-size: 14px; }
+.totalBox strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
 
 .downloadBtn {
   display:inline-flex;
@@ -534,6 +671,60 @@ select.selectLoading {
 }
 
 .downloadBtn svg { width: 18px; height: 18px; }
+
+.csvCopyMenu {
+  position: relative;
+  display: inline-flex;
+}
+
+#btnCopiarCsv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.csvCopyChevron {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1;
+}
+
+.csvCopyDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.csvCopyDropdown[hidden] {
+  display: none !important;
+}
+
+.csvCopyDropdown button {
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.csvCopyDropdown button:hover {
+  background: var(--head);
+  color: var(--text);
+}
 
 .cellWithHint {
   vertical-align: top;
@@ -932,6 +1123,9 @@ select.selectLoading {
   background: #fff;
   /* hidden: el scroll-x vive en .comprobanteTableMount para que header/pie no se vayan */
   overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .comprobanteCardHeader {
@@ -1045,24 +1239,19 @@ select.selectLoading {
 }
 
 .comprobanteTableMount {
+  /* Ancho acotado al viewport: overflow-x real → #tableHScroll puede espejar */
+  width: 100%;
+  max-width: 100%;
+  /* Scroll-x nativo oculto: el scroller sticky #tableHScroll queda siempre visible abajo */
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: none;
 }
 
 .comprobanteTableMount::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
-}
-
-.comprobanteTableMount::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 999px;
-}
-
-.comprobanteTableMount::-webkit-scrollbar-track {
-  background: transparent;
+  display: none;
+  height: 0;
+  width: 0;
 }
 
 .comprobanteTableMount table {
@@ -1074,7 +1263,7 @@ select.selectLoading {
   position: static;
 }
 
-/* Vista unificada: un thead; scroll-x en el mount (scroller abajo de la tabla).
+/* Vista unificada: un thead; scroll-x en el mount (scroller sticky abajo de .tableScroll).
    La tabla no se encoge al viewport: width max-content fuerza overflow-x. */
 .comprobanteCard--unified {
   overflow: hidden;
@@ -1086,24 +1275,17 @@ select.selectLoading {
 }
 
 .comprobanteTableMount--unified {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: none;
 }
 
 .comprobanteTableMount--unified::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
-}
-
-.comprobanteTableMount--unified::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 999px;
-}
-
-.comprobanteTableMount--unified::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  display: none;
+  height: 0;
+  width: 0;
 }
 
 .comprobanteTableMount--unified table,
@@ -1217,16 +1399,20 @@ select.selectLoading {
 /* —— Vista Lista / Carrusel —— */
 .processViewBar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+  min-height: 34px;
 }
 
 .processViewBar .summaryHint {
   flex: 1 1 220px;
   margin: 0;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
 }
 
 .processViewActions {
@@ -1234,6 +1420,7 @@ select.selectLoading {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  min-height: 34px;
 }
 
 .unifiedOneLineToggle {
@@ -1241,8 +1428,10 @@ select.selectLoading {
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 0 10px;
+  padding: 0 10px 0 8px;
   height: 34px;
+  width: auto;
+  max-width: max-content;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -1260,6 +1449,10 @@ select.selectLoading {
 
 .unifiedOneLineToggle input {
   margin: 0;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
   accent-color: #2563eb;
   cursor: pointer;
 }
@@ -1351,7 +1544,7 @@ body.view-expanded .wrap {
 }
 
 body.view-expanded .grid {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1359,7 +1552,7 @@ body.view-expanded .grid {
 }
 
 body.view-expanded .processCard {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1368,14 +1561,23 @@ body.view-expanded .processCard {
 }
 
 body.view-expanded .processTabPanel[data-process-panel="edit"] {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
 }
 
+/* basis 0: no crecer con el contenido (si no, empuja #tableHScroll fuera del clip) */
 body.view-expanded .tableScroll {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   max-height: none;
   min-height: 0;
+  overflow: auto;
+}
+
+body.view-expanded .tableHScroll {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
 }
 
 /* Foco: solo la factura + botón ampliar/reducir */
@@ -1421,6 +1623,7 @@ body.embed-mode.view-expanded .actionCard {
 }
 
 body.embed-mode.view-expanded .tableScroll {
+  flex: 1 1 0;
   max-height: none;
 }
 
@@ -1480,30 +1683,158 @@ body.embed-mode.view-expanded .tableScroll {
   white-space: nowrap;
 }
 
-.facturaArchivoOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  background: rgba(15, 23, 42, 0.55);
+/* Split estilo Odoo: edición a la izquierda, foto/PDF a la derecha (ancho arrastrable). */
+html.archivo-split-open,
+body.archivo-split-open {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+body.archivo-split-open {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
+  flex-direction: row;
+  align-items: stretch;
 }
 
-.facturaArchivoOverlay[hidden] {
-  display: none !important;
+body.archivo-split-open > .wrap {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  width: auto;
+  height: 100%;
+  max-height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
 }
 
-.facturaArchivoDialog {
-  width: min(960px, 100%);
-  height: min(90vh, 900px);
+body.archivo-split-open > .wrap,
+body.archivo-split-open > .wrap .grid,
+body.archivo-split-open > .wrap .processCard,
+body.archivo-split-open > .wrap .processTabPanel[data-process-panel="edit"],
+body.archivo-split-open > .wrap .tableScroll {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Evita que el scroll-x nativo quede “colgando” al fondo del panel alto:
+   el overflow-x lo maneja .comprobanteTableMount + #tableHScroll. */
+body.archivo-split-open > .wrap .tableScroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body.archivo-split-open.embed-mode > .wrap,
+body.embed-mode.archivo-split-open > .wrap {
+  overflow: hidden;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+body.archivo-split-open.embed-mode .actionCard,
+body.embed-mode.archivo-split-open .actionCard {
+  padding: 8px 10px;
+}
+
+body.archivo-split-open.embed-mode .processCard,
+body.embed-mode.archivo-split-open .processCard {
+  padding: 8px;
+}
+
+body.archivo-split-open.embed-mode .tableScroll,
+body.embed-mode.archivo-split-open .tableScroll {
+  max-height: none;
+}
+
+body.archivo-split-open .facturaAfipHeader {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.archivo-split-open .facturaEmisor,
+body.archivo-split-open .facturaLetterCol {
+  border-right: 0;
+  border-bottom: 1px solid #0f172a;
+}
+
+body.archivo-split-open .facturaLetterCol {
+  flex-direction: row;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+body.archivo-split-open.view-expanded > .wrap {
+  height: 100%;
+  max-height: 100%;
+  padding: 10px 12px 12px;
+}
+
+body.archivo-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.archivo-resizing iframe,
+body.archivo-resizing img {
+  pointer-events: none !important;
+}
+
+.facturaArchivoPanel {
+  --archivo-panel-width: 50%;
+  flex: 0 0 var(--archivo-panel-width);
+  width: var(--archivo-panel-width);
+  min-width: 240px;
+  max-width: 78vw;
+  height: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
   background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.28);
+  border-left: 1px solid var(--line);
+  box-shadow: -6px 0 24px rgba(15, 23, 42, 0.08);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  z-index: 40;
+}
+
+.facturaArchivoPanel[hidden] {
+  display: none !important;
+}
+
+.facturaArchivoResizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+
+.facturaArchivoResizer::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 48px;
+  border-radius: 2px;
+  background: #cbd5e1;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.facturaArchivoResizer:hover::after,
+.facturaArchivoResizer:focus-visible::after,
+body.archivo-resizing .facturaArchivoResizer::after {
+  opacity: 1;
+  background: var(--acc);
+}
+
+.facturaArchivoResizer:focus-visible {
+  outline: none;
 }
 
 .facturaArchivoHeader {
@@ -1514,6 +1845,7 @@ body.embed-mode.view-expanded .tableScroll {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   background: #f8fafc;
+  flex: 0 0 auto;
 }
 
 .facturaArchivoTitle {
@@ -1528,6 +1860,10 @@ body.embed-mode.view-expanded .tableScroll {
   cursor: pointer;
   color: #334155;
   padding: 2px 8px;
+}
+
+.facturaArchivoClose:hover {
+  color: #0f172a;
 }
 
 .facturaArchivoBody {
@@ -1563,6 +1899,34 @@ body.embed-mode.view-expanded .tableScroll {
   color: #b91c1c;
   border-top: 1px solid var(--line);
   background: #fff;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  body.archivo-split-open {
+    flex-direction: column;
+  }
+
+  body.archivo-split-open > .wrap {
+    flex: 1 1 45%;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .facturaArchivoPanel {
+    flex: 0 0 55%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    height: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.08);
+  }
+
+  .facturaArchivoResizer {
+    display: none;
+  }
 }
 
 .facturaPaper {

@@ -27,9 +27,18 @@
               </div>
               <div class="btnGroup btnGroupPrimary">
                 <button id="btnOdooImport" class="secondary" type="button" disabled>Importar a Odoo</button>
-                <button id="btnCopiarCsv" class="secondary" type="button" disabled title="Copia el CSV al portapapeles para pegarlo en Excel o Sheets">
-                  Copiar CSV
-                </button>
+                <div class="csvCopyMenu" id="csvCopyMenu">
+                  <button id="btnCopiarCsv" class="secondary" type="button" disabled
+                    aria-haspopup="menu" aria-expanded="false" aria-controls="csvCopyDropdown"
+                    title="Copia el CSV al portapapeles (con o sin encabezado)">
+                    Copiar CSV
+                    <span class="csvCopyChevron" aria-hidden="true">▾</span>
+                  </button>
+                  <div class="csvCopyDropdown" id="csvCopyDropdown" hidden role="menu">
+                    <button type="button" role="menuitem" data-csv-copy="header">Con encabezado</button>
+                    <button type="button" role="menuitem" data-csv-copy="body">Sin encabezado</button>
+                  </div>
+                </div>
                 <button id="btnDescargar" class="downloadBtn" type="button" disabled>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -79,6 +88,9 @@
             <div id="ocPickerBar" class="ocPickerBar" hidden></div>
             <div class="tableScroll">
               <div id="tableWrap"></div>
+            </div>
+            <div class="tableHScroll" id="tableHScroll" hidden aria-hidden="true" title="Desplazamiento horizontal">
+              <div class="tableHScrollInner" id="tableHScrollInner"></div>
             </div>
             <div class="footerBar footerInside">
               <div></div>

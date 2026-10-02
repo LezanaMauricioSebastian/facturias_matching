@@ -29,7 +29,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_process_conversions.py` | Guardar/cargar conversiones; `infer_otro_impuesto_indices`; strip slots otros impuestos legacy |
 | `test_saved_row_remap.py` | Remap de IDs al recargar conversión |
 | `test_odoo_catalog.py` | Maps de catálogo, resolve por nombre |
-| `test_odoo_cold_path.py` | Single-flight `get_catalog`, cache taxes por profile, uid auth cache, tope OCs en enrich |
+| `test_odoo_cold_path.py` | Single-flight `get_catalog`, stale-while-revalidate tras TTL, Context copiado por worker del fetch paralelo (evita `already entered`), cache taxes por profile, uid auth cache, tope OCs en enrich |
 | `test_odoo_api.py` | Helpers XML-RPC (mock) |
 | `test_odoo_import_grouping.py` | Agrupación, validación, `build_move_vals`, NC → `in_refund`, due date. Ver [import-odoo/testing.md](import-odoo/testing.md). |
 | `test_odoo_import_taxes.py` | tax_ids, IIBB, montos esperados, reapply tax amounts |
@@ -40,6 +40,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_purchase_matching_package.py` | Humo del paquete `odoo/purchase_matching/` (imports, caches, sin monolito) |
 | `test_product_label_memory.py` | Aprendizaje producto + UM |
 | `test_padron_taxes_iibb.py` | Impuestos padrón, IIBB, percepciones |
+| `test_concept_ai.py` | Concepto/Categoría Excel vía DeepSeek + parse historial Gastos |
 | `test_options_otros_impuestos.py` | Opciones otros impuestos desde Odoo (filtro + extras dinámicos purchase incl. IVA; alias Perc Gananc/IVA) |
 | `test_db_resolve.py` / `test_infra_db_resolve.py` | Resolución nombre DB Postgres/MySQL |
 | `test_routes_odoo_cloud.py` | Rutas con perfil sudata / odoo_cloud |
@@ -74,6 +75,8 @@ npm run test:js
 | `tests/js/rows_migration.test.mjs` | Migración de filas (cuenta, proveedor) |
 | `tests/js/numbers.test.mjs` | Parseo de montos |
 | `tests/js/validateRows.test.mjs` | Validación pre-export (partner, journal, IVA por modo, cuenta, fechas) |
+| `tests/js/csvCopy.test.mjs` | Copiar CSV: strip de encabezado (`csvBodyOnly`) + preview excel_user + layout Gastos Pepe |
+| `tests/js/filterOptions.test.mjs` | Combobox: tokens + CUIT (`gordo dan alan` → `GORDON DAN ALAN`) |
 | `tests/js/loadFixtures.mjs` | Carga `tax_scenarios.json` (helper, no test) |
 | `tests/js/exportTotals.mjs` | Script CLI para paridad Python/JS (`node tests/js/exportTotals.mjs`) |
 

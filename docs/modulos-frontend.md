@@ -25,7 +25,8 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 | `proceso.js` | **`fetchProcesoPayload`** (solo GET), **`buscarProceso`** (acepta `prefetched`), **`revertirOriginal`**. |
 | `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). **`syncPurchaseColumns`**: muestra columnas UM/OC si `show_purchase_columns` o si las filas ya traen `__um_empresa` / `__oc_line_id` (reload). UM se inserta entre Cantidad y Precio; cant. pedida/recibida y notas OC quedan antes de Subtotal/Total. |
 | `autoSave.js` | Debounce PUT `/api/proceso/{n}/conversion`; indicador `dirty` / `saveStatus`. |
-| `export.js` | **`descargarCsv`**, **`copiarCsv`** (mismo CSV al portapapeles), **`importarOdoo`**, **`odooImportButtonLabel`**. |
+| `export.js` | **`descargarCsv`**, **`copiarCsv`**. Con `excel_user`: CSV preview; con `?pepe=1`: layout Gastos desde grilla editable; sin excel: `POST /api/csv`. |
+| `pepe/gastosUi.js` | Columnas editables Gastos Pepe + hydrate (Estado default Pagado). |
 | `purchase.js` | POST `select-oc`, `rematch-purchase`, `rematch-uom` (UM al cambiar producto o al elegir UM); GET `product-uoms`; cache `state.uomOptionsByProductId`. Con `excel_user`: **Restaurar original** hace `/revert`; **Re-matchear** (`btnRematchExcel` → `rematchearExcelPadron`) relee el Sheet. |
 
 Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.js`.
@@ -53,7 +54,8 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 | `index.js` | API pública del bloque comprobante (footer expandible). |
 | `render.js` | Stack de tarjetas (**Lista**) o una factura (**Carrusel**); **Vista unificada** automática si todas son 1 línea; `setViewMode` / `shiftCarousel`. |
 | `facturaChrome.js` | Chrome estilo **factura AFIP AR**: emisor \| letra+COD+ORIGINAL \| FACTURA+PV/nro/fecha; banda período/vto; bloque receptor; wire de campos editables (`documentLetterFromLabel`, `splitDocumentNumber`). |
-| `archivoViewer.js` | Botón **Ver factura** + lightbox (PDF/imagen) vía `GET /api/proceso/{n}/archivo`. Visible si la fila trae `__fac_archivo`. |
+| `archivoViewer.js` | Botón **Ver factura** + panel lateral resizable (estilo Odoo, default ~50%) para PDF/imagen vía `GET /api/proceso/{n}/archivo` (GCS `facturias-sudata`). Visible si la fila trae `__fac_archivo`. Ancho en `localStorage` (`facturia.archivoPanelWidth`). |
+| `hScroll.js` | Scroller horizontal sticky `#tableHScroll` (espejo de **todos** los `.comprobanteTableMount` en Lista); `wireTableHScroll` / `syncTableHScroll`. |
 | `footer.js` | Inputs del pie (IVA y otros por slot); **`setFooterIvaAmount`** / **`setOtrosFooterAmount`**; al elegir impuesto en columna **`syncOtrosFooterFromRowSelection`** agrega fila nombrada. |
 | `uiState.js` | Scroll/foco al re-render. |
 
@@ -63,8 +65,9 @@ Todas las llamadas deben propagar `odoo_profile` / `empresa` según `utils/url.j
 - Preferencia en `localStorage` clave `facturia.viewMode` (`lista` \| `carrusel`). Estado: `state.viewMode`, `state.carouselIndex` (se resetea al cargar proceso).
 - **Solo encabezado** (checkbox `#chkSoloEncabezado` en `processViewActions`): visible con filas cargadas; al tildar aplica `__solo_encabezado` a **todas** las facturas (`applySoloEncabezadoToAll`); al destildar restaura backups. Ya no hay columna de tilde en la tabla.
 - **Vista unificada** (default, sin checkbox): en Lista, si hay **≥2 comprobantes** y **todos son de 1 línea** (`classifyProcesoLineMode === "encabezado"` / `canUseUnifiedOneLine`), colapsa el stack en **una sola tabla** (1 `thead` + scroll-x en `.comprobanteTableMount--unified`, tabla `width: max-content` para no encoger columnas). OC / Ver factura pasan a la columna Acciones de cada fila.
-- Botón **Ampliar** (`▢` / `▣`): en `view-expanded` queda **solo la factura + el botón** (oculta summary, Lista/Carrusel, Solo encabezado, nav, OC, total del proceso); `Esc` reduce.
-- Botón **Ver factura**: abre el PDF/foto original enviado a FacturIA (`__fac_archivo` desde `archivo_original` / `file_name` en `json_data`). Requiere `FACTURIA_FILE_URL_TEMPLATE` en el servidor; sin eso el lightbox muestra error claro.
+- Botón **Ampliar** (`▢` / `▣`): en `view-expanded` queda **solo la factura + el botón** (oculta summary, Lista/Carrusel, Solo encabezado, nav, OC, total del proceso); `Esc` reduce. El layout usa `flex: 1 1 0` en `.tableScroll` para que `#tableHScroll` no quede empujado fuera del clip; tras toggle se llama `syncTableHScroll`.
+- Botón **Ver factura**: abre el PDF/foto original en un **panel lateral** (no modal): la grilla queda a la izquierda y el archivo a la derecha (~50%, arrastrable; doble clic en el divisor = 50%). Con el split abierto, el chrome AFIP se apila en 1 columna (el `@media` del viewport no alcanza: el pane es angosto aunque la ventana sea ancha). Scroll-x de la grilla en `.comprobanteTableMount` / `#tableHScroll`, no en `.tableScroll`. `Esc` / × cierran el panel. Ruta desde `__fac_archivo` (`archivo_original` / `file_name`); bytes desde GCS `gs://facturias-sudata` (`conversion-staging/…` en odoo-dev).
+- **Solo encabezado**: el checkbox no debe heredar `min-width: 260px` de `input` (regla global `input[type=checkbox]`).
 - En carrusel, `columnsForTaxMode(..., { hideChromeKeys: true })` oculta encabezado del chrome, **Notas OC/UM**, **Cant. pedida/recibida**, **Rubros**, **Diario** y **Cuenta** (`CAROUSEL_HIDE_KEYS`). Rubros/Diario/Cuenta se editan arriba en el chrome.
 - Cache bust de `/` (`route_meta.root`): `?v=` = max mtime de **todo** `static/js` + `static/css` (no solo `main.js` / `render.js`); si no, un cambio solo en `columns.js` deja el grafo ES viejo en el browser.
 - Flechas ←/→ cambian de comprobante si el foco no está en input/combobox.
@@ -102,7 +105,7 @@ Ver también [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
 ### `combobox/`
 
-Dropdown searchable para proveedor, producto, cuenta, etc.
+Dropdown searchable para proveedor, producto, cuenta, etc. Filtro por **tokens** (todos deben aparecer, orden libre) + CUIT/VAT: p. ej. `gordo dan alan` encuentra `GORDON DAN ALAN`. En **Proveedor**, con ≥2 caracteres también consulta `GET /api/partners/search` (Odoo live) y mergea resultados al catálogo en memoria.
 
 | Archivo | Rol |
 |---------|-----|
@@ -177,7 +180,7 @@ flowchart LR
 
 1. **Carga**: bootstrap → opciones + columnas → usuario busca proceso → `state.rows` + `purchaseMatching`. Deep-link (`?proceso=`): fetch bootstrap ∥ proceso; apply en ese orden.
 2. **Edición celda**: handler → actualiza row → `syncFacIvaMontosFromLines` → re-render fila/comprobante → autosave.
-3. **Export**: `validateRows` → POST `/api/csv` o `/api/odoo/import`.
+3. **Export**: `validateRows` → con `excel_user` CSV de preview en cliente; si no, `POST /api/csv` o `/api/odoo/import`.
 
 ---
 
@@ -185,7 +188,7 @@ flowchart LR
 
 | Archivo | Rol |
 |---------|-----|
-| `static/html/index.html` | Shell: input proceso, botones, toggle Lista/Carrusel, nav carrusel, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
+| `static/html/index.html` | Shell: input proceso, botones (Copiar CSV con menú con/sin encabezado), toggle Lista/Carrusel, nav carrusel, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
 | `static/html/padron_excel.html` | UI padrón Excel/Sheets (clientes sin Odoo). `?embed=1&proceso=` para iframe FacturIA. Deep link UI principal: `/?excel_user=1&proceso=` (ver [padron-excel.md](padron-excel.md)). |
 | `static/js/padronExcel/app.js` | Config fuentes (pub / spreadsheet_id+SA / upload), CRUD facturas, deep-link proceso → match. |
 | `static/js/facturiaRaw/tab.js` | Pestaña **FacturIA** (solo `ui_env=dev`): `GET .../facturia-raw`. |
@@ -196,10 +199,11 @@ flowchart LR
 | Contenedor | Scroll | Qué queda fijo |
 |------------|--------|----------------|
 | `.tableScroll` | **vertical** (lista) con `max-height` | badges + toggle vista + **Total del proceso** (`.footerBar` fuera del scroll) |
-| `.comprobanteTableMount` | horizontal por tarjeta | header OC / chrome factura + pie del comprobante |
+| `.comprobanteTableMount` | horizontal por tarjeta (barra nativa **ocultada**) | header OC / chrome factura + pie del comprobante |
+| `#tableHScroll` | espejo horizontal sticky **siempre visible** debajo de `.tableScroll` (sync `scrollLeft` en **todos** los mounts; ancho = max `scrollWidth`) | — |
 | Carrusel | un `.comprobanteCard--factura` | nav `#carouselNav` fuera del scroll |
 
-En embed/deep-link: `html/body` con `overflow: hidden` + flex; solo scrollea `.tableScroll`. El Total del proceso queda siempre visible abajo de la tarjeta.
+En embed/deep-link: `html/body` con `overflow: hidden` + flex; solo scrollea `.tableScroll` en vertical. El Total del proceso y el scroller horizontal sticky quedan siempre visibles abajo de la tarjeta. En **Ampliar** (`view-expanded`) el sticky horizontal también debe permanecer visible (no ocultar `#tableHScroll` con el chrome).
 
 Cache bust: `routes.root()` reemplaza `?v=` con mtime de `styles.css`.
 

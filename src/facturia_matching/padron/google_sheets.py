@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +15,8 @@ import urllib.request
 
 from facturia_matching.infra.config import GOOGLE_SERVICE_ACCOUNT_JSON
 
+logger = logging.getLogger(__name__)
+
 _SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
@@ -21,6 +25,8 @@ _SCOPES = (
 _EDIT_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
 _GID_RE = re.compile(r"[?&#]gid=(\d+)")
 
+# Backoff on export 429 (docs.google.com rate limit is aggressive).
+_EXPORT_RETRY_DELAYS_SEC = (0.8, 2.0, 4.0)
 
 def service_account_configured() -> bool:
     raw = (GOOGLE_SERVICE_ACCOUNT_JSON or "").strip()
@@ -67,6 +73,11 @@ def friendly_sheet_access_error(exc: BaseException, spreadsheet_id: str = "") ->
         return (
             f"La service account no pudo autenticarse. "
             f"Revisá GOOGLE_SERVICE_ACCOUNT_JSON en el server.{sid_bit}"
+        )
+    if "429" in msg or "too many requests" in low or ("rate" in low and "limit" in low):
+        return (
+            "Google limitó las lecturas del Sheet (HTTP 429). "
+            f"Esperá ~1 minuto y reintentá; si hay padrón en caché se reutiliza.{sid_bit}"
         )
     return f"No se pudo leer el Sheet{sid_bit}: {msg}"
 
@@ -138,29 +149,50 @@ def fetch_spreadsheet_csv_text(
     gid: Optional[str] = None,
     timeout: int = 30,
 ) -> str:
-    """Export spreadsheet (or tab) as CSV using service-account Bearer token."""
+    """Export spreadsheet (or tab) as CSV using service-account Bearer token.
+
+    Retries on HTTP 429 with short backoff (export endpoint is rate-limited).
+    """
     sid = (spreadsheet_id or "").strip()
     if not sid:
         raise ValueError("spreadsheet_id vacío")
     url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv"
     if gid:
         url += f"&gid={gid}"
-    token = _bearer_token()
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "FacturIA/1.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8-sig")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")[:300]
-        raise RuntimeError(
-            f"Google Sheets export HTTP {e.code} para {sid}: {body}"
-        ) from e
+
+    attempts = (0.0,) + _EXPORT_RETRY_DELAYS_SEC
+    last_err: Optional[BaseException] = None
+    for attempt, delay in enumerate(attempts):
+        if delay:
+            time.sleep(delay)
+        token = _bearer_token()
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "FacturIA/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8-sig")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")[:300]
+            last_err = RuntimeError(
+                f"Google Sheets export HTTP {e.code} para {sid}: {body}"
+            )
+            if e.code == 429 and attempt < len(attempts) - 1:
+                logger.warning(
+                    "Sheets export 429 sid=%s gid=%s attempt=%s; retry in %.1fs",
+                    sid,
+                    gid or "",
+                    attempt + 1,
+                    attempts[attempt + 1],
+                )
+                continue
+            raise last_err from e
+    assert last_err is not None
+    raise last_err
 
 
 def list_spreadsheet_sheets(

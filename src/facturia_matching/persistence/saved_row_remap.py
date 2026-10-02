@@ -2,7 +2,11 @@
 
 from typing import Any, Dict, List, Optional, Set
 
-from facturia_matching.infra.config import DEFAULT_JOURNAL_NAME, DEFAULT_RUBRO_NAME
+from facturia_matching.infra.config import (
+    DEFAULT_JOURNAL_NAME,
+    DEFAULT_RUBRO_NAME,
+    ODOO_CATALOG_FORCE_ON_MATCH,
+)
 from facturia_matching.odoo.catalog import (
     build_partner_cuit_to_id,
     get_catalog,
@@ -97,7 +101,9 @@ def remap_saved_rows_to_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, An
     if not rows:
         return rows
 
-    catalog, from_odoo = get_catalog()
+    # TEMP: mismo force que parse_process_json — conversión guardada con
+    # partner vacío debe poder resolver CUIT/nombre contra Odoo fresco.
+    catalog, from_odoo = get_catalog(force=ODOO_CATALOG_FORCE_ON_MATCH)
     if not from_odoo or not catalog:
         return rows
 

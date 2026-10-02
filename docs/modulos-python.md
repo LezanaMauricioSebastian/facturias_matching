@@ -23,7 +23,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `route_meta.py` | `/`, metadata, bootstrap, options, padrón, CSV. |
 | `route_odoo.py` | Health Odoo + `POST /api/odoo/import` (+ callback FacturIA erp-imports si hay `import_id`/`token`). |
 | `route_proceso.py` | `/api/proceso/*` (load, OC, UM, conversion, revert). |
-| `route_padron_excel.py` | `/api/padron-excel/*`: config (pub o `spreadsheet_id`+SA), upload CSV/XLSX, listar hojas / fila 1 (headers), match, CRUD facturas, `GET /proceso/{n}` para iframe FacturIA, export. |
+| `route_padron_excel.py` | `/api/padron-excel/*`: config (pub o `spreadsheet_id`+SA), upload CSV/XLSX, listar hojas / fila 1 (headers), match, CRUD facturas, `GET /proceso/{n}` para iframe FacturIA, `GET /entrega` (columnas del export template), export. |
 | `__init__.py` | Vacío / export mínimo. |
 
 **Funciones clave:**
@@ -53,6 +53,10 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | `postgres.py` | Cache de vista padrón; `detect_padron_fields`; **`match_proveedor`** (fuzzy CUIT/nombre); `get_table_columns`. Respeta `PADRON_SOURCE` y orden Odoo-first en Aliare/Sudata. |
 | `odoo.py` | **`build_padron_rows_from_odoo`**: últimas facturas proveedor → filas estilo padrón (rubro, cuenta, diario). |
 | `excel.py` | Fuzzy padrón Excel: **`match_proveedor_excel`** (CUIT exacto → razón/fantasía), **`match_producto`** (nombre + UoM), concepto/forma de pago. |
+| `excel_user.py` | Flags `?excel_user=1` / alias `?pepe=1` (+ `gastos_columns` Pepe). |
+| `pepe_schema.py` | Layout hardcodeado hoja Gastos Pepe (`PEPE_GASTOS_COLUMNS`, export CSV). |
+| `template_entrega.py` | Proyecta columnas de un `export_template` (`source_value`) sobre el match Excel. `is_dropdown` en sugerencia (`lookup_suggest`) y en proveedor, concepto, forma de pago, producto, rubro y diario. |
+| `template_lookup.py` | Listas de la integración. Si `lookup_return_column` viene vacía, la lista es `lookup_match_column`; si viene otra, el match es por la primera y se devuelve la segunda (CUIT → nombre). Con tilde `lookup_suggest`, el valor sale del matching Excel (proveedor) y de historial Gastos + IA (concepto y categoría). |
 | `google_sheets.py` | Service account (`GOOGLE_SERVICE_ACCOUNT_JSON`): export CSV, listar pestañas (Sheets API), leer fila 1 (headers) de un tab privado compartido al SA. |
 | `process_to_invoice.py` | FacturIA `json_data` → dicts tipo InvoiceInput para match Excel. |
 | `sheet_loader.py` | Fetch CSV pub o privado; parse CSV/XLSX; mapeo filas → proveedores/productos. |
@@ -70,7 +74,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `env.py` | Perfiles, URLs, DB name resolution, `build_odoo_*_config`, `get_conversion_template_id`, flags `is_odoo_aliare_profile`, `uses_odoo_padron_first`, idioma RPC `resolve_odoo_lang` (env → primer idioma instalado de `ODOO_LANG_CANDIDATES` → default por perfil). |
-| `catalog.py` | **`get_catalog`** (cache TTL `ODOO_CATALOG_CACHE_TTL`, default 600s): single-flight por perfil (bootstrap∥proceso no duplican cold fetch); RPCs independientes en paralelo (partners, products, journals, accounts, docs, rubros). Maps name→id + CUIT; `invalidate_catalog_cache`. Perfil **aliare**: partners sin filtrar `supplier_rank`. |
+| `catalog.py` | **`get_catalog`** (cache TTL `ODOO_CATALOG_CACHE_TTL`, default 600s): single-flight por perfil; RPCs independientes en paralelo (partners, products, journals, accounts, docs, rubros). Partners en **páginas** (ya no tope duro 20k). Maps name→id + CUIT; `invalidate_catalog_cache`. **`GET /api/bootstrap`** reusa el cache (no fuerza refresh); si el TTL expiró sirve stale y refresca en background. **Temporal:** parse/remap de proceso usa `get_catalog(force=ODOO_CATALOG_FORCE_ON_MATCH)` (default on) para matching de partners nuevos. Partners en UI: live search o `?refresh=1`. Perfil **aliare** (Central Ticket): todos los contactos; union extra de `supplier_rank > 0` **solo** si el listado se truncó. |
 | `request_context.py` | `contextvars` para `odoo_profile` / `empresa`. Catálogo de taxes Odoo: invalidar **solo** al cambiar profile/empresa (no en cada request). |
 | `api.py` | Conexión XML-RPC/JSON-RPC: `get_odoo_uid` (cache de uid si login es email), `odoo_search_read`, `get_active_odoo_config`, health checks, `odoo_model_field_names` / `odoo_available_fields` (campos existentes por tenant+modelo: pedir uno inexistente falla el `search_read` completo). |
 | `document_types_i18n.py` | Normalización de etiquetas de tipos de comprobante latam; **`is_credit_note_doc_type_name`**. |
@@ -86,6 +90,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 |---------|-----|
 | `back_check.py` | **`get_process`**: lee MySQL `process` por `process_number` (+ `empresa`); **ignora bajas lógicas** (`deleted_at IS NULL`). Excepciones `MySQLUnavailableError`, `ProcessTableError`. |
 | `process_conversions.py` | **`load_process_rows`**, **`save_conversion`**, **`delete_conversion`**, **`get_saved_conversion`**, **`infer_otro_impuesto_indices`**, **`_strip_empty_extra_otro_impuesto_slots`**. Tabla `process_conversions` + FK `export_templates`. |
+| `export_template_store.py` | **`load_export_template`**: `export_templates` + hojas + columnas (`deleted_at` nulo, mismo `company_id` o template global). |
 | `product_label_memory.py` | Tabla `product_label_memory` en `PROCESS_SCHEMA` (staging/prod). **`MemoryChoice`**, **`ensure_product_label_memory_table`**, **`upsert_product_memory_choices`**, **`build_memory_index_for_company`** / **`lookup_in_index`**: última elección confirmada de producto + UM por `partner_id` + etiqueta. Seed / `fetch_recent_conversion_row_lists` **excluye** procesos con `deleted_at` (baja lógica). |
 | `partner_header_memory.py` | **Sin tabla nueva.** Índice diario/cuenta/rubro por `partner_id` desde las últimas ~100 `process_conversions` vía `fetch_recent_conversion_row_lists` (también excluye bajas lógicas). `apply_learned_header_ids` en `parse_process_json` (prioridad sobre padrón; ids deben existir en el catálogo del perfil). |
 | `saved_row_remap.py` | **`remap_saved_rows_to_catalog`**: al abrir conversión guardada, actualiza IDs de producto/tipo doc/etc. si el catálogo cambió. |
@@ -120,7 +125,7 @@ Referencia archivo por archivo. Rutas relativas a `src/facturia_matching/`.
 | Archivo | Rol |
 |---------|-----|
 | `erp_import_webhook.py` | **`notify_erp_import_webhook`**: `POST /api/erp-imports/webhook` a FacturIA (staging/prod) con `import_id` + `token` tras import Odoo. |
-| `archivo.py` | Rutas `archivo_original` / `file_name` → `__fac_archivo`; URL desde `FACTURIA_FILE_URL_TEMPLATE`; backfill en conversiones. |
+| `archivo.py` | Rutas `archivo_original` / `file_name` → `__fac_archivo`; lectura GCS `facturias-sudata` (`conversion` / `conversion-staging`); candidatos con espacio↔`_` en basename; fallback `FACTURIA_FILE_URL_TEMPLATE`. |
 | `__init__.py` | Marcador. |
 
 ---
@@ -177,5 +182,6 @@ Agrupadas por consumidor:
 - **Odoo Aliare/Sudata**: mismas claves con sufijo `_ALIARE` / `_SUDATA`
 - **Comportamiento**: `PADRON_SOURCE`, `PADRON_TAX_SOURCE_PROFILE`, `PADRON_FUZZY_MIN_SCORE`, `PADRON_LIMIT`
 - **UM con IA**: `FACTURIA_UOM_AI_ENABLED`, `DEEPSEEK_API_KEY`, opcional `FACTURIA_UOM_AI_MODEL` (default `deepseek-flash`)
+- **Concepto/Categoría Excel con IA**: `FACTURIA_CONCEPT_AI_ENABLED`, mismo `DEEPSEEK_API_KEY`; memoria = hoja Gastos (`gastos_sheet_gid`). Ver [padron-excel.md](padron-excel.md).
 
 Definición en `infra/config.py` y `odoo/env.py`.

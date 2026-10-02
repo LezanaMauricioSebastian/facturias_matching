@@ -6,7 +6,13 @@ import {
   dropInvalidCatalogIds,
   buildApiQuery,
   currentEmpresa,
+  matchedExcelAlias,
 } from "../utils/index.js";
+import {
+  hydratePepeGastosRows,
+  isPepeGastosMode,
+  PEPE_GASTOS_COL_DEFS,
+} from "../pepe/gastosUi.js";
 import {
   migrateRowKeys,
   propagateAccountDown,
@@ -149,11 +155,40 @@ export async function loadExcelPadronOptions(state, { force = true } = {}) {
     conceptos.push({ id: name, name });
   }
 
+  const formasPago = [];
+  const seenFp = new Set();
+  for (const f of data.formas_pago || []) {
+    const name = String(typeof f === "string" ? f : f?.nombre || f?.name || "").trim();
+    if (!name || seenFp.has(name.toLowerCase())) continue;
+    seenFp.add(name.toLowerCase());
+    formasPago.push({ id: name, name });
+  }
+
+  function namedList(raw) {
+    const out = [];
+    const seen = new Set();
+    for (const x of raw || []) {
+      const name = String(typeof x === "string" ? x : x?.nombre || x?.name || "").trim();
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      out.push({ id: name, name });
+    }
+    return out;
+  }
+
   state.options = {
     ...state.options,
     proveedores,
     productos,
     conceptos,
+    formas_pago: formasPago,
+    meses: namedList(data.meses),
+    sucursales: namedList(data.sucursales),
+    categorias_gasto: namedList(
+      data.categorias_gasto?.length
+        ? data.categorias_gasto
+        : ["Gastos Fijos", "Gastos Var", "CMV", "Financieros", "Impuestos", "Retiro Socios"]
+    ),
     proveedores_cuit_map: cuitMap,
   };
   state.excelPadron = {
@@ -209,6 +244,7 @@ function isExcelVisibleColumnKey(key) {
 
 /**
  * En excel_user: deja solo columnas del cliente + Concepto.
+ * Con ?pepe=1: grilla = layout Gastos (12 cols editables).
  * Fuera de excel: restaura el set completo de bootstrap.
  */
 export function syncExcelVisibleColumns(state) {
@@ -226,8 +262,14 @@ export function syncExcelVisibleColumns(state) {
 
   if (!state._columnsExcelBase?.length) {
     state._columnsExcelBase = state.columns
-      .filter((c) => c.key !== "__excel_concepto")
+      .filter((c) => c.key !== "__excel_concepto" && !String(c.key || "").startsWith("__pepe_"))
       .map((c) => ({ ...c }));
+  }
+
+  if (isPepeGastosMode(state)) {
+    state.columns = PEPE_GASTOS_COL_DEFS.map((c) => ({ ...c }));
+    hydratePepeGastosRows(state);
+    return;
   }
 
   const filtered = state._columnsExcelBase
@@ -265,6 +307,7 @@ export function applyProcesoPayload(state, refs, data, pn, empresa) {
   clearFacturiaRawCache(state);
   if (refs) setActiveProcessTab(refs, "edit");
   state.excelUser = !!(data.excel_user || state.excelUser);
+  if (!state.excelAlias) state.excelAlias = matchedExcelAlias() || "";
   state.excelPadron = data.excel_padron || null;
   if (data.odoo_profile && !state.odooProfileLocked && !state.excelUser) {
     const prof = data.odoo_profile;

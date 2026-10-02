@@ -130,6 +130,36 @@ class TestGoogleSheetsHelpers(unittest.TestCase):
         self.assertIn("facturia-padron@fudo-481618.iam.gserviceaccount.com", msg)
         self.assertIn("Lector", msg)
 
+    def test_friendly_sheet_access_error_429(self):
+        from facturia_matching.padron.google_sheets import friendly_sheet_access_error
+
+        msg = friendly_sheet_access_error(
+            RuntimeError("Google Sheets export HTTP 429 para abc: Too Many"),
+            spreadsheet_id="abc123",
+        )
+        self.assertIn("429", msg)
+        self.assertIn("limitó", msg)
+
+    def test_sheet_cache_stale_on_fetch_error(self):
+        from unittest.mock import patch
+
+        from facturia_matching.padron import sheet_loader as sl
+
+        sl.reset_cache()
+        key = sl._cache_key_private("sid-test", None)
+        sl._store_csv_text(key, "Proveedores\nAcme SA\n")
+        with patch(
+            "facturia_matching.padron.google_sheets.service_account_configured",
+            return_value=True,
+        ), patch(
+            "facturia_matching.padron.google_sheets.fetch_spreadsheet_csv_text",
+            side_effect=RuntimeError("Google Sheets export HTTP 429"),
+        ):
+            rows = sl.fetch_sheet(spreadsheet_id="sid-test", force=True, ttl=1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].get("Proveedores"), "Acme SA")
+        sl.reset_cache()
+
     def test_a1_sheet_range_quotes_spaces(self):
         from facturia_matching.padron.google_sheets import _a1_sheet_range
 

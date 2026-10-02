@@ -58,16 +58,23 @@ def get_bootstrap(
     perfil: Optional[str] = Query(None),
     odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
     odoo_cloud: Optional[str] = Query(None),
+    refresh: Optional[str] = Query(
+        None,
+        description="1/true: fuerza re-fetch del catálogo Odoo (ignora cache TTL).",
+    ),
 ):
     odoo_profile = _resolve_request_odoo_profile(
         perfil, odoo_profile_q, odoo_cloud, empresa=empresa
     )
+    force_catalog = str(refresh or "").strip().lower() in ("1", "true", "yes", "on")
 
     def _boot():
         t0 = time.perf_counter()
         meta = build_metadata_payload()
         t_meta = time.perf_counter()
-        opts = get_options(padron=False)
+        # Cache TTL (+ stale-while-revalidate). Partners nuevos: búsqueda live
+        # GET /api/partners/search o ?refresh=1 en bootstrap.
+        opts = get_options(padron=False, force_catalog=force_catalog)
         t_opts = time.perf_counter()
         payload = {
             "metadata": meta,
@@ -79,8 +86,9 @@ def get_bootstrap(
             "empresa_odoo_labels": empresa_odoo_display_labels(),
         }
         logger.debug(
-            "timing /api/bootstrap profile=%s meta=%.0fms options=%.0fms total=%.0fms",
+            "timing /api/bootstrap profile=%s force=%s meta=%.0fms options=%.0fms total=%.0fms",
             current_odoo_profile(),
+            force_catalog,
             (t_meta - t0) * 1000,
             (t_opts - t_meta) * 1000,
             (time.perf_counter() - t0) * 1000,
@@ -88,6 +96,29 @@ def get_bootstrap(
         return payload
 
     return _with_odoo_profile(odoo_profile, _boot, empresa=empresa)
+
+
+@router.get("/api/partners/search")
+def api_partners_search(
+    q: str = Query("", description="Texto libre o CUIT"),
+    limit: int = Query(50, ge=1, le=100),
+    empresa: Optional[str] = None,
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    """Búsqueda live de proveedores en Odoo (complementa el catálogo precargado)."""
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, empresa=empresa
+    )
+
+    def _search():
+        from facturia_matching.odoo.catalog import search_partners_by_query
+
+        rows = search_partners_by_query(q, limit=limit)
+        return {"query": q, "count": len(rows), "proveedores": rows}
+
+    return _with_odoo_profile(odoo_profile, _search, empresa=empresa)
 
 
 @router.get("/api/options")

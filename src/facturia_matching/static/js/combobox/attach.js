@@ -1,5 +1,6 @@
 import { applyProveedorToCuit } from "../rows/index.js";
-import { findOptionLabel } from "../utils/index.js";
+import { findOptionLabel, filterOptions, optionValue } from "../utils/index.js";
+import { mergePartnerOptions, searchPartnersRemote } from "../api/partners.js";
 import {
   closeOpenCombobox,
   dismissCombobox,
@@ -8,6 +9,8 @@ import {
   positionComboboxList,
   setOpenCombobox,
 } from "./dropdown.js";
+
+const REMOTE_PARTNER_DEBOUNCE_MS = 280;
 
 export function attachComboboxes(tableWrap, state, onSelectionChange) {
   tableWrap.querySelectorAll(".combobox").forEach((root) => {
@@ -20,6 +23,8 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
 
     const getOpts = () => state.options?.[optKey] || [];
     const getValue = () => String(state.rows[r]?.[k] ?? "").trim();
+    let remoteTimer = null;
+    let remoteSeq = 0;
 
     const syncDisplayFromValue = () => {
       const v = getValue();
@@ -36,15 +41,42 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
       input.value = v ? findOptionLabel(getOpts(), v) || v : "";
     };
 
-    const openList = (query) => {
+    const openList = (query, optsOverride = null) => {
       const sameRoot = getOpenCombobox()?.root === root;
       dismissCombobox(!sameRoot);
-      const opts = getOpts();
+      const opts = optsOverride || getOpts();
       const cellVal = getValue();
       setOpenCombobox(openComboboxList(root, input, listEl, opts, cellVal, query));
       const entry = getOpenCombobox();
       if (entry) entry.r = r;
       if (entry) entry.k = k;
+    };
+
+    const scheduleRemotePartnerSearch = (query) => {
+      if (optKey !== "proveedores" || state.excelUser) return;
+      const q = String(query || "").trim();
+      if (q.length < 2) return;
+      if (remoteTimer) window.clearTimeout(remoteTimer);
+      const seq = ++remoteSeq;
+      remoteTimer = window.setTimeout(async () => {
+        try {
+          const remote = await searchPartnersRemote(state, q);
+          if (seq !== remoteSeq) return;
+          if (getOpenCombobox()?.root !== root) return;
+          if (String(input.value || "").trim() !== q) return;
+          mergePartnerOptions(state, remote);
+          const local = filterOptions(getOpts(), q, 50);
+          const byId = new Map();
+          for (const o of [...remote, ...local]) {
+            const id = optionValue(o);
+            if (!id || byId.has(id)) continue;
+            byId.set(id, o);
+          }
+          openList(q, [...byId.values()].slice(0, 50));
+        } catch {
+          /* keep local results */
+        }
+      }, REMOTE_PARTNER_DEBOUNCE_MS);
     };
 
     input.addEventListener("focus", () => {
@@ -55,6 +87,7 @@ export function attachComboboxes(tableWrap, state, onSelectionChange) {
     input.addEventListener("input", () => {
       if (input.disabled) return;
       openList(input.value);
+      scheduleRemotePartnerSearch(input.value);
     });
 
     input.addEventListener("keydown", (e) => {
