@@ -114,9 +114,11 @@ Usá el mismo Python/venv donde está instalado el paquete.
 ### Claude web / ChatGPT (remoto)
 
 1. Deploy matching UI con `FACTURIA_MCP_HTTP=1` y `FACTURIA_MCP_BEARER=<secreto>` (y `FACTURIA_MATCHING_URL=http://127.0.0.1:8080` en el mismo contenedor).
-2. Endpoint público: `https://<tu-matching-ui>/mcp` (Streamable HTTP).
-3. **Claude.ai** → Customize → Connectors → Add custom connector → URL `https://…/mcp` → auth con header Bearer (static credential) = `FACTURIA_MCP_BEARER`.
+2. Endpoint público: `https://<tu-matching-ui>/mcp/` (Streamable HTTP; **barra final**).
+3. **Claude.ai** → Customize → Connectors → Add custom connector → URL `https://…/mcp/` → auth con header Bearer (static credential) = `FACTURIA_MCP_BEARER`.
 4. **ChatGPT** (Business/Enterprise) → Plugins → Add custom MCP server → misma URL + auth.
+
+**odoo-dev (staging):** `https://odoo-dev-5weh2lz2hq-rj.a.run.app/mcp/` con `FACTURIA_MCP_HTTP=1` (Bearer lo imprime `./deploy.sh --dev`).
 
 Standalone (otro Cloud Run solo MCP):
 
