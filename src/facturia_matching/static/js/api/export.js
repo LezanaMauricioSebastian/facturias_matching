@@ -287,9 +287,8 @@ export async function descargarCsv(state, setStatusFn, validateFn, refs) {
 }
 
 /**
- * Genera el mismo CSV que Descargar y lo deja en el portapapeles.
- * Con excel_user: columnas/valores de la grilla (no formato Odoo).
- * Con ?pepe=1: layout Gastos hardcodeado.
+ * Copia la grilla al portapapeles (mismo layout que excel_user / Pepe).
+ * En Odoo no usa el CSV de import (`/api/csv`); eso queda para Descargar.
  * @param {{ includeHeader?: boolean }} [opts] — `false` = solo body (sin fila de encabezados).
  */
 export async function copiarCsv(state, setStatusFn, validateFn, refs, opts = {}) {
@@ -304,24 +303,25 @@ export async function copiarCsv(state, setStatusFn, validateFn, refs, opts = {})
     return;
   }
   await flushAutoSave(state, refs, setStatusFn);
-  setStatusFn("Copiando CSV…");
+  setStatusFn("Copiando…");
   if (refs?.btnCopiarCsv) refs.btnCopiarCsv.disabled = true;
   try {
-    const full = await resolveCsvText(state);
+    // Siempre preview de grilla (labels visibles), también en modo Odoo.
+    const full = buildExcelPreviewCsv(state, { includeHeader: true });
     const text = includeHeader ? full : csvBodyOnly(full);
     if (!text.trim()) {
-      throw new Error("El CSV no tiene filas de datos para copiar.");
+      throw new Error("No hay filas de datos para copiar.");
     }
     await writeClipboardText(text);
     const pepe = usesPepeGastosExport(state);
     setStatusFn(
       includeHeader
         ? pepe
-          ? "CSV Gastos Pepe copiado (con encabezado). Pegalo en la planilla."
-          : "CSV copiado (con encabezado). Pegalo en Excel o Google Sheets (Ctrl+V)."
+          ? "Gastos Pepe copiado (con encabezado). Pegalo en la planilla."
+          : "Copiado (con encabezado). Pegalo en Excel o Google Sheets (Ctrl+V)."
         : pepe
           ? "Filas Gastos Pepe copiadas (sin encabezado). Pegalas en la planilla."
-          : "CSV copiado (solo datos). Pegalo en Excel o Google Sheets (Ctrl+V).",
+          : "Copiado (solo datos). Pegalo en Excel o Google Sheets (Ctrl+V).",
       "ok"
     );
   } catch (e) {
@@ -342,11 +342,15 @@ export async function importarOdoo(state, setStatusFn, validateFn, refs) {
     return;
   }
   const odooTarget = odooImportTargetName(state);
-  const msg =
-    `¿Importar estos comprobantes a ${odooTarget}? ` +
-    "Se crearán facturas en borrador (con OC vinculada si hay match) y se sincronizarán OC e impuestos " +
-    "(líneas y origen Odoo con la selección actual de FacturIA). " +
-    "Si ya existen, se actualizan en lugar de duplicar.";
+  const loadPosted = refs?.selLoadState?.value === "posted";
+  const msg = loadPosted
+    ? `¿Importar estos comprobantes a ${odooTarget}? ` +
+      "Se sincronizarán OC e impuestos y, si eso sale bien, el comprobante queda registrado. " +
+      "Si el sync falla, queda en borrador. Si ya existen, se actualizan en lugar de duplicar."
+    : `¿Importar estos comprobantes a ${odooTarget}? ` +
+      "Se crearán facturas en borrador (con OC vinculada si hay match) y se sincronizarán OC e impuestos " +
+      "(líneas y origen Odoo con la selección actual de FacturIA). " +
+      "Si ya existen, se actualizan en lugar de duplicar.";
   if (!window.confirm(msg)) return;
 
   await flushAutoSave(state, refs, setStatusFn);
@@ -362,6 +366,7 @@ export async function importarOdoo(state, setStatusFn, validateFn, refs) {
           rows: state.rows,
           skip_duplicates: true,
           update_taxes_if_exists: true,
+          target_state: loadPosted ? "posted" : "draft",
           ...apiContextBody(state),
         }),
       }

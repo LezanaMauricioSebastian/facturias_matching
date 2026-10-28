@@ -71,7 +71,7 @@ Si el link es válido pero **no** está compartido a la SA, la UI muestra un err
 
 | Tipo | Columnas | Matching |
 |------|----------|----------|
-| Proveedores | razón social, nombre fantasía, CUIT | CUIT dígitos exactos (100) → fuzzy razón/fantasía |
+| Proveedores | razón social, nombre fantasía, CUIT | Nombre fuerte (sin S.A. / S.R.L. / S.A.S., umbral 90) → CUIT dígitos exactos (100) → fuzzy razón/fantasía. «LA ALEMANA S.R.L» es «La Alemana». Un CUIT de otra empresa no pisa ese nombre |
 | Productos | nombre, unidad de medida | Fuzzy nombre; UoM del padrón + aliases (`kg`/`kilos`, `un`/`uds`) |
 | Conceptos | nombre, categoría opcional | Fuzzy; categoría por lookup (o columnas 8–9 del sheet de referencia) |
 | Forma de pago | nombre | Fuzzy |
@@ -85,6 +85,8 @@ Ver [api.md](api.md#padrón-excel).
 - **Listar hojas** (SA): `POST /api/padron-excel/sheets` con URL `/edit` compartida al SA.
 - **Primera fila (headers)**: `POST /api/padron-excel/sheets/row` (`sheet_gid` / `sheet_title`). Alias: `/sheets/column`.
 - **Entrega por template**: `GET /api/padron-excel/entrega?id_cliente=&proceso=&id_template=` — columnas de `export_templates` (MySQL, `PROCESS_SCHEMA`) con `is_dropdown` y match Excel. Ver [api.md](api.md#entrega-por-template).
+
+La preview de FacturIA (**Previsualización de conversión**) es **una fila por factura** cuando la hoja no tiene columnas `items[]`. Coincidir con (Proveedor, Concepto, Forma de pago, Categoría) no multiplica filas. Si la entrega manda una fila por ítem, FacturIA las alinea por posición: Mes muestra una fecha, la fecha no es la de esa factura y un total vacío hereda el monto de la siguiente. Mes es el mes en español; Fecha es `DD/MM/YYYY`; Monto es el total de esa factura o vacío; Forma de pago no se predice con IA (solo un nombre del padrón). La flechita bajo la celda es el texto crudo: si la celda viene vacía, la UI muestra ese crudo. Detalle y tests: [api.md](api.md#preview-facturia-gastos-una-fila-por-factura).
 - **Matching proceso FacturIA** (padrón al día): `GET /api/padron-excel/proceso/{n}` (`force_refresh` default true).
 - **UI principal**: `GET /api/proceso/{n}?excel_user=1` (o `?pepe=1`) — ver sección arriba.
 
@@ -108,7 +110,7 @@ Generalizable a cualquier cliente Excel: **un** DeepSeek genérico + historial d
 |-------|---------|
 | Flag | `FACTURIA_CONCEPT_AI_ENABLED=1` + `DEEPSEEK_API_KEY` (mismo key que UM) |
 | Modelo | `deepseek-flash` (opcional `FACTURIA_CONCEPT_AI_MODEL`) |
-| Cuándo | Solo en `excel_user` / Pepe. **Un concepto por proveedor** (así clasifican en Gastos): el más frecuente en el historial. Si no hay filas de ese proveedor, una sola elección de IA para todo el comprobante |
+| Cuándo | Cualquier columna del template con **Coincidir con** (una lista del Sheet). Si el texto de la factura ya es un valor de esa lista (mismas letras: mayúsculas, acentos, S.A./S.R.L.), se usa ese valor. Si no, sin tilde **Sugerir** gana el historial de Gastos de esa columna para el proveedor y, si no hay, el fuzzy. Con tilde: un prompt genérico elige un valor de la misma lista y el historial entra como ejemplos. No está atado al nombre Concepto o Categoría. La grilla (`?excel_user=1`) no tiene la tilde. «EFECTIVO» es «Efectivo» y «Pan Frances por mayor» es «Pan Francés por mayor», aunque el historial diga otra cosa. Razón social: «La Alemana» y «LA ALEMANA S.R.L» salen «La Alemana». El historial de otro proveedor (p. ej. Gran Crianza) no se copia a esa factura |
 | Memoria | Pestaña Gastos (`gastos_sheet_gid`, default Pepe `541219037`): concepto mayoritario del proveedor + top-K ejemplos |
 | Listas | Conceptos de Config; categorías = únicos de «Categoría gasto» en Gastos (no solo Fijos/Var) |
 | Categoría sin map Config | Si fuzzy acierta concepto pero no hay categoría → se **infiere** del historial Gastos (mismo concepto/proveedor) |
@@ -119,4 +121,4 @@ Aprendizaje sin modelo custom: el operador corrige en la UI, pega el CSV en Gast
 
 Consumo orden de magnitud (flash): ~1 llamada / comprobante, ~1.5–3k tokens → **≪ USD 0.001**; rematch/F5 con cache = 0 llamadas extra.
 
-Código: `padron/gastos_history.py`, `padron/concept_ai.py`, hook en `core/process.py`. Tests: `tests/test_concept_ai.py`.
+Código: `padron/excel_concepts.py`, `padron/gastos_history.py`, `padron/concept_ai.py`, hook en `core/process.py`. Tests: `tests/test_concept_ai.py`, `tests/test_template_entrega.py`.

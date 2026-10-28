@@ -80,6 +80,47 @@ def extract_erp_import_callback(payload: Optional[Dict[str, Any]]) -> Tuple[Opti
     return import_id, token
 
 
+def _comprobante_identity(item: Any) -> Optional[str]:
+    """Identidad estable de un comprobante en ``created`` o ``updated_taxes``.
+
+    El alta guarda el id en ``id``; el sync de impuestos lo guarda en ``move_id``.
+    """
+    if not isinstance(item, dict):
+        return None
+    move_id = item.get("move_id")
+    if move_id is None:
+        move_id = item.get("id")
+    if move_id is not None and str(move_id).strip():
+        return f"move:{str(move_id).strip()}"
+    doc = str(item.get("document_number") or "").strip()
+    if doc:
+        return f"doc:{doc}"
+    return None
+
+
+def count_imported_comprobantes(
+    created: Any,
+    updated_taxes: Any,
+) -> int:
+    """Comprobantes distintos entre altas y sync de impuestos.
+
+    Un alta también entra en ``updated_taxes``: tras ``account.move.create``
+    siempre corre ``sync_move_taxes_from_group``. Sumar los largos cobra el
+    mismo comprobante dos veces.
+    """
+    created_items = created if isinstance(created, list) else []
+    updated_items = updated_taxes if isinstance(updated_taxes, list) else []
+    identities = set()
+    anonymous = 0
+    for item in created_items + updated_items:
+        identity = _comprobante_identity(item)
+        if identity is None:
+            anonymous += 1
+            continue
+        identities.add(identity)
+    return len(identities) + anonymous
+
+
 def build_webhook_payload(
     *,
     import_id: int,
@@ -91,7 +132,7 @@ def build_webhook_payload(
     created = result.get("created") or []
     updated = result.get("updated_taxes") or []
     errors = result.get("errors") or []
-    imported = len(created) + len(updated)
+    imported = count_imported_comprobantes(created, updated)
     ok = bool(result.get("ok")) and imported > 0 and not errors
     if imported > 0 and errors:
         # Parcial: FacturIA igual marca completed con el conteo importado.

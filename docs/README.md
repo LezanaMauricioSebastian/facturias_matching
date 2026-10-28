@@ -129,7 +129,26 @@ Orden corto: **memoria → vínculo OC por mismo product_id (si no, etiqueta) �
 
 ## Memoria de diario / cuenta / rubro
 
-Al cargar un **proceso nuevo** (sin conversión propia), tras resolver el proveedor se reusa el último `journal_id` / cuenta / rubro guardado en conversiones recientes de la misma empresa+template (`partner_header_memory`, sin tabla dedicada). Prioridad: conversión del proceso → memoria partner → padrón. Ids inválidos para el catálogo activo se ignoran.
+Aprendizaje de cabecera: **proveedor → diario, cuenta y rubro**. No hay aprendizaje de diario a partir del producto.
+
+Módulo: `persistence/partner_header_memory.py`. Se aplica en `parse_process_json` (`core/process.py`) solo cuando el proceso **no** tiene conversión propia.
+
+| Paso | Qué gana |
+|------|----------|
+| 1 | Conversión ya guardada de **este** proceso (`remap_saved_rows_to_catalog`). No se vuelve a aplicar el padrón sobre ids válidos. |
+| 2 | Memoria del partner: última aparición de ese `partner_id` en ~100 `process_conversions` de la misma empresa y template. Primera aparición en la lista (más reciente) gana. |
+| 3 | Fuzzy del padrón (diario / cuenta / rubro del proveedor) |
+
+`apply_learned_header_ids` reemplaza diario, cuenta y rubro del padrón solo si el id aprendido está en el catálogo Odoo del perfil activo. Un id de otro tenant se ignora y queda el del padrón.
+
+Qué se indexa por comprobante (`extract_header_choice`): el primer `journal_id`, `invoice_line_ids/account_id` y `x_studio_category` con id numérico > 0. El rubro solo se reaplica si el perfil soporta `x_studio_category` (Dinner).
+
+No se aprende:
+
+- Diario sugerido solo por el producto, o por producto + proveedor como cadena distinta.
+- El producto en sí. Eso es `product_label_memory` (partner + etiqueta → producto y UM). Ver [purchase-oc.md](import-odoo/purchase-oc.md#aprendizaje-de-producto-procesos-pasados).
+
+Guía de operador: [guia-usuario.md § Aprendizaje](guia-usuario.md#aprendizaje-diario-cuenta-y-rubro). Tests: `tests/test_partner_header_memory.py`.
 
 ## Índice de documentos
 
@@ -144,6 +163,7 @@ Al cargar un **proceso nuevo** (sin conversión propia), tras resolver el provee
 | [tests-y-scripts.md](tests-y-scripts.md) | Tests, fixtures y scripts de diagnóstico |
 | [iva-y-import-odoo.md](iva-y-import-odoo.md) | IVA por comprobante e import a Odoo (detalle profundo) |
 | [padron-excel.md](padron-excel.md) | Padrón Excel/Sheets: fuentes, matching, endpoints |
+| [mcp.md](mcp.md) | MCP contadores: preview → confirmar → borrador Odoo |
 
 ## Árbol del repo (resumido)
 
@@ -156,6 +176,7 @@ facturia-matching-ui/
 │   ├── core/               # lógica de negocio pura
 │   ├── padron/             # matching proveedor + impuestos
 │   ├── odoo/               # XML-RPC, catálogo, import_, OC
+│   ├── mcp/                # servidor MCP (preview/confirm/import draft)
 │   ├── persistence/        # MySQL conversions + back_check
 │   ├── export/             # CSV
 │   ├── infra/              # config, env, paths, DB resolve

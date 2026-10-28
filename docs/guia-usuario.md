@@ -21,10 +21,10 @@ https://odoo-dev-….run.app/?empresa=1&proceso=48&odoo_profile_test=aliare
 ## Flujo habitual
 
 1. Abrí la URL con empresa, proceso y perfil correctos.
-2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica). El **diario inicial** viene del padrón (puede no coincidir con Riccollini; ej. Salta Refrescos). Si lo corregís y esperás autosave, **F5 ya no lo revierte**. Además, la **próxima factura del mismo proveedor** (otro proceso) reusa el último diario/cuenta/rubro que guardaste en una conversión de esa empresa — no hace falta corregirlo otra vez.
+2. Revisá el matching (proveedor, rubro, diario, cuenta, OC si aplica). El diario inicial viene del padrón y, si ese proveedor ya se cargó antes, del [aprendizaje](#aprendizaje-diario-cuenta-y-rubro). Si lo corregís y esperás autosave, **F5 ya no lo revierte**.
 3. Editá lo necesario en la tabla o en el **pie del comprobante** (IVA, otros impuestos).
 4. Esperá el autosave (o guardá explícitamente si la UI lo indica).
-5. **Importar a Odoo** — crea o actualiza borradores y sincroniza impuestos + OC.
+5. **Importar a Odoo** — crea o actualiza comprobantes y sincroniza impuestos + OC. En la barra de la vista, **Cargar en Estado** elige **Borrador** (defecto, no publica) o **Registrado** (publica en Odoo solo si el sync de ese comprobante sale bien).
 
 ## Pie del comprobante (IVA y otros impuestos)
 
@@ -80,11 +80,67 @@ La UI acepta formato argentino: `53.515,40`, `350.000,00`, etc. Al importar, el 
 
 La columna **Subtotal** (cantidad × precio, sin impuestos) está **siempre** visible, justo antes de **Total**.
 
+## Aprendizaje (diario, cuenta y rubro)
+
+El diario **sí entra en el aprendizaje**, junto con la cuenta y el rubro. La clave es el **proveedor** (`partner_id`), no el producto.
+
+Al abrir un proceso **nuevo** (sin conversión propia de ese proceso):
+
+1. El padrón sugiere diario, cuenta y rubro a partir del proveedor.
+2. Si ese mismo proveedor ya tuvo una conversión guardada en la **misma empresa** (y el mismo template), se usa el último diario, la última cuenta y el último rubro de esa conversión.
+3. La conversión más reciente gana. Se miran unas 100 conversiones recientes. No hay tabla aparte: se lee `process_conversions`.
+4. El id aprendido solo se aplica si sigue existiendo en el catálogo de Odoo del perfil activo. Si no, queda la sugerencia del padrón.
+
+Si corregís el diario y el autosave guarda la conversión, la próxima factura de ese proveedor en otro proceso reusa ese diario. Recargar **el mismo** proceso no vuelve al padrón: manda la conversión guardada.
+
+Qué **no** hace este aprendizaje:
+
+- No aprende el diario a partir del producto, ni de un mix producto + proveedor.
+- No aprende el nombre del producto. Eso es otra memoria: proveedor + etiqueta de la línea → producto y UM. Ver [purchase-oc.md](import-odoo/purchase-oc.md#aprendizaje-de-producto-procesos-pasados).
+
+Detalle técnico: [README § Memoria de diario](README.md#memoria-de-diario--cuenta--rubro). Tests: `test_partner_header_memory.py`.
+
+## Crear proveedor o producto (Central Tickets)
+
+Solo con perfil **Aliare** (`odoo_profile_test=aliare`). Dinner y Sudata no muestran esta opción.
+
+Si en **Proveedor** o **Producto** escribís al menos 2 caracteres y ese nombre no está en Odoo, el desplegable ofrece **Crear «nombre»**. Hay que elegir esa fila: no se crea solo por tipear o por modificar la sugerencia.
+
+| Campo | Qué se crea en Odoo |
+|-------|---------------------|
+| Proveedor | `res.partner` con el nombre tipeado, `supplier_rank = 1`, y `vat` = CUIT de la fila si existe |
+| Producto | `product.product` comprable (`purchase_ok`), unidad **Unidades** del tenant |
+
+El id nuevo queda elegido en la fila y entra al catálogo del combobox.
+
+En Proveedor, **Crear** aparece **después** de la búsqueda en vivo (`GET /api/partners/search`), para no duplicar un contacto que ya existe. Si el nombre coincide exactamente con uno del catálogo, no se ofrece crear.
+
+Endpoints: `POST /api/partners` y `POST /api/products`. En otro perfil responden error. Ver [api.md](api.md#post-apipartners).
+
+## Cargar en Estado
+
+En la barra de la vista, a la izquierda de **Solo encabezado**, hay **Cargar en Estado**. Vale para Dinner, Aliare y Sudata. En el modo Excel (sin Odoo) no se muestra.
+
+| Opción en la UI | Valor enviado | Qué hace |
+|-----------------|---------------|----------|
+| **Borrador** (defecto) | `target_state: "draft"` | Crea o actualiza el comprobante y no lo publica. Si el payload no trae `target_state`, es esto. |
+| **Registrado** | `target_state: "posted"` | Igual que borrador y, si el sync de ese comprobante sale bien, llama `account.move.action_post` |
+
+La etiqueta de la UI es **Registrado** (así está en la captura de Central Tickets). En Odoo ese estado es `posted`.
+
+Orden, siempre:
+
+1. Crear o actualizar el comprobante en borrador.
+2. Sincronizar líneas, impuestos y OC.
+3. Solo si el paso 2 no falló y elegiste **Registrado**, publicar.
+
+Si el sync falla, el comprobante queda en borrador y el error va en la respuesta. Un comprobante que **ya** está publicado no se re-sincroniza ni se vuelve a postear: el sync solo corre en `draft`.
+
 ## Import a Odoo — qué esperar
 
 Al confirmar **Importar a Odoo**:
 
-1. Se crean comprobantes en **borrador**: factura (`in_invoice`) o **nota de crédito** (`in_refund`) según el **Tipo de Documento**, o se actualizan si ya existen (mismo proveedor + número).
+1. Se crean comprobantes en el estado elegido en [Cargar en Estado](#cargar-en-estado): factura (`in_invoice`) o **nota de crédito** (`in_refund`) según el **Tipo de Documento**, o se actualizan si ya existen (mismo proveedor + número). Con **Borrador** no se publican.
 2. Se sincronizan líneas de producto, `tax_ids`, vínculos OC y **montos de impuesto** en las líneas `display_type=tax`.
 3. Los montos del **pie** (IVA y otros) **sobreescriben** lo que Odoo calculó por línea — siempre **al final** del sync, después de vincular OC **y** de re-aplicar el precio de la tabla.
 4. Si hay **Orden de Compra** vinculada, el **Precio** de la tabla (FacturIA o edición manual) se re-aplica en Odoo después del vínculo OC — no se usa el precio de la línea de compra. Luego se aplican los montos de impuesto del pie.

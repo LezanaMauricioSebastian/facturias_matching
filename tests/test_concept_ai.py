@@ -261,5 +261,71 @@ class TestConceptAi(unittest.TestCase):
         self.assertIn("CREMOSO", prompt)
 
 
+class TestExcelConceptModes(unittest.TestCase):
+    def test_tilde_ia_no_pisa_el_fuzzy(self):
+        from facturia_matching.padron.excel_concepts import resolve_excel_concepts
+
+        records = [
+            {
+                "proveedor": "ACME",
+                "concepto": "Alquiler",
+                "categoria": "Gastos Fijos",
+                "descripcion": "",
+            }
+        ]
+        with patch.dict(
+            "os.environ",
+            {"FACTURIA_CONCEPT_AI_ENABLED": "1", "DEEPSEEK_API_KEY": "sk-test"},
+            clear=False,
+        ):
+            with patch.object(
+                concept_ai,
+                "_call_deepseek",
+                return_value='[{"i":0,"concepto":"Servicios","categoria":"Gastos Var"}]',
+            ):
+                rows = resolve_excel_concepts(
+                    [{"descripcion": "alquiler local"}],
+                    conceptos=["Servicios", "Alquiler"],
+                    cat_map={},
+                    proveedor="ACME",
+                    gastos_records=records,
+                    gastos_categorias=["Gastos Fijos", "Gastos Var"],
+                    company_id=1,
+                    use_ai=True,
+                    allow_env_ai=False,
+                )
+        self.assertEqual(rows[0]["fuzzy_concepto"], "Alquiler")
+        self.assertEqual(rows[0]["concepto"], "Alquiler")
+        self.assertEqual(rows[0]["ai_concepto"], "Servicios")
+
+    def test_sin_historial_la_grilla_sigue_usando_ia_si_el_env_esta_prendido(self):
+        from facturia_matching.padron.excel_concepts import resolve_excel_concepts
+
+        with patch.dict(
+            "os.environ",
+            {"FACTURIA_CONCEPT_AI_ENABLED": "1", "DEEPSEEK_API_KEY": "sk-test"},
+            clear=False,
+        ):
+            with patch.object(
+                concept_ai,
+                "_call_deepseek",
+                return_value='[{"i":0,"concepto":"Alquiler","categoria":"Gastos Fijos"}]',
+            ):
+                rows = resolve_excel_concepts(
+                    [{"descripcion": "Servicios de limpieza"}],
+                    conceptos=["Servicios", "Alquiler"],
+                    cat_map={},
+                    proveedor="ACME",
+                    gastos_records=[],
+                    gastos_categorias=["Gastos Fijos", "Gastos Var"],
+                    company_id=1,
+                    use_ai=False,
+                    allow_env_ai=True,
+                )
+        self.assertEqual(rows[0]["fuzzy_concepto"], "Servicios")
+        self.assertEqual(rows[0]["concepto"], "Alquiler")
+        self.assertEqual(rows[0]["ai_concepto"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -121,6 +121,68 @@ def api_partners_search(
     return _with_odoo_profile(odoo_profile, _search, empresa=empresa)
 
 
+def _catalog_create_profile_args(
+    payload: Dict[str, Any],
+    perfil: Optional[str],
+    odoo_profile_q: Optional[str],
+    odoo_cloud: Optional[str],
+):
+    empresa = payload.get("empresa")
+    odoo_profile = _resolve_request_odoo_profile(
+        perfil, odoo_profile_q, odoo_cloud, payload, empresa=empresa
+    )
+    return empresa, odoo_profile
+
+
+@router.post("/api/partners")
+def api_partners_create(
+    payload: Dict[str, Any],
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    """Crea res.partner en Odoo Aliare con el nombre tipeado y el CUIT de la fila."""
+    from facturia_matching.odoo.catalog_create import CatalogCreateError, create_supplier_partner
+
+    empresa, odoo_profile = _catalog_create_profile_args(
+        payload, perfil, odoo_profile_q, odoo_cloud
+    )
+
+    def _create():
+        try:
+            return create_supplier_partner(
+                str(payload.get("name") or ""),
+                str(payload.get("vat") or payload.get("cuit") or ""),
+            )
+        except CatalogCreateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _with_odoo_profile(odoo_profile, _create, empresa=empresa)
+
+
+@router.post("/api/products")
+def api_products_create(
+    payload: Dict[str, Any],
+    perfil: Optional[str] = Query(None),
+    odoo_profile_q: Optional[str] = Query(None, alias="odoo_profile_test"),
+    odoo_cloud: Optional[str] = Query(None),
+):
+    """Crea product.product comprable en Odoo Aliare con el nombre tipeado."""
+    from facturia_matching.odoo.catalog_create import CatalogCreateError, create_purchase_product
+
+    empresa, odoo_profile = _catalog_create_profile_args(
+        payload, perfil, odoo_profile_q, odoo_cloud
+    )
+
+    def _create():
+        try:
+            return create_purchase_product(str(payload.get("name") or ""))
+        except CatalogCreateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _with_odoo_profile(odoo_profile, _create, empresa=empresa)
+
+
 @router.get("/api/options")
 def api_options(
     padron: bool = Query(False, description="Si true, carga opciones grandes desde DB (puede tardar)."),

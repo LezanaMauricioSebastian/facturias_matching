@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from facturia_matching.facturia.erp_import_webhook import (
     build_webhook_payload,
+    count_imported_comprobantes,
     extract_erp_import_callback,
     notify_erp_import_webhook,
     resolve_erp_import_webhook_url,
@@ -70,6 +71,42 @@ class TestExtractAndBuild(unittest.TestCase):
         self.assertEqual(body["comprobantes_importados"], 2)
         self.assertEqual(body["import_id"], 3)
         self.assertEqual(body["token"], "tok")
+
+    def test_create_plus_tax_sync_counts_once(self):
+        """El alta también queda en updated_taxes; no se cobra dos veces."""
+        body = build_webhook_payload(
+            import_id=9,
+            token="tok",
+            import_result={
+                "ok": True,
+                "created": [
+                    {
+                        "id": 55,
+                        "document_number": "0001-00001234",
+                        "state": "draft",
+                    }
+                ],
+                "updated_taxes": [
+                    {
+                        "move_id": 55,
+                        "document_number": "0001-00001234",
+                        "lines_updated": 1,
+                    }
+                ],
+                "errors": [],
+            },
+        )
+        self.assertEqual(body["comprobantes_importados"], 1)
+        self.assertEqual(body["status"], "completed")
+
+    def test_existing_update_still_counts(self):
+        self.assertEqual(
+            count_imported_comprobantes(
+                [],
+                [{"move_id": 7, "document_number": "0002-1"}],
+            ),
+            1,
+        )
 
     def test_build_failed(self):
         body = build_webhook_payload(

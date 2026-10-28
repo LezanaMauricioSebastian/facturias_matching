@@ -14,6 +14,7 @@ def import_rows_to_odoo(
     *,
     skip_duplicates: bool = True,
     update_taxes_if_exists: bool = True,
+    target_state: str = "draft",
 ) -> Dict[str, Any]:
 ```
 
@@ -25,6 +26,7 @@ def import_rows_to_odoo(
 |-----------|---------|--------|
 | `skip_duplicates` | `True` | Busca factura existente por partner + doc |
 | `update_taxes_if_exists` | `True` | Si existe, `sync_move_taxes_from_group` en lugar de skip |
+| `target_state` | `"draft"` | `"posted"` publica con `action_post` solo tras un sync ok. Otro valor deja el borrador |
 
 **Respuesta exitosa (campos principales):**
 

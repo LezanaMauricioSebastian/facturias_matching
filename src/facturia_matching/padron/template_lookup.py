@@ -36,11 +36,56 @@ def lookup_key(col: Dict[str, Any]) -> Optional[LookupKey]:
 
 
 def suggest_enabled(col: Dict[str, Any]) -> bool:
-    """Tilde de sugerencia: llenar con matching + historial Gastos + IA."""
+    """Tilde de sugerencia.
+
+    En concepto y categoría del caso Excel: tildado = IA, destildado = fuzzy.
+    En el resto: tildado llena con el matching; destildado no autocompleta.
+    """
     try:
         return int(col.get("lookup_suggest") or 0) != 0
     except (TypeError, ValueError):
         return False
+
+
+def template_wants_concept_ai(template: Dict[str, Any]) -> bool:
+    """Hay alguna columna de concepto o categoría con la tilde de IA."""
+    for sheet in template.get("sheets") or []:
+        for col in sheet.get("columns") or []:
+            if suggest_enabled(col) and column_role(col) in ("concepto", "categoria"):
+                return True
+    return False
+
+
+def concept_choice(
+    col: Dict[str, Any],
+    header_excel: Optional[Dict[str, Any]],
+    line_excel: Optional[Dict[str, Any]],
+) -> Tuple[bool, str]:
+    """(aplica, valor) para concepto/categoría según la tilde.
+
+    Tildado lee la sugerencia IA. Destildado lee el fuzzy. Si el fuzzy no
+    vino en la fila, se usa el valor de matching ya calculado.
+    """
+    role = column_role(col)
+    if role not in ("concepto", "categoria"):
+        return False, ""
+    ai = suggest_enabled(col)
+    if role == "concepto":
+        primary = "__excel_concepto_ai" if ai else "__excel_concepto_fuzzy"
+        legacy = "__excel_concepto"
+    else:
+        primary = "__excel_categoria_ai" if ai else "__excel_categoria_fuzzy"
+        legacy = "__excel_categoria"
+    for source in (line_excel, header_excel):
+        if not isinstance(source, dict):
+            continue
+        if primary in source:
+            return True, str(source.get(primary) or "").strip()
+        if not ai and legacy in source:
+            return True, str(source.get(legacy) or "").strip()
+    if ai:
+        return True, ""
+    return False, ""
 
 
 def column_role(col: Dict[str, Any]) -> str:
@@ -81,10 +126,28 @@ def pipeline_suggestion(
     if not field:
         return ""
     source = header_excel if role in ("proveedor", "forma_pago") else line_excel
-    hit = str((source or {}).get(field) or "").strip()
+    hit = _pipeline_hit(role, field, source)
     if hit:
         return hit
-    return str((header_excel or {}).get(field) or "").strip()
+    if source is not header_excel:
+        return _pipeline_hit(role, field, header_excel)
+    return ""
+
+
+def _pipeline_hit(role: str, field: str, source: Optional[Dict[str, Any]]) -> str:
+    """Valor matcheado. Forma de pago con score 0 es el texto crudo (no está en el padrón)."""
+    hit = str((source or {}).get(field) or "").strip()
+    if not hit or role != "forma_pago":
+        return hit
+    if "__excel_forma_pago_score" not in (source or {}):
+        return hit
+    try:
+        score = float((source or {}).get("__excel_forma_pago_score") or 0)
+    except (TypeError, ValueError):
+        score = 0.0
+    if score <= 0:
+        return ""
+    return hit
 
 
 def suggest_for(col: Dict[str, Any], raw_key: str, index: Optional[LookupIndex]) -> str:
@@ -147,6 +210,20 @@ def build_lookup_index(template: Dict[str, Any]) -> LookupIndex:
     return index
 
 
+def integration_can_list(row: Dict[str, Any]) -> bool:
+    """La lista es el spreadsheet guardado en la fila, no el id de la conexión.
+
+    Reconectar el Sheet borra la fila y crea otra, pero el id viejo sigue
+    teniendo el mismo spreadsheet_id. `deleted_at` no vacía el desplegable.
+    `is_active = 0` sí: el cliente apagó esa fuente.
+    """
+    if not str(row.get("spreadsheet_id") or "").strip():
+        return False
+    if row.get("is_active") is not None and int(row.get("is_active") or 0) == 0:
+        return False
+    return True
+
+
 def _load_integrations(ids: Sequence[int]) -> Dict[int, Dict[str, Any]]:
     if not ids:
         return {}
@@ -158,7 +235,8 @@ def _load_integrations(ids: Sequence[int]) -> Dict[int, Dict[str, Any]]:
         try:
             cur.execute(
                 f"""
-                SELECT id, spreadsheet_id, sheet_title, sheet_gid, is_active, deleted_at
+                SELECT id, company_id, spreadsheet_id, sheet_title, sheet_gid,
+                       is_active, deleted_at
                 FROM {table}
                 WHERE id IN ({placeholders})
                 """,
@@ -166,9 +244,7 @@ def _load_integrations(ids: Sequence[int]) -> Dict[int, Dict[str, Any]]:
             )
             out: Dict[int, Dict[str, Any]] = {}
             for row in cur.fetchall() or []:
-                if row.get("deleted_at") is not None:
-                    continue
-                if row.get("is_active") is not None and int(row.get("is_active") or 0) == 0:
+                if not integration_can_list(row):
                     continue
                 out[int(row["id"])] = row
             return out

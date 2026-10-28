@@ -261,6 +261,37 @@ def _import_config_error_message() -> str:
     )
 
 
+def _normalize_target_state(raw: Any) -> str:
+    """`posted` registra el comprobante; cualquier otro valor deja el borrador."""
+    s = str(raw or "").strip().lower()
+    if s in {"posted", "registrado"}:
+        return "posted"
+    return "draft"
+
+
+def _try_post_move(
+    config: Dict[str, Any],
+    move_id: int,
+    doc_number: str,
+    errors: List[Dict[str, Any]],
+) -> bool:
+    """Publica tras un sync ok. Si falla, el comprobante queda en borrador y entra en errors."""
+    try:
+        odoo_execute_kw_with_config(
+            config, "account.move", "action_post", [[int(move_id)]]
+        )
+        return True
+    except Exception as post_err:
+        errors.append(
+            {
+                "document_number": doc_number,
+                "move_id": move_id,
+                "error": f"Factura sincronizada pero no se pudo registrar: {post_err}",
+            }
+        )
+        return False
+
+
 def _import_odoo_target_label() -> str:
     if is_odoo_sudata_profile():
         return "Odoo Sudata"
@@ -274,13 +305,16 @@ def import_rows_to_odoo(
     *,
     skip_duplicates: bool = True,
     update_taxes_if_exists: bool = True,
+    target_state: str = "draft",
 ) -> Dict[str, Any]:
     """
     Crea facturas de proveedor en borrador en Odoo (Dinner o Aliare según perfil).
     Tras crear (o si ya existe y update_taxes_if_exists=True), sincroniza OC, impuestos
     y montos de líneas tax con las filas UI actuales.
+    Si target_state es posted, publica con action_post solo después de un sync ok.
     Devuelve {ok, created, updated_taxes, skipped, errors}.
     """
+    post_after_sync = _normalize_target_state(target_state) == "posted"
     config = get_odoo_import_config()
     if not is_odoo_config_ready(config):
         return {
@@ -325,7 +359,12 @@ def import_rows_to_odoo(
                         )
                         if group_warnings:
                             result.setdefault("warnings", []).extend(group_warnings)
-                        updated_taxes.append(_tax_sync_summary(doc_number, result))
+                        summary = _tax_sync_summary(doc_number, result)
+                        if post_after_sync and _try_post_move(
+                            config, int(existing["id"]), doc_number, errors
+                        ):
+                            summary["state"] = "posted"
+                        updated_taxes.append(summary)
                     else:
                         skipped.append(
                             {
@@ -353,7 +392,8 @@ def import_rows_to_odoo(
                 tax_result = sync_move_taxes_from_group(config, move_id, group)
                 if group_warnings:
                     tax_result.setdefault("warnings", []).extend(group_warnings)
-                updated_taxes.append(_tax_sync_summary(doc_number, tax_result))
+                summary = _tax_sync_summary(doc_number, tax_result)
+                updated_taxes.append(summary)
             except Exception as tax_err:
                 errors.append(
                     {
@@ -362,6 +402,12 @@ def import_rows_to_odoo(
                         "error": f"Factura creada pero falló sync de impuestos: {tax_err}",
                     }
                 )
+            else:
+                if post_after_sync and _try_post_move(
+                    config, move_id, doc_number, errors
+                ):
+                    created[-1]["state"] = "posted"
+                    summary["state"] = "posted"
         except Exception as e:
             errors.append({"document_number": doc_number, "error": str(e)})
 

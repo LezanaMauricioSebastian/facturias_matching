@@ -25,7 +25,7 @@ ES modules servidos en `/js/` sin bundler. Punto de entrada: `index.html` → `m
 | `proceso.js` | **`fetchProcesoPayload`** (solo GET), **`buscarProceso`** (acepta `prefetched`), **`revertirOriginal`**. |
 | `procesoShared.js` | Helpers compartidos (armar query `odoo_profile`, aplicar respuesta a state). **`syncPurchaseColumns`**: muestra columnas UM/OC si `show_purchase_columns` o si las filas ya traen `__um_empresa` / `__oc_line_id` (reload). UM se inserta entre Cantidad y Precio; cant. pedida/recibida y notas OC quedan antes de Subtotal/Total. |
 | `autoSave.js` | Debounce PUT `/api/proceso/{n}/conversion`; indicador `dirty` / `saveStatus`. |
-| `export.js` | **`descargarCsv`**, **`copiarCsv`**. Con `excel_user`: CSV preview; con `?pepe=1`: layout Gastos desde grilla editable; sin excel: `POST /api/csv`. |
+| `export.js` | **`descargarCsv`**, **`copiarCsv`**. Descargar: con `excel_user` CSV preview; con `?pepe=1` layout Gastos; sin excel `POST /api/csv`. Copiar: siempre preview de grilla (labels visibles) para pegar en Excel; botón «Copiar» (sin texto CSV). |
 | `pepe/gastosUi.js` | Columnas editables Gastos Pepe + hydrate (Estado default Pagado). |
 | `purchase.js` | POST `select-oc`, `rematch-purchase`, `rematch-uom` (UM al cambiar producto o al elegir UM); GET `product-uoms`; cache `state.uomOptionsByProductId`. Con `excel_user`: **Restaurar original** hace `/revert`; **Re-matchear** (`btnRematchExcel` → `rematchearExcelPadron`) relee el Sheet. |
 
@@ -107,6 +107,10 @@ Ver también [iva-y-import-odoo.md](iva-y-import-odoo.md).
 
 Dropdown searchable para proveedor, producto, cuenta, etc. Filtro por **tokens** (todos deben aparecer, orden libre) + CUIT/VAT: p. ej. `gordo dan alan` encuentra `GORDON DAN ALAN`. En **Proveedor**, con ≥2 caracteres también consulta `GET /api/partners/search` (Odoo live) y mergea resultados al catálogo en memoria.
 
+En perfil **Aliare**, si el texto (≥2 caracteres) no coincide exactamente con un nombre del catálogo, la lista agrega **Crear «nombre»** (`api/catalogCreate.js` → `POST /api/partners` o `POST /api/products`). En Proveedor esa fila aparece recién cuando termina la búsqueda remota. El CUIT de la fila viaja como `vat`. El id creado queda en `partner_id` o `invoice_line_ids/product_id`.
+
+La barra de la vista (`#loadStateToggle` / `#selLoadState`) manda `target_state` `draft` (Borrador, defecto) o `posted` (Registrado) en `POST /api/odoo/import`. Oculta en modo Excel.
+
 | Archivo | Rol |
 |---------|-----|
 | `index.js` | API pública. |
@@ -180,7 +184,7 @@ flowchart LR
 
 1. **Carga**: bootstrap → opciones + columnas → usuario busca proceso → `state.rows` + `purchaseMatching`. Deep-link (`?proceso=`): fetch bootstrap ∥ proceso; apply en ese orden.
 2. **Edición celda**: handler → actualiza row → `syncFacIvaMontosFromLines` → re-render fila/comprobante → autosave.
-3. **Export**: `validateRows` → con `excel_user` CSV de preview en cliente; si no, `POST /api/csv` o `/api/odoo/import`.
+3. **Export**: `validateRows` → Copiar = preview de grilla al portapapeles (también en Odoo); Descargar = con `excel_user` preview, si no `POST /api/csv`; Import = `/api/odoo/import`.
 
 ---
 
@@ -188,7 +192,7 @@ flowchart LR
 
 | Archivo | Rol |
 |---------|-----|
-| `static/html/index.html` | Shell: input proceso, botones (Copiar CSV con menú con/sin encabezado), toggle Lista/Carrusel, nav carrusel, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
+| `static/html/index.html` | Shell: input proceso, botones (Copiar con menú con/sin encabezado → preview de grilla; Descargar CSV → import Odoo o preview excel), toggle Lista/Carrusel, nav carrusel, pestañas Edición/FacturIA (dev), `#tableWrap`, scripts. |
 | `static/html/padron_excel.html` | UI padrón Excel/Sheets (clientes sin Odoo). `?embed=1&proceso=` para iframe FacturIA. Deep link UI principal: `/?excel_user=1&proceso=` (ver [padron-excel.md](padron-excel.md)). |
 | `static/js/padronExcel/app.js` | Config fuentes (pub / spreadsheet_id+SA / upload), CRUD facturas, deep-link proceso → match. |
 | `static/js/facturiaRaw/tab.js` | Pestaña **FacturIA** (solo `ui_env=dev`): `GET .../facturia-raw`. |

@@ -84,13 +84,18 @@ def detect_gastos_header(raw_rows: List[List[str]]) -> Optional[Tuple[int, Dict[
     return None
 
 
-def parse_gastos_records(raw_rows: List[List[str]]) -> List[Dict[str, str]]:
-    """Filas normalizadas {proveedor, concepto, categoria, descripcion}."""
+def parse_gastos_records(raw_rows: List[List[str]]) -> List[Dict[str, Any]]:
+    """Filas normalizadas. ``valores`` guarda todas las columnas del header.
+
+    Así el historial sirve para cualquier columna del template, no solo
+    concepto y categoría.
+    """
     detected = detect_gastos_header(raw_rows)
     if not detected:
         return []
     header_idx, cols = detected
-    out: List[Dict[str, str]] = []
+    header_names = [_norm_header(c) for c in raw_rows[header_idx]]
+    out: List[Dict[str, Any]] = []
     for row in raw_rows[header_idx + 1 :]:
         if not row:
             continue
@@ -105,12 +110,18 @@ def parse_gastos_records(raw_rows: List[List[str]]) -> List[Dict[str, str]]:
         conc = cell("concepto")
         if not prov and not conc:
             continue
+        valores: Dict[str, str] = {}
+        for i, name in enumerate(header_names):
+            if not name or i >= len(row):
+                continue
+            valores[name] = str(row[i] or "").strip()
         out.append(
             {
                 "proveedor": prov,
                 "concepto": conc,
                 "categoria": cell("categoria"),
                 "descripcion": cell("descripcion"),
+                "valores": valores,
             }
         )
     return out

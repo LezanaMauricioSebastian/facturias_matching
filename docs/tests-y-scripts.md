@@ -45,6 +45,7 @@ Se omiten o fallan gracefully si no hay `.env` con BDs.
 | `test_db_resolve.py` / `test_infra_db_resolve.py` | Resolución nombre DB Postgres/MySQL |
 | `test_routes_odoo_cloud.py` | Rutas con perfil sudata / odoo_cloud |
 | `test_rubro_profile.py` | Columnas rubro según perfil |
+| `test_mcp_confirm.py` | MCP: preview/gaps + gate `confirmation_token` (import draft bloqueado sin token) |
 
 ### Integración
 
@@ -75,7 +76,7 @@ npm run test:js
 | `tests/js/rows_migration.test.mjs` | Migración de filas (cuenta, proveedor) |
 | `tests/js/numbers.test.mjs` | Parseo de montos |
 | `tests/js/validateRows.test.mjs` | Validación pre-export (partner, journal, IVA por modo, cuenta, fechas) |
-| `tests/js/csvCopy.test.mjs` | Copiar CSV: strip de encabezado (`csvBodyOnly`) + preview excel_user + layout Gastos Pepe |
+| `tests/js/csvCopy.test.mjs` | Copiar (preview grilla): strip de encabezado (`csvBodyOnly`) + preview excel_user/Odoo + layout Gastos Pepe |
 | `tests/js/filterOptions.test.mjs` | Combobox: tokens + CUIT (`gordo dan alan` → `GORDON DAN ALAN`) |
 | `tests/js/loadFixtures.mjs` | Carga `tax_scenarios.json` (helper, no test) |
 | `tests/js/exportTotals.mjs` | Script CLI para paridad Python/JS (`node tests/js/exportTotals.mjs`) |

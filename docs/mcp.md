@@ -1,0 +1,112 @@
+# MCP FacturIA Matching (contadores)
+
+Servidor MCP que orquesta el matching UI desde ChatGPT / Claude / Cursor: **preview → el contador confirma → borrador Odoo**.
+
+No reemplaza OCR de FacturIA ni el pipeline de impuestos. Llama la API REST de este proyecto.
+
+## Flujo
+
+```mermaid
+sequenceDiagram
+  participant User as Contador
+  participant Chat as ChatGPT_o_Claude
+  participant MCP as facturia_mcp
+  participant API as Matching_UI
+  participant Odoo as Odoo
+
+  User->>Chat: process_number (proceso ya en FacturIA)
+  Chat->>MCP: preview_invoice_match
+  MCP->>API: GET /api/proceso/N
+  API-->>MCP: rows matcheadas
+  MCP-->>Chat: resumen + preview_id + gaps
+  Chat->>User: Datos correctos?
+  User->>Chat: Si
+  Chat->>MCP: confirm_invoice_preview
+  MCP-->>Chat: confirmation_token
+  Chat->>MCP: import_odoo_draft
+  MCP->>API: POST /api/odoo/import target_state=draft
+  API->>Odoo: borrador
+```
+
+Sin `confirmation_token` válido, `import_odoo_draft` **no escribe** en Odoo (gate server-side).
+
+## Tools
+
+| Tool | Efecto |
+|------|--------|
+| `odoo_health` | `GET /api/odoo/health` |
+| `search_proveedor` | `GET /api/partners/search` |
+| `preview_invoice_match` | Carga proceso, arma resumen, emite `preview_id` |
+| `confirm_invoice_preview` | Contador OK → `confirmation_token` (TTL corto, un uso) |
+| `import_odoo_draft` | Import **solo** `target_state=draft` con token |
+
+Opcional en import: `import_id` + `token` del deep-link FacturIA (webhook erp-imports), igual que la UI.
+
+## Requisitos
+
+1. Matching UI corriendo (`uvicorn` / deploy), p.ej. `http://127.0.0.1:8080`.
+2. Proceso FacturIA ya existente (`process_number`) con `json_data` (OCR hecho).
+3. Dependencia MCP: `pip install 'mcp>=1.2.0'` (o `pip install -e '.[mcp]'`).
+
+Env:
+
+| Variable | Default | Uso |
+|----------|---------|-----|
+| `FACTURIA_MATCHING_URL` | `http://127.0.0.1:8080` | Base del matching UI |
+| `FACTURIA_MCP_SECRET` | random | Firma de tokens de confirmación |
+| `FACTURIA_MCP_TRANSPORT` | `stdio` | Transporte FastMCP |
+
+## Cómo correr
+
+```bash
+pip install -e '.[mcp]'
+export FACTURIA_MATCHING_URL=http://127.0.0.1:8080
+python -m facturia_matching.mcp
+# o: facturia-mcp
+```
+
+### Claude Desktop / Cursor (stdio)
+
+```json
+{
+  "mcpServers": {
+    "facturia-matching": {
+      "command": "python",
+      "args": ["-m", "facturia_matching.mcp"],
+      "env": {
+        "FACTURIA_MATCHING_URL": "http://127.0.0.1:8080",
+        "FACTURIA_MCP_SECRET": "cambiar-en-prod"
+      }
+    }
+  }
+}
+```
+
+Usá el mismo Python/venv donde está instalado el paquete.
+
+### ChatGPT
+
+Hace falta un host MCP **remoto** (HTTP/SSE) o Actions que apunten a los mismos endpoints. El transporte default de este repo es **stdio** (desktop). Remote hosting es un paso aparte de deploy.
+
+## Qué no hace (aún)
+
+- Subir la foto cruda a FacturIA (el proceso tiene que existir; OCR = FacturIA).
+- Publicar comprobantes (`posted`).
+- Editar filas vía MCP (hoy: preview de lo cargado; correcciones finas siguen en la UI o regenerando proceso).
+
+## Código
+
+| Módulo | Rol |
+|--------|-----|
+| `mcp/server.py` | Tools FastMCP + instrucciones |
+| `mcp/api_client.py` | HTTP al matching UI |
+| `mcp/preview.py` | Resumen / gaps |
+| `mcp/confirm.py` | Store preview + token de un uso |
+
+Tests: `tests/test_mcp_confirm.py`.
+
+## Pedidos a FacturIA (si quieren “mando la foto al chat”)
+
+Con lo de hoy alcanza: **process_number** → matching → confirm → draft.
+
+Para UX foto-en-chat de punta a punta, conviene que FacturIA exponga (o documente) un endpoint autenticado de **alta de proceso desde archivo** y devuelva el `process_id`. El MCP ya puede encadenar preview/confirm/import sobre ese id. El webhook erp-imports existente se reutiliza si el chat trae `import_id`/`token`.

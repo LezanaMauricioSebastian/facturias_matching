@@ -345,6 +345,7 @@ export function applyProcesoPayload(state, refs, data, pn, empresa) {
 /** Oculta Import Odoo / muestra Re-matchear cuando excel_user=1. Restaurar original queda en ambos modos. */
 export function applyExcelUserChrome(state, refs) {
   if (!state?.excelUser) {
+    if (refs?.loadStateToggle) refs.loadStateToggle.hidden = false;
     if (refs?.btnOdooImport) refs.btnOdooImport.hidden = false;
     if (refs?.btnRevertir) {
       refs.btnRevertir.textContent = "Restaurar original";
@@ -358,6 +359,7 @@ export function applyExcelUserChrome(state, refs) {
     syncExcelConceptoColumn(state);
     return;
   }
+  if (refs?.loadStateToggle) refs.loadStateToggle.hidden = true;
   if (refs?.btnOdooImport) {
     refs.btnOdooImport.hidden = true;
     refs.btnOdooImport.disabled = true;

@@ -348,6 +348,24 @@ def sheet_first_row(body: SheetRowRequest):
         raise HTTPException(400, f"Error leyendo fila: {e}") from e
 
 
+def _gastos_records(company_id: int):
+    """Historial de Gastos (cacheado). Vacío si el cliente no tiene Sheet."""
+    try:
+        from facturia_matching.padron.gastos_history import load_gastos_history
+        from facturia_matching.padron.padron_config_store import get_config
+
+        cfg = get_config(int(company_id)) or {}
+        sid = str(cfg.get("spreadsheet_id") or "").strip()
+        if not sid:
+            return []
+        return load_gastos_history(
+            spreadsheet_id=sid,
+            gid=str(cfg.get("gastos_sheet_gid") or "").strip() or None,
+        )
+    except Exception:
+        return []
+
+
 @router.get("/entrega")
 def entrega_template(
     id_cliente: int = Query(..., description="company_id FacturIA (el ?empresa= de Odoo)"),
@@ -425,6 +443,8 @@ def entrega_template(
             excel_rows,
             padron,
             lookups=build_lookup_index(template),
+            gastos_records=_gastos_records(int(id_cliente)),
+            company_id=int(id_cliente),
         ),
         "sheet_error": (purchase or {}).get("sheet_error") or (padron or {}).get("sheet_error"),
     }

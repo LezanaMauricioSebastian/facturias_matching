@@ -85,6 +85,35 @@ describe("buildExcelPreviewCsv", () => {
   });
 });
 
+describe("buildExcelPreviewCsv (modo Odoo / Copiar)", () => {
+  const state = {
+    excelUser: false,
+    columns: [
+      { key: "partner_id", label: "Proveedor", type: "selection", options_key: "proveedores" },
+      { key: "invoice_line_ids/name", label: "Descripción", type: "text" },
+      { key: "__add_otro_impuesto", label: "+", type: "header_action" },
+    ],
+    options: {
+      proveedores: [{ id: "42", name: "Proveedor Odoo SA" }],
+    },
+    rows: [
+      {
+        partner_id: "42",
+        "invoice_line_ids/name": "Servicio",
+      },
+    ],
+  };
+
+  it("usa labels visibles de la grilla (no ids / no CSV import Odoo)", () => {
+    const csv = buildExcelPreviewCsv(state, { includeHeader: true });
+    assert.match(csv, /Proveedor,Descripción/);
+    assert.match(csv, /Proveedor Odoo SA/);
+    assert.match(csv, /Servicio/);
+    assert.doesNotMatch(csv, /(?:^|,)42(?:,|$)/);
+    assert.doesNotMatch(csv, /tax_ids|__add_otro_impuesto/);
+  });
+});
+
 describe("Pepe Gastos CSV", () => {
   const state = {
     excelUser: true,

@@ -72,12 +72,12 @@ export function getOpenCombobox() {
   return openCombobox;
 }
 
-function renderListItems(listEl, items, selectedValue) {
-  if (!items.length) {
+function renderListItems(listEl, items, selectedValue, createName) {
+  const parts = [];
+  if (!items.length && !createName) {
     listEl.innerHTML = '<div class="combobox-empty">Sin resultados</div>';
     return;
   }
-  const parts = [];
   for (const o of items) {
     const ov = optionValue(o);
     const lab = optionLabel(o);
@@ -86,12 +86,17 @@ function renderListItems(listEl, items, selectedValue) {
       `<button type="button" class="combobox-item${sel}" data-value="${escapeAttr(ov)}">${escapeAttr(lab)}</button>`
     );
   }
+  if (createName) {
+    parts.push(
+      `<button type="button" class="combobox-item combobox-item-create" data-create="1" data-name="${escapeAttr(createName)}">Crear «${escapeAttr(createName)}»</button>`
+    );
+  }
   listEl.innerHTML = parts.join("");
 }
 
-export function openComboboxList(root, input, listEl, opts, cellVal, query) {
+export function openComboboxList(root, input, listEl, opts, cellVal, query, createName) {
   const items = filterOptions(opts, query);
-  renderListItems(listEl, items, cellVal);
+  renderListItems(listEl, items, cellVal, createName || "");
   listEl.hidden = false;
   root.classList.add("combobox-open");
   positionComboboxList(listEl, input);

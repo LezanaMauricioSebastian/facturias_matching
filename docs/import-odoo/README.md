@@ -15,6 +15,7 @@ Documentación del paquete que convierte filas de la UI en facturas o notas de c
 3. Refresca y sanea vínculos OC contra Odoo.
 4. Crea borradores nuevos o actualiza duplicados (partner + número de documento).
 5. Sincroniza encabezado, líneas de producto, `tax_ids`, vínculos OC, precio/cantidad final y **después** montos en líneas `display_type=tax` (IVA / IIBB del pie).
+6. Si `target_state=posted` (**Registrado** en la UI) y el sync de ese comprobante salió bien, publica con `action_post`. El defecto es borrador.
 
 ---
 

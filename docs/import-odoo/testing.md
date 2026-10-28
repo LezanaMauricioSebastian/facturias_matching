@@ -33,6 +33,8 @@ python -m unittest discover -s tests -p 'test_*.py'
 | Archivo | Foco respecto a `import_` |
 |---------|---------------------------|
 | `test_odoo_import_grouping.py` | Agrupación, validación, `build_move_vals`, NC → `in_refund`, due date / maturity |
+| `test_odoo_import_target_state.py` | `target_state=posted` llama `action_post` solo tras sync ok; `draft` no publica |
+| `test_catalog_create.py` | Alta Aliare: partner con nombre + CUIT; UM Unidades |
 | `test_odoo_import_taxes.py` | `tax_ids`, montos esperados, IIBB, reapply de tax amounts, `ensure_missing_tax_lines` |
 | `test_odoo_import_purchase.py` | Vínculo OC, sanitize/dedupe, planes product/purchase, reapply precio/cantidad, overwrite precio OC, batch write |
 | `test_purchase_matching_uom.py` | Qty/UM, scaling, aliases, `TestUomOdoo19Model` |

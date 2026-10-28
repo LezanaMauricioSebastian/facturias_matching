@@ -565,6 +565,12 @@ td .combobox-input:focus,
   background: rgba(37, 99, 235, 0.08);
 }
 
+.combobox-item-create {
+  color: #1d4ed8;
+  font-weight: 600;
+  border-top: 1px solid var(--line);
+}
+
 .combobox-empty {
   padding: 10px;
   font-size: 12px;
@@ -1423,6 +1429,39 @@ body.embed-mode .tableHScroll {
   min-height: 34px;
 }
 
+.loadStateToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 8px 0 10px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.loadStateToggle[hidden] {
+  display: none !important;
+}
+
+.loadStateToggle select {
+  height: 26px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: #0b1324;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .unifiedOneLineToggle {
   display: inline-flex;
   align-items: center;
@@ -1585,6 +1624,7 @@ body.view-expanded .actionCard,
 body.view-expanded .processTabs,
 body.view-expanded .summaryHint,
 body.view-expanded .viewModeToggle,
+body.view-expanded .loadStateToggle,
 body.view-expanded .unifiedOneLineToggle,
 body.view-expanded .carouselNav,
 body.view-expanded .ocPickerBar,

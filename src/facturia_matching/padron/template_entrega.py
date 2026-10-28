@@ -58,6 +58,8 @@ def project_template(
     excel_rows: Sequence[Dict[str, Any]],
     padron: Optional[Dict[str, Any]] = None,
     lookups: Optional[Dict[Any, Any]] = None,
+    gastos_records: Optional[Sequence[Dict[str, Any]]] = None,
+    company_id: int = 0,
 ) -> List[Dict[str, Any]]:
     """Una entrada por hoja: columns (con is_dropdown), options y rows."""
     by_idx: Dict[int, List[Dict[str, Any]]] = {}
@@ -87,12 +89,24 @@ def project_template(
                 continue
             key = DROPDOWN_SOURCES.get(str(col.get("source_value") or "").strip(), "")
             options[meta["name"]] = list(lists.get(key) or [])
+        from facturia_matching.padron.column_suggest import build_lookup_decisions
+
+        decisions = build_lookup_decisions(
+            columns,
+            facturas,
+            by_idx,
+            lookups,
+            gastos_records,
+            company_id=company_id,
+        )
         sheets_out.append(
             {
                 "name": str(sheet.get("name") or ""),
                 "columns": col_meta,
                 "options": options,
-                "rows": _sheet_rows(columns, facturas, by_idx, lookups),
+                "rows": _sheet_rows(
+                    columns, facturas, by_idx, lookups, decisions, options
+                ),
             }
         )
     return sheets_out
@@ -112,12 +126,23 @@ def _column_meta(col: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _sheet_has_items(columns: Sequence[Dict[str, Any]]) -> bool:
-    for col in columns:
-        src = str(col.get("source_value") or "").strip()
-        if src.startswith("items[].") or src.startswith("items."):
+def _sheet_has_item_columns(columns: Sequence[Dict[str, Any]]) -> bool:
+    for col in columns or []:
+        source = str(col.get("source_value") or "").strip()
+        if source.startswith("items[].") or source.startswith("items."):
             return True
     return False
+
+
+def _sheet_expands_items(columns: Sequence[Dict[str, Any]]) -> bool:
+    """Una fila por ítem solo si la hoja tiene columnas items[].
+
+    Coincidir con no abre filas. La preview de Gastos es una fila por factura
+    (el pie dice «N filas»). Si devolvemos una por ítem, FacturIA alinea por
+    posición: el mes muestra la fecha cruda y un total vacío hereda el monto
+    del comprobante siguiente.
+    """
+    return _sheet_has_item_columns(columns)
 
 
 def _sheet_rows(
@@ -125,8 +150,15 @@ def _sheet_rows(
     facturas: Sequence[Dict[str, Any]],
     by_idx: Dict[int, List[Dict[str, Any]]],
     lookups: Optional[Dict[Any, Any]] = None,
+    decisions: Optional[Dict[Any, str]] = None,
+    column_options: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, str]]:
-    per_item = _sheet_has_items(columns)
+    """Una fila por ítem si hay columnas items[]. Si no, una por comprobante.
+
+    Gastos tiene Coincidir con y FacturIA igual muestra una fila por factura.
+    Abrir una por ítem desalinea Mes, Fecha y Monto.
+    """
+    expand_items = _sheet_expands_items(columns)
     rows: List[Dict[str, str]] = []
     for idx, fac in enumerate(facturas or []):
         if not isinstance(fac, dict):
@@ -134,10 +166,9 @@ def _sheet_rows(
         excel_lines = by_idx.get(idx) or []
         header_excel = excel_lines[0] if excel_lines else {}
         items = fac.get("items") if isinstance(fac.get("items"), list) else []
-        if per_item:
-            line_items: List[Any] = list(items) if items else [{}]
-        else:
-            line_items = [items[0] if items else {}]
+        line_items: List[Any] = list(items) if items else [{}]
+        if not expand_items:
+            line_items = line_items[:1]
         for line_index, item in enumerate(line_items):
             line_excel = excel_lines[line_index] if line_index < len(excel_lines) else {}
             item_dict = item if isinstance(item, dict) else {}
@@ -152,6 +183,9 @@ def _sheet_rows(
                     header_excel,
                     line_excel,
                     lookups,
+                    comp_idx=idx,
+                    decisions=decisions,
+                    column_options=(column_options or {}).get(name) or [],
                 )
             rows.append(record)
     return rows
@@ -165,60 +199,154 @@ def _cell_value(
     header_excel: Dict[str, Any],
     line_excel: Dict[str, Any],
     lookups: Optional[Dict[Any, Any]] = None,
+    comp_idx: int = 0,
+    decisions: Optional[Dict[Any, str]] = None,
+    column_options: Optional[Sequence[str]] = None,
 ) -> str:
     source_type = str(col.get("source_type") or "canonical").strip().lower()
     source = str(col.get("source_value") or "")
     source_key = source.strip()
     is_item = source_key.startswith("items[].") or source_key.startswith("items.")
-    if line_index > 0 and not _repeats(col) and not is_item:
-        return ""
     from facturia_matching.padron.template_lookup import (
         column_role,
+        concept_choice,
+        lookup_key,
         pipeline_suggestion,
         suggest_enabled,
         suggest_for,
     )
 
     raw = ""
+    invoice_raw = ""
     if source_type != "static":
+        invoice_raw = _raw_source_value(
+            fac, item, source_key, header_excel, line_excel, overlay=False
+        )
         raw = _raw_source_value(fac, item, source_key, header_excel, line_excel)
+    # El texto de la factura gana si ya es un valor de la lista (mayúsculas,
+    # acentos, S.A./S.R.L.). No lo pisa un CUIT de otra empresa ni el historial.
+    from facturia_matching.padron.excel import wire_listed_value
+
+    wired = (
+        wire_listed_value(invoice_raw, list(column_options or []))
+        if str(invoice_raw or "").strip()
+        else ""
+    )
+    if wired and (line_index == 0 or _repeats(col) or is_item):
+        return wired
+    # Coincidir con: sin tilde = fuzzy + historial; con tilde = IA + historial.
+    # Vale para cualquier columna vinculada, no solo concepto o categoría.
+    name = str(col.get("header_label") or "")
+    if lookup_key(col) and decisions is not None and (comp_idx, name) in decisions:
+        picked = str(decisions.get((comp_idx, name)) or "")
+        if line_index > 0 and not _repeats(col) and not is_item:
+            return picked if suggest_enabled(col) else ""
+        if suggest_enabled(col) or picked:
+            return picked
+        return ""
+    # Concepto / categoría sin lista vinculada: tilde = IA; sin tilde = fuzzy.
+    role = column_role(col)
+    if role in ("concepto", "categoria"):
+        handled, concept_val = concept_choice(col, header_excel, line_excel)
+        if handled:
+            if line_index > 0 and not _repeats(col) and not is_item:
+                return concept_val if suggest_enabled(col) else ""
+            if concept_val or suggest_enabled(col):
+                return concept_val
+    # Tilde: matching Excel (proveedor, forma de pago, lookup del Sheet).
+    suggested = ""
     if suggest_enabled(col):
-        # Tilde: matching Excel + historial Gastos + IA (concepto/categoría).
-        hit = pipeline_suggestion(col, header_excel, line_excel)
-        if hit:
-            return hit
-        looked = suggest_for(col, raw, lookups)
-        if looked:
-            return looked
+        suggested = pipeline_suggestion(col, header_excel, line_excel) or suggest_for(
+            col, raw, lookups
+        )
+    # should_repeat=0 deja vacía la cabecera cruda desde la 2ª línea.
+    # Un hit de lookup/Excel se conserva: si no, la UI muestra el CUIT.
+    # Monto/fecha no son esa sugerencia: si el origen se leyó vacío, no se inventan.
+    if line_index > 0 and not _repeats(col) and not is_item:
+        return suggested
+    if suggest_enabled(col):
+        if suggested:
+            return suggested
         if column_role(col):
             return ""
-    payload = _facturia_scalar(col, fac)
+    if _explicit_source_empty(source_type, source_key, raw) and _scalar_label(col):
+        return ""
+    # Sin origen mapeado, Fecha/Monto solo se completan si la tilde de sugerir está prendida.
+    if (
+        _scalar_label(col)
+        and source_type == "static"
+        and not str(raw or "").strip()
+        and not suggest_enabled(col)
+    ):
+        return ""
+    payload = _facturia_scalar(col, fac, raw)
     if payload:
         return payload
     if source_type == "static":
         return source
-    return raw
+    return _format_source_date(source_key, raw)
 
 
-def _facturia_scalar(col: Dict[str, Any], fac: Dict[str, Any]) -> str:
-    """Fecha, monto, fecha de pago y observación: lo que trae la factura."""
-    from facturia_matching.padron.pepe_schema import format_pepe_money
-    from facturia_matching.padron.process_to_invoice import factura_to_invoice_input
-
+def _label(col: Dict[str, Any]) -> str:
     label = str(col.get("header_label") or "").strip().casefold()
     for src, dst in (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")):
         label = label.replace(src, dst)
-    field = {
+    return label
+
+
+def _scalar_label(col: Dict[str, Any]) -> str:
+    """Cabecera que se completa con la factura (no con un catálogo)."""
+    return {
         "fecha de pago": "fecha_pago",
         "fecha": "fecha",
+        "mes de pago": "mes_pago",
+        "mes": "mes",
         "monto": "monto",
         "observacion": "observacion",
-    }.get(label)
+    }.get(_label(col), "")
+
+
+def _explicit_source_empty(source_type: str, source_key: str, raw: str) -> bool:
+    """El template apunta a un campo y la extracción lo trajo vacío."""
+    return source_type != "static" and bool(source_key) and not str(raw or "").strip()
+
+
+def _format_source_date(source_key: str, raw: str) -> str:
+    key = str(source_key or "").strip().lower()
+    if "fecha" not in key and not key.endswith("vencimiento"):
+        return raw
+    from facturia_matching.infra.normalization import normalize_date_ddmmyyyy
+
+    return normalize_date_ddmmyyyy(raw) or raw
+
+
+def _facturia_scalar(col: Dict[str, Any], fac: Dict[str, Any], raw: str = "") -> str:
+    """Fecha, monto, mes, fecha de pago y observación: lo que trae la factura.
+
+    Si el origen canónico ya tiene valor, se usa ese (la fecha no se cambia por otro
+    campo). Un ISO se normaliza a DD/MM/YYYY. Mes / Mes de pago son el mes en español.
+    """
+    from facturia_matching.infra.normalization import normalize_date_ddmmyyyy
+    from facturia_matching.padron.pepe_schema import format_pepe_money, month_name_es_from_date
+    from facturia_matching.padron.process_to_invoice import factura_to_invoice_input
+
+    field = _scalar_label(col)
     if not field or not isinstance(fac, dict):
         return ""
+    seen = str(raw or "").strip()
     inv = factura_to_invoice_input(fac)
     if field == "monto":
-        return format_pepe_money(inv.get("monto"))
+        return format_pepe_money(seen if seen else inv.get("monto"))
+    if field == "fecha":
+        return normalize_date_ddmmyyyy(seen if seen else inv.get("fecha"))
+    if field == "fecha_pago":
+        return normalize_date_ddmmyyyy(seen if seen else inv.get("fecha_pago"))
+    if field == "mes":
+        return month_name_es_from_date(seen if seen else str(inv.get("fecha") or ""))
+    if field == "mes_pago":
+        return month_name_es_from_date(seen if seen else str(inv.get("fecha_pago") or ""))
+    if seen and field == "observacion":
+        return seen
     return str(inv.get(field) or "").strip()
 
 
@@ -228,6 +356,7 @@ def _raw_source_value(
     source_key: str,
     header_excel: Dict[str, Any],
     line_excel: Dict[str, Any],
+    overlay: bool = True,
 ) -> str:
     is_item = source_key.startswith("items[].") or source_key.startswith("items.")
     if is_item:
@@ -238,7 +367,7 @@ def _raw_source_value(
         else:
             path = ""
         overlay_key = _ITEM_EXCEL.get(source_key)
-        if overlay_key:
+        if overlay and overlay_key:
             hit = str((line_excel or {}).get(overlay_key) or "").strip()
             if hit:
                 return hit
@@ -246,7 +375,7 @@ def _raw_source_value(
     if source_key.startswith("cabecera."):
         path = source_key[len("cabecera.") :]
         overlay_key = _HEADER_EXCEL.get(source_key)
-        if overlay_key:
+        if overlay and overlay_key:
             hit = str((header_excel or {}).get(overlay_key) or "").strip()
             if hit:
                 return hit

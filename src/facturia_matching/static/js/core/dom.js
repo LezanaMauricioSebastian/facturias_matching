@@ -27,6 +27,8 @@ export function getDomRefs() {
     facturiaRaw: el("facturiaRaw"),
     btnViewLista: el("btnViewLista"),
     btnViewCarrusel: el("btnViewCarrusel"),
+    loadStateToggle: el("loadStateToggle"),
+    selLoadState: el("selLoadState"),
     soloEncabezadoToggle: el("soloEncabezadoToggle"),
     chkSoloEncabezado: el("chkSoloEncabezado"),
     carouselNav: el("carouselNav"),

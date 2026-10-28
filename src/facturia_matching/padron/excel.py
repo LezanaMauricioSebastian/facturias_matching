@@ -1,6 +1,8 @@
 """Fuzzy matching for Excel/Sheets-based padron (proveedores, productos, conceptos, formas de pago)."""
 
-from typing import Any, Dict, List, Optional, Tuple
+import re
+import unicodedata
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from rapidfuzz import fuzz, process as rf_process
 
@@ -116,6 +118,109 @@ def match_many(
     return [(r[0], float(r[1])) for r in results if float(r[1]) >= min_score]
 
 
+# Tipos societarios al final del nombre. No forman parte de la razón social.
+_COMPANY_SUFFIXES = (
+    "SOCIEDAD DE RESPONSABILIDAD LIMITADA",
+    "SOCIEDAD ANONIMA",
+    "S A S",
+    "S R L",
+    "S A",
+    "SAS",
+    "SRL",
+    "SA",
+    "LTDA",
+    "SACI",
+    "SACIF",
+)
+
+
+def fold_text(raw: Any) -> str:
+    """Mayúsculas, sin acentos ni puntuación. «EFECTIVO» y «Francés» quedan comparables."""
+    s = normalize(raw)
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    s = s.upper()
+    s = re.sub(r"[^A-Z0-9]+", " ", s)
+    return " ".join(s.split())
+
+
+def company_key(raw: Any) -> str:
+    """Nombre de empresa sin puntos ni tipo societario (S.A., S.R.L., S.A.S.)."""
+    s = fold_text(raw)
+    while s:
+        stripped = False
+        for suf in _COMPANY_SUFFIXES:
+            tail = " " + suf
+            if s.endswith(tail) and s[: -len(tail)].strip():
+                s = s[: -len(tail)].strip()
+                stripped = True
+                break
+        if not stripped:
+            break
+    return s
+
+
+def same_company(a: Any, b: Any) -> bool:
+    ka, kb = company_key(a), company_key(b)
+    return bool(ka and ka == kb)
+
+
+def wire_listed_value(query: str, options: Sequence[str]) -> str:
+    """Valor de la lista que es el mismo texto.
+
+    Iguala mayúsculas, acentos y el tipo societario (S.A., S.R.L., S.A.S.).
+    Si la lista tiene «La Alemana» y «LA ALEMANA S.R.L», gana el más corto.
+    No usa fuzzy: «Servicios crudo» no es «Servicios».
+    """
+    qf = fold_text(query)
+    qk = company_key(query)
+    if not qf or not options:
+        return ""
+    hits: List[str] = []
+    for opt in options:
+        label = str(opt or "").strip()
+        if not label:
+            continue
+        if fold_text(label) == qf or (qk and company_key(label) == qk):
+            hits.append(label)
+    if not hits:
+        return ""
+    return min(hits, key=lambda label: (len(label), label))
+
+
+def pick_listed_company(
+    query: str,
+    options: Sequence[str],
+    min_score: float = 90.0,
+) -> str:
+    """Opción de la lista que es la misma empresa.
+
+    «LA ALEMANA S.R.L» y «La Alemana» empatan: gana el nombre más corto de la
+    lista. Un token corto («LA», «SA») no alcanza para elegir otra empresa.
+    """
+    qk = company_key(query)
+    if not qk or not options:
+        return ""
+    best: Optional[Tuple[Tuple[float, int], str]] = None
+    for opt in options:
+        label = str(opt or "").strip()
+        ok = company_key(label)
+        if not ok:
+            continue
+        if ok == qk:
+            score = 100.0
+        elif min(len(qk), len(ok)) < 4:
+            continue
+        else:
+            score = _name_score(qk, ok)
+        if score < min_score:
+            continue
+        rank = (score, -len(label))
+        if best is None or rank > best[0]:
+            best = (rank, label)
+    return best[1] if best else ""
+
+
 def match_proveedor(
     nombre: str,
     proveedores: List[str],
@@ -125,50 +230,7 @@ def match_proveedor(
     return match_one(nombre, proveedores, min_score)
 
 
-def match_proveedor_excel(
-    nombre: str,
-    cuit: str,
-    proveedores: List[Dict[str, Any]],
-    min_score: float = DEFAULT_MIN_SCORE,
-) -> Optional[Dict[str, Any]]:
-    """CUIT exact (score 100) then fuzzy on razon_social and nombre_fantasia."""
-    cuit_n = _digits(cuit)
-    if cuit_n:
-        for r in proveedores:
-            doc = _digits(r.get("cuit"))
-            if doc and doc == cuit_n:
-                razon = normalize(r.get("razon_social"))
-                fantasia = normalize(r.get("nombre_fantasia"))
-                return {
-                    "match": razon or fantasia,
-                    "razon_social": razon,
-                    "nombre_fantasia": fantasia,
-                    "cuit": normalize(r.get("cuit")),
-                    "score": 100.0,
-                }
-
-    nombre_n = normalize(nombre)
-    if not nombre_n or not proveedores:
-        return None
-
-    indexed: List[Tuple[str, Dict[str, Any]]] = []
-    for r in proveedores:
-        razon = normalize(r.get("razon_social"))
-        fantasia = normalize(r.get("nombre_fantasia"))
-        if razon:
-            indexed.append((razon, r))
-        if fantasia and fantasia.lower() != razon.lower():
-            indexed.append((fantasia, r))
-    choices = [n for n, _ in indexed]
-    if not choices:
-        return None
-    best = rf_process.extractOne(nombre_n, choices, scorer=_name_score)
-    if not best:
-        return None
-    score = float(best[1])
-    if score < min_score:
-        return None
-    row = indexed[int(best[2])][1]
+def _proveedor_hit(row: Dict[str, Any], score: float) -> Dict[str, Any]:
     razon = normalize(row.get("razon_social"))
     fantasia = normalize(row.get("nombre_fantasia"))
     return {
@@ -178,6 +240,95 @@ def match_proveedor_excel(
         "cuit": normalize(row.get("cuit")),
         "score": score,
     }
+
+
+def _index_proveedor_names(
+    proveedores: List[Dict[str, Any]],
+) -> List[Tuple[str, Dict[str, Any]]]:
+    indexed: List[Tuple[str, Dict[str, Any]]] = []
+    for r in proveedores:
+        razon = normalize(r.get("razon_social"))
+        fantasia = normalize(r.get("nombre_fantasia"))
+        if razon:
+            indexed.append((razon, r))
+        if fantasia and fantasia.lower() != razon.lower():
+            indexed.append((fantasia, r))
+    return indexed
+
+
+def _best_named_proveedor(
+    nombre: str,
+    indexed: List[Tuple[str, Dict[str, Any]]],
+    min_score: float,
+) -> Optional[Dict[str, Any]]:
+    """Mejor fila por nombre. A igualdad de empresa, la razón social más corta."""
+    qk = company_key(nombre)
+    if not qk or not indexed:
+        return None
+    best: Optional[Tuple[Tuple[float, int], Dict[str, Any]]] = None
+    for label, row in indexed:
+        ok = company_key(label)
+        if not ok:
+            continue
+        if ok == qk:
+            score = 100.0
+        elif min(len(qk), len(ok)) < 4:
+            continue
+        else:
+            score = _name_score(qk, ok)
+        if score < min_score:
+            continue
+        razon = normalize(row.get("razon_social")) or label
+        rank = (score, -len(razon))
+        if best is None or rank > best[0]:
+            best = (rank, _proveedor_hit(row, score))
+    return best[1] if best else None
+
+
+def match_proveedor_excel(
+    nombre: str,
+    cuit: str,
+    proveedores: List[Dict[str, Any]],
+    min_score: float = DEFAULT_MIN_SCORE,
+) -> Optional[Dict[str, Any]]:
+    """Nombre fuerte (sin S.A./S.R.L.) primero; si no, CUIT exacto; si no, fuzzy.
+
+    Un CUIT que apunta a otra empresa no pisa un nombre que ya está en la lista.
+    Sin nombre, el CUIT sigue ganando.
+    """
+    indexed = _index_proveedor_names(proveedores)
+    strong = _best_named_proveedor(nombre, indexed, 90.0)
+    if strong:
+        return strong
+
+    cuit_n = _digits(cuit)
+    nombre_key = company_key(nombre)
+    if cuit_n:
+        for r in proveedores:
+            doc = _digits(r.get("cuit"))
+            if not doc or doc != cuit_n:
+                continue
+            hit = _proveedor_hit(r, 100.0)
+            other = company_key(hit["razon_social"] or hit["nombre_fantasia"])
+            # Sin nombre, el CUIT define. Con nombre, un CUIT de otra empresa no gana.
+            if nombre_key and other and nombre_key != other and _name_score(nombre_key, other) < min_score:
+                continue
+            return hit
+
+    if not indexed:
+        return None
+    choices = [n for n, _ in indexed]
+    nombre_n = normalize(nombre)
+    if not nombre_n:
+        return None
+    best = rf_process.extractOne(nombre_n, choices, scorer=_name_score)
+    if not best:
+        return None
+    score = float(best[1])
+    if score < min_score:
+        return None
+    row = indexed[int(best[2])][1]
+    return _proveedor_hit(row, score)
 
 
 def match_concepto(

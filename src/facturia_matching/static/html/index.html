@@ -30,8 +30,8 @@
                 <div class="csvCopyMenu" id="csvCopyMenu">
                   <button id="btnCopiarCsv" class="secondary" type="button" disabled
                     aria-haspopup="menu" aria-expanded="false" aria-controls="csvCopyDropdown"
-                    title="Copia el CSV al portapapeles (con o sin encabezado)">
-                    Copiar CSV
+                    title="Copia la grilla al portapapeles para pegar en Excel (con o sin encabezado)">
+                    Copiar
                     <span class="csvCopyChevron" aria-hidden="true">▾</span>
                   </button>
                   <div class="csvCopyDropdown" id="csvCopyDropdown" hidden role="menu">
@@ -67,6 +67,13 @@
             <div class="processViewBar">
               <div class="hint summaryHint" id="summary"></div>
               <div class="processViewActions">
+                <label class="loadStateToggle" id="loadStateToggle" title="Estado del comprobante al importar a Odoo. Borrador no publica.">
+                  <span>Cargar en Estado:</span>
+                  <select id="selLoadState">
+                    <option value="draft" selected>Borrador</option>
+                    <option value="posted">Registrado</option>
+                  </select>
+                </label>
                 <label class="unifiedOneLineToggle" id="soloEncabezadoToggle" hidden title="Colapsa todas las facturas a una línea (guarda las líneas para poder destildar). Con 1 línea se oculta el pie y los montos van en la fila">
                   <input type="checkbox" id="chkSoloEncabezado" />
                   <span>Solo encabezado</span>

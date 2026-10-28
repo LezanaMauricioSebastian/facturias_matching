@@ -36,6 +36,25 @@ class TestMatchProveedorExcel(unittest.TestCase):
         hit = match_proveedor_excel("xyz-no-existe-123", "", self.padron)
         self.assertIsNone(hit)
 
+    def test_srl_matches_short_name_not_other_cuit(self):
+        padron = [
+            {"razon_social": "GRAN CRIANZA S.A", "nombre_fantasia": "", "cuit": "30708790598"},
+            {"razon_social": "La Alemana", "nombre_fantasia": "", "cuit": "30111111111"},
+            {"razon_social": "LA ALEMANA S.R.L", "nombre_fantasia": "", "cuit": "30111111111"},
+        ]
+        hit = match_proveedor_excel("LA ALEMANA S.R.L.", "30708790598", padron)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["match"], "La Alemana")
+        plain = match_proveedor_excel("La Alemana", "30708790598", padron)
+        self.assertEqual(plain["match"], "La Alemana")
+
+    def test_cuit_de_otra_empresa_no_pisa_el_nombre(self):
+        padron = [
+            {"razon_social": "GRAN CRIANZA S.A", "nombre_fantasia": "", "cuit": "30708790598"},
+        ]
+        self.assertIsNone(match_proveedor_excel("La Alemana", "30708790598", padron))
+        self.assertIsNone(match_proveedor_excel("LA ALEMANA S.R.L.", "30708790598", padron))
+
 
 class TestMatchProducto(unittest.TestCase):
     def setUp(self):

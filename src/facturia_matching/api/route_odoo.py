@@ -289,6 +289,7 @@ def odoo_import(
         raise HTTPException(status_code=400, detail="payload.rows debe ser una lista")
     skip_duplicates = payload.get("skip_duplicates", True)
     update_taxes_if_exists = payload.get("update_taxes_if_exists", True)
+    target_state = payload.get("target_state") or "draft"
     empresa = payload.get("empresa")
     odoo_profile = _resolve_request_odoo_profile(perfil, odoo_profile_q, odoo_cloud, payload)
 
@@ -297,6 +298,7 @@ def odoo_import(
             rows,
             skip_duplicates=bool(skip_duplicates),
             update_taxes_if_exists=bool(update_taxes_if_exists),
+            target_state=str(target_state),
         )
 
     result = _with_odoo_profile(odoo_profile, _import, empresa=empresa)

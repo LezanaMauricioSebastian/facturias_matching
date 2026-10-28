@@ -83,6 +83,7 @@ Importa filas a Odoo TEST.
   "rows": [ { "...": "fila" } ],
   "skip_duplicates": true,
   "update_taxes_if_exists": true,
+  "target_state": "draft",
   "empresa": "optional",
   "odoo_profile": "aliare",
   "import_id": 12,
@@ -90,9 +91,56 @@ Importa filas a Odoo TEST.
 }
 ```
 
+`target_state`: `draft` (defecto, etiqueta UI **Borrador**, no publica) o `posted` (etiqueta UI **Registrado**). Con `posted`, `import_rows_to_odoo` llama `account.move.action_post` **después** de `sync_move_taxes_from_group` y solo si ese comprobante no tuvo error de sync. Otro valor, o la ausencia del campo, equivale a `draft`. Si `action_post` falla, el comprobante queda en borrador y el mensaje entra en `errors` (*«Factura sincronizada pero no se pudo registrar»*).
+
 `import_id` + `token` son opcionales: vienen del deep-link FacturIA (`?import_id=&token=`) tras `GET /api/process/{id}/erp-import/init`. Si están presentes, al terminar el import Odoo la app hace `POST` al webhook FacturIA (`/api/erp-imports/webhook`) para marcar el `process_erp_imports` como completed/failed. Ver [api.md § Callback FacturIA](#callback-facturia-erp-imports).
 
 **Respuesta**: resumen por factura (creada, duplicada, errores, tax sync). Ver [import-odoo/](import-odoo/README.md). Puede incluir `facturia_webhook` con el resultado del callback.
+
+### `POST /api/partners`
+
+Crea un `res.partner` en Odoo. Solo perfil **Aliare** (Central Tickets). Lo usa el combobox de Proveedor al elegir **Crear «nombre»**.
+
+**Body**:
+
+```json
+{
+  "name": "RAMASSOTTO FRANCO DAVID",
+  "vat": "20-12345678-9",
+  "empresa": "1",
+  "odoo_profile_test": "aliare"
+}
+```
+
+| Campo | Efecto |
+|-------|--------|
+| `name` | Obligatorio, al menos 2 caracteres (se colapsan espacios) |
+| `vat` o `cuit` | Opcional. En la UI es el CUIT de la fila |
+| `supplier_rank` | No se manda: el servidor lo fija en `1` |
+
+**Respuesta**: `{ "id", "name", "vat?" }`.
+
+Perfil distinto de `aliare`, nombre corto u Odoo que rechaza el alta → `400` con `detail`.
+
+### `POST /api/products`
+
+Crea un `product.product` comprable. Solo perfil **Aliare**. Lo usa el combobox de Producto al elegir **Crear «nombre»**.
+
+**Body**:
+
+```json
+{
+  "name": "Entrada show",
+  "empresa": "1",
+  "odoo_profile_test": "aliare"
+}
+```
+
+El servidor arma `purchase_ok`, `type: consu` y `uom_id` / `uom_po_id` de la UM **Unidades** (si no está, **Units** / **Unidad** / **Unit**). Solo manda campos que existan en el tenant.
+
+**Respuesta**: `{ "id", "name" }`. Mismos errores `400` que el alta de proveedor.
+
+La fila **Crear** no aparece si el nombre coincide exactamente (sin distinguir mayúsculas) con una opción ya cargada. En Proveedor, además, espera a que termine `GET /api/partners/search`.
 
 ---
 
@@ -357,11 +405,36 @@ Respuesta: `{ "spreadsheet_id", "sheet_title", "sheet_gid", "values": [...], "co
 
 Lee `export_templates` / `export_template_sheets` / `export_template_columns` del schema `PROCESS_SCHEMA` (`deleted_at` nulo; el template es de ese `company_id` o global). Matchea el proceso como `?excel_user=1` y devuelve solo las columnas del template.
 
-`is_dropdown: true` si la columna apunta a una lista del Sheet o si el origen es un catálogo (`cabecera.proveedor.*`, `cabecera.concepto`, forma de pago, `items[].producto`, rubro, diario). `options` son los valores de `lookup_return_column`, o de `lookup_match_column` si el retorno viene vacío. La tilde `lookup_suggest` llena la celda con el matching Excel: proveedor por CUIT/nombre, y concepto + categoría con historial de Gastos e IA. Sin tilde, la lista queda para elegir y la celda no se autocompleta. Fecha, Monto, Fecha de pago y Observación se completan con la factura del proceso (fecha, total, vencimiento, observaciones).
+`is_dropdown: true` si la columna apunta a una lista del Sheet o si el origen es un catálogo (`cabecera.proveedor.*`, `cabecera.concepto`, forma de pago, `items[].producto`, rubro, diario). `options` son los valores de `lookup_return_column`, o de `lookup_match_column` si el retorno viene vacío. La lista se lee del `spreadsheet_id` guardado en esa integración, aunque la fila tenga `deleted_at` (reconectar el Sheet crea otro id y deja el anterior borrado, con la misma URL). `is_active = 0` no lista. En cualquier columna con **Coincidir con**, la tilde `lookup_suggest` elige el modo: tildado = sugerencia IA (un prompt genérico sobre la lista vinculada, con historial de Gastos); destildado = fuzzy contra esa lista (y, si el historial ya tiene esa columna para el proveedor, el valor que más usó). No depende de que la columna se llame Concepto o Categoría. Si el texto de la factura ya es un valor de la lista (mayúsculas, acentos, S.A./S.R.L.), se usa ese: «EFECTIVO» es «Efectivo» y no lo pisa el historial. Razón social no hereda el historial de otra empresa: «La Alemana» y «LA ALEMANA S.R.L» salen «La Alemana» si ese nombre está en la lista, aunque el match por CUIT o el historial de Gastos hayan apuntado a Gran Crianza. El resto de las columnas de esa factura usa ese proveedor. Fecha, Monto, Fecha de pago y Observación se completan con la factura del proceso (fecha, total, vencimiento, observaciones) solo si ese origen trae valor, o si la columna no tiene origen y la tilde `lookup_suggest` está prendida. Sin tilde y sin origen, quedan vacías: no se sugiere Monto ni una fecha distinta. Un total leído vacío no se inventa ni se copia a las líneas siguientes. La fecha sale en `DD/MM/YYYY` (un `YYYY-MM-DD` de la extracción se normaliza; no se reemplaza por otra fecha). Mes y Mes de pago son el mes en español de esa fecha. Forma de pago sugerida es un valor del padrón: si la extracción no matchea (p. ej. el código `AF05`), la celda queda vacía.
 
-Una hoja con alguna columna `items[]` devuelve una fila por ítem (`should_repeat=0` deja la cabecera vacía desde la segunda línea). Sin columnas de ítem, una fila por comprobante.
+Si la hoja tiene columnas `items[]`, cada comprobante devuelve una fila por ítem y la cabecera se repite en esas líneas. **Coincidir con no abre filas.** La preview de Gastos es una fila por factura aunque Proveedor, Concepto o Forma de pago tengan lista: si devolvemos una fila por ítem, FacturIA alinea por posición, el mes muestra la fecha cruda y un total vacío muestra el monto de otra factura. Sin `items[]`, una fila por comprobante. `should_repeat=0` deja la cabecera cruda vacía desde la segunda línea de ítem. Si esa columna tiene `lookup_suggest`, el valor sugerido (matching Excel o lookup del Sheet) se llena en cada línea de ítem; si no hay match, queda vacía y no vuelve el origen crudo (el CUIT o la razón social).
 
 `sheet_error` avisa si no se pudo leer el Sheet. Para ver los templates de staging el server tiene que correr con `PROCESS_SCHEMA=sudataco_staging`.
+
+#### Preview FacturIA (Gastos): una fila por factura
+
+La pantalla **Previsualización de conversión** de FacturIA (plantilla `JM - Lodepepe - Gastos` y cualquier hoja sin columnas `items[]`) genera **una fila por comprobante**. El pie dice «N filas totales» y N es la cantidad de facturas, no de ítems. **Coincidir con no cambia eso.** Proveedor, Concepto, Categoría y Forma de pago pueden tener lista y la entrega sigue siendo una fila por factura.
+
+Si esta API devuelve una fila por ítem, FacturIA alinea por posición contra sus N facturas. A partir de la segunda línea los valores se corren. Síntomas vistos en el proceso 262:
+
+- **Mes** muestra una fecha (`07/10/2026`, `10/10/2026`) en vez del mes en español.
+- **Fecha** no es la de esa factura, o queda vacía mientras la flecha muestra un `YYYY-MM-DD` de otro comprobante.
+- **Monto** de un total leído vacío aparece con el importe de la factura siguiente (`914730.51`, `10500`), sin formato `$`.
+
+Reglas de la celda (lo que tiene que devolver `/entrega`):
+
+| Columna | Qué va en la celda |
+|---|---|
+| Mes / Mes de pago | Mes en español de esa fecha (`octubre`, `abril`). Nunca el string de la fecha. Vacío si no hay fecha. |
+| Fecha | `DD/MM/YYYY` de `cabecera.fecha`. Un `YYYY-MM-DD` se normaliza al mismo día (`2026-04-04` → `04/04/2026`). No se reemplaza por `fecha_emision` ni por otra fecha. |
+| Monto | Total de esa factura, formato `$46.084,91`. Total vacío → celda vacía. No se copia el subtotal del ítem ni el total de otra factura. |
+| Fecha de pago | Solo si la columna tiene origen con valor, o si no tiene origen y `lookup_suggest` está prendido. En Lodepepe está apagado y sin origen: queda vacía. |
+| Forma de pago | Solo un nombre del padrón (fuzzy). No hay predicción con IA. `AF05` y `CONTADO` no están en la lista → celda vacía. |
+| Concepto / Categoría | Sí pueden usar historial de Gastos e IA, si la tilde `lookup_suggest` está prendida. |
+
+FacturIA pinta dos cosas distintas. El valor de la celda es el de esta API. La flechita de abajo es el texto crudo de la extracción. Si la celda viene vacía, la UI rellena el control con ese crudo: por eso un Mes vacío se ve como fecha y un Monto vacío se ve como `914730.51`. La forma de que la preview quede vacía es alinear las filas (una por factura) y no dejar el escalar vacío cuando el origen sí tiene valor.
+
+Tests: `test_gastos_sin_items_no_desalinea_el_comprobante_siguiente`, `test_coincidir_con_no_abre_una_fila_por_item` en `tests/test_template_entrega.py`.
 
 ### Matching proceso FacturIA
 

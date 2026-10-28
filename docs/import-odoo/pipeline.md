@@ -71,7 +71,8 @@ Una sola vez por request. Ver [\_prepare_rows_for_import](#_prepare_rows_for_imp
 | Ya existe sin update | encontrado | `skipped` reason `already_exists` |
 | Nuevo | no encontrado | `_build_move_vals` → `account.move.create` |
 | Post-create | siempre (nuevo) | `sync_move_taxes_from_group` |
-| Error en sync | excepción | factura creada pero `errors` con detalle |
+| Error en sync | excepción | factura creada pero `errors` con detalle; no se publica |
+| Publicar | `target_state=posted` y sync ok | `account.move.action_post` **después** del sync (no reordena los pasos 1–8 de impuestos). Etiqueta UI: **Registrado**. Default y cualquier otro valor: no publica. Si `action_post` falla, queda en borrador y entra en `errors` |
 
 ### 5. Respuesta
 
@@ -243,7 +244,8 @@ Tests de regresión: `test_plan_product_price_quantity_reapply_*` en `tests/test
 
 | Síntoma | Revisar |
 |---------|---------|
-| "no está en borrador" | Factura ya publicada; sync solo en draft |
+| "no está en borrador" | Factura ya publicada; sync solo en draft. **Registrado** llama `action_post` recién después del sync, no antes |
+| Quedó en borrador con **Registrado** | El sync o `action_post` falló; el error está en `errors` |
 | "falta proveedor / diario" | `validate_rows_for_import` |
 | OC no vincula | `__oc_line_id`, `sanitize_*`, Sudata sin purchase |
 | IVA distinto al pie | `collect_expected_*`, [impuestos.md](impuestos.md) |

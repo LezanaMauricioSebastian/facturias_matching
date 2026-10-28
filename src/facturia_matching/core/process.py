@@ -92,6 +92,7 @@ def parse_process_json(
     *,
     excel_user: bool = False,
     excel_company_id: Optional[int] = None,
+    excel_concept_ai: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
     t0 = time.perf_counter()
     excel_padron: Optional[Dict[str, Any]] = None
@@ -315,8 +316,6 @@ def parse_process_json(
                 fp_hit = match_forma_pago(fp_raw, excel_padron.get("formas_pago") or [])
                 if fp_hit:
                     excel_forma_pago, excel_forma_pago_score = fp_hit[0], float(fp_hit[1])
-                else:
-                    excel_forma_pago = fp_raw
         else:
             matched_name, matched_rubro, matched_diario, matched_cuenta, score = match_proveedor(
                 prov_nombre, prov_cuit
@@ -393,136 +392,23 @@ def parse_process_json(
             comprobante_tax_names = get_tax_name_by_id() if comprobante_tax_match[0] else None
 
         # Un concepto por proveedor (así clasifican en Gastos).
+        # Grilla: historial, si no hay IA (env) y si no fuzzy.
+        # Entrega (excel_concept_ai): la tilde elige IA; sin tilde queda el fuzzy.
         excel_line_concepts: List[Dict[str, Any]] = []
         if excel_user and excel_padron is not None:
-            from facturia_matching.padron.excel import match_one
-            from facturia_matching.padron.gastos_history import (
-                canonicalize_categoria,
-                dominant_concepto,
-                infer_categoria,
+            from facturia_matching.padron.excel_concepts import resolve_excel_concepts
+
+            excel_line_concepts = resolve_excel_concepts(
+                items,
+                conceptos=excel_padron.get("conceptos") or [],
+                cat_map=excel_padron.get("categoria_map") or {},
+                proveedor=matched_name or prov_nombre or "",
+                gastos_records=gastos_records,
+                gastos_categorias=gastos_categorias,
+                company_id=int(padron_cid),
+                use_ai=bool(excel_concept_ai),
+                allow_env_ai=not excel_concept_ai,
             )
-
-            conceptos = excel_padron.get("conceptos") or []
-            cat_map = excel_padron.get("categoria_map") or {}
-            prov_for_concept = matched_name or prov_nombre or ""
-            for it in items:
-                excel_line_concepts.append(
-                    {
-                        "descripcion": normalize((it or {}).get("descripcion")),
-                        "concepto": "",
-                        "score": 0.0,
-                        "categoria": "",
-                    }
-                )
-
-            def _fill_concept(concepto: str, categoria: str, score: float) -> None:
-                cat = canonicalize_categoria(categoria) if categoria else ""
-                for row in excel_line_concepts:
-                    row["concepto"] = concepto
-                    row["categoria"] = cat
-                    row["score"] = score
-
-            def _categoria_for(concepto: str, hinted: str = "") -> str:
-                cat = normalize(hinted or cat_map.get(concepto) or "")
-                if cat:
-                    return cat
-                if gastos_records:
-                    return infer_categoria(
-                        gastos_records,
-                        concepto=concepto,
-                        proveedor=prov_for_concept,
-                    )
-                return ""
-
-            dom = dominant_concepto(
-                gastos_records or [],
-                proveedor=prov_for_concept,
-                allowed=conceptos,
-            )
-            if dom:
-                _fill_concept(dom, _categoria_for(dom), 100.0)
-            else:
-                filled = False
-                has_desc = any(r.get("descripcion") for r in excel_line_concepts)
-                if has_desc and conceptos:
-                    from facturia_matching.padron.concept_ai import (
-                        is_concept_ai_enabled,
-                        suggest_concepto_categoria_batch,
-                    )
-
-                    if is_concept_ai_enabled():
-                        from facturia_matching.padron.gastos_history import top_k_examples
-
-                        hint_desc = next(
-                            (
-                                r.get("descripcion") or ""
-                                for r in excel_line_concepts
-                                if r.get("descripcion")
-                            ),
-                            "",
-                        )
-                        examples = top_k_examples(
-                            gastos_records or [],
-                            proveedor=prov_for_concept,
-                            descripcion=hint_desc,
-                            k=15,
-                        )
-                        cats = list(gastos_categorias or [])
-                        for v in cat_map.values():
-                            vv = normalize(v)
-                            if vv and vv not in cats:
-                                cats.append(vv)
-                        for canon in ("Gastos Fijos", "Gastos Var"):
-                            if canon not in cats:
-                                cats.append(canon)
-                        suggestions = suggest_concepto_categoria_batch(
-                            company_id=int(padron_cid),
-                            proveedor=prov_for_concept,
-                            lines=[
-                                {"descripcion": r.get("descripcion") or ""}
-                                for r in excel_line_concepts
-                            ],
-                            conceptos=conceptos,
-                            categorias=cats or None,
-                            examples=examples,
-                            one_per_proveedor=True,
-                        )
-                        sug = next(
-                            (s for s in suggestions if s and s.get("concepto")),
-                            None,
-                        )
-                        if sug:
-                            _fill_concept(
-                                sug["concepto"],
-                                _categoria_for(sug["concepto"], sug.get("categoria") or ""),
-                                80.0,
-                            )
-                            filled = True
-                if not filled and conceptos:
-                    from collections import Counter
-
-                    votes: Counter = Counter()
-                    best_score: Dict[str, float] = {}
-                    for row in excel_line_concepts:
-                        desc_i = row.get("descripcion") or ""
-                        if not desc_i:
-                            continue
-                        hit = match_one(desc_i, conceptos)
-                        if not hit:
-                            continue
-                        votes[hit[0]] += 1
-                        best_score[hit[0]] = max(best_score.get(hit[0], 0.0), float(hit[1]))
-                    if votes:
-                        winner = sorted(
-                            votes,
-                            key=lambda c: (votes[c], best_score.get(c, 0.0)),
-                            reverse=True,
-                        )[0]
-                        _fill_concept(
-                            winner,
-                            _categoria_for(winner),
-                            best_score.get(winner, 0.0),
-                        )
 
         for i, it in enumerate(items):
             desc = normalize((it or {}).get("descripcion"))
@@ -549,11 +435,19 @@ def parse_process_json(
                 excel_prod = match_producto(
                     desc, item_um, excel_padron.get("productos") or []
                 )
+            excel_concepto_fuzzy = ""
+            excel_categoria_fuzzy = ""
+            excel_concepto_ai = ""
+            excel_categoria_ai = ""
             if excel_user and i < len(excel_line_concepts):
                 pre = excel_line_concepts[i]
                 excel_concepto = pre.get("concepto") or ""
                 excel_concepto_score = float(pre.get("score") or 0)
                 excel_categoria = pre.get("categoria") or ""
+                excel_concepto_fuzzy = pre.get("fuzzy_concepto") or ""
+                excel_categoria_fuzzy = pre.get("fuzzy_categoria") or ""
+                excel_concepto_ai = pre.get("ai_concepto") or ""
+                excel_categoria_ai = pre.get("ai_categoria") or ""
 
             producto_nombre = desc
             if excel_prod and excel_prod.get("match"):
@@ -619,6 +513,10 @@ def parse_process_json(
                 row_out["__excel_concepto"] = excel_concepto
                 row_out["__excel_concepto_score"] = excel_concepto_score
                 row_out["__excel_categoria"] = excel_categoria
+                row_out["__excel_concepto_fuzzy"] = excel_concepto_fuzzy
+                row_out["__excel_categoria_fuzzy"] = excel_categoria_fuzzy
+                row_out["__excel_concepto_ai"] = excel_concepto_ai
+                row_out["__excel_categoria_ai"] = excel_categoria_ai
                 if i == 0:
                     row_out["__excel_forma_pago"] = excel_forma_pago
                     row_out["__excel_forma_pago_score"] = excel_forma_pago_score
