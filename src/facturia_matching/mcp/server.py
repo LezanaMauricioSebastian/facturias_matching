@@ -232,10 +232,26 @@ def tool_import_odoo_draft(
 
     erp_id = import_id if import_id is not None else rec.erp_import_id
     erp_tok = (token or "").strip() or rec.erp_import_token
+    rows = list(rec.rows or [])
+    if rec.rows_pending_reload or not rows:
+        # Portable token / otra instancia Cloud Run: recargar proceso.
+        try:
+            proceso = _api().get_proceso(
+                rec.process_number,
+                empresa=rec.empresa,
+                odoo_profile=rec.odoo_profile,
+            )
+            rows = list(proceso.get("rows") or []) if isinstance(proceso, dict) else []
+        except MatchingApiError as exc:
+            return {
+                "ok": False,
+                "error": f"No se pudo recargar el proceso para importar: {exc}",
+                "process_number": rec.process_number,
+            }
 
     try:
         result = _api().import_odoo(
-            rec.rows,
+            rows,
             empresa=rec.empresa,
             odoo_profile=rec.odoo_profile,
             skip_duplicates=skip_duplicates,
@@ -263,29 +279,97 @@ def tool_import_odoo_draft(
     }
 
 
-def create_mcp_server():
-    """Build FastMCP app (requires optional dependency ``mcp``)."""
+def _make_mcp_server():
+    """MCPServer (mcp 2.x) or FastMCP (mcp 1.x)."""
     try:
-        from mcp.server.fastmcp import FastMCP
-    except ImportError as exc:  # pragma: no cover
-        raise SystemExit(
-            "Falta el paquete MCP. Instalá con: pip install 'mcp>=1.2.0'\n"
-            f"Detalle: {exc}"
-        ) from exc
-
-    mcp = FastMCP(
+        from mcp.server.mcpserver import MCPServer as _Server
+    except ImportError:
+        try:
+            from mcp.server.fastmcp import FastMCP as _Server
+        except ImportError as exc:  # pragma: no cover
+            raise SystemExit(
+                "Falta el paquete MCP. Instalá con: pip install 'mcp>=1.2.0'\n"
+                f"Detalle: {exc}"
+            ) from exc
+    return _Server(
         "facturia-matching",
         instructions=INSTRUCTIONS,
     )
 
+
+def create_mcp_server():
+    """Build MCP app with accountant tools (requires optional dependency ``mcp``)."""
+    mcp = _make_mcp_server()
     mcp.tool(description=tool_odoo_health.__doc__)(tool_odoo_health)
     mcp.tool(description=tool_search_proveedor.__doc__)(tool_search_proveedor)
     mcp.tool(description=tool_init_erp_import.__doc__)(tool_init_erp_import)
     mcp.tool(description=tool_preview_invoice_match.__doc__)(tool_preview_invoice_match)
     mcp.tool(description=tool_confirm_invoice_preview.__doc__)(tool_confirm_invoice_preview)
     mcp.tool(description=tool_import_odoo_draft.__doc__)(tool_import_odoo_draft)
-
     return mcp
+
+
+def _bearer_auth_asgi(app, expected: str):
+    """Minimal Bearer gate for remote MCP (Claude static header / ChatGPT)."""
+
+    async def middleware(scope, receive, send):
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        headers = {
+            k.decode("latin1").lower(): v.decode("latin1")
+            for k, v in scope.get("headers") or []
+        }
+        auth = headers.get("authorization") or ""
+        ok = auth == f"Bearer {expected}" or headers.get("x-facturia-mcp-token") == expected
+        if not ok:
+            body = b'{"error":"unauthorized"}'
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"www-authenticate", b'Bearer realm="facturia-mcp"'),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await app(scope, receive, send)
+
+    return middleware
+
+
+def build_streamable_http_app(*, path: str = "/mcp"):
+    """
+    ASGI Starlette app for Claude web / ChatGPT remote MCP.
+
+    Endpoint: ``{path}`` (default ``/mcp``). Set ``FACTURIA_MCP_BEARER`` to require
+    Authorization: Bearer … (Claude connectors support static request headers).
+    """
+    if os.environ.get("FACTURIA_MATCHING_URL"):
+        global _client
+        _client = MatchingApiClient(os.environ["FACTURIA_MATCHING_URL"])
+
+    mcp = create_mcp_server()
+    # stateless_http: cada request independiente (mejor en Cloud Run multi-instancia;
+    # el confirmation_token es HMAC portable y re-carga el proceso).
+    kwargs = {
+        "streamable_http_path": path if path.startswith("/") else f"/{path}",
+        "stateless_http": True,
+        "host": os.environ.get("FACTURIA_MCP_HOST", "0.0.0.0"),
+    }
+    if not hasattr(mcp, "streamable_http_app"):
+        raise SystemExit(
+            "Tu paquete mcp no expone streamable_http_app. Actualizá: pip install 'mcp>=1.2'"
+        )
+    asgi = mcp.streamable_http_app(**kwargs)
+    bearer = (os.environ.get("FACTURIA_MCP_BEARER") or "").strip()
+    if bearer:
+        return _bearer_auth_asgi(asgi, bearer)
+    return asgi
 
 
 def main() -> None:
@@ -294,7 +378,20 @@ def main() -> None:
         global _client
         _client = MatchingApiClient(os.environ["FACTURIA_MATCHING_URL"])
     mcp = create_mcp_server()
-    mcp.run(transport=os.environ.get("FACTURIA_MCP_TRANSPORT", "stdio"))
+    transport = (os.environ.get("FACTURIA_MCP_TRANSPORT") or "stdio").strip().lower()
+    if transport in ("streamable-http", "http", "sse"):
+        host = os.environ.get("FACTURIA_MCP_HOST", "0.0.0.0")
+        port = int(os.environ.get("FACTURIA_MCP_PORT") or os.environ.get("PORT") or "8081")
+        path = os.environ.get("FACTURIA_MCP_PATH", "/mcp")
+        if transport == "http":
+            transport = "streamable-http"
+        run_kwargs: Dict[str, Any] = {"transport": transport, "host": host, "port": port}
+        if transport == "streamable-http":
+            run_kwargs["stateless_http"] = True
+            run_kwargs["streamable_http_path"] = path
+        mcp.run(**run_kwargs)
+        return
+    mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

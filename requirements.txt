@@ -10,3 +10,5 @@ openpyxl>=3.1.0
 python-multipart>=0.0.9
 google-auth>=2.0.0
 google-cloud-storage>=2.14.0
+# Remote MCP (Claude web / ChatGPT). Safe to install always; mount is opt-in FACTURIA_MCP_HTTP=1
+mcp>=1.2.0

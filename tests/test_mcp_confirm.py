@@ -81,12 +81,33 @@ class TestConfirmStore(unittest.TestCase):
             odoo_profile="aliare",
         )
         token = store.confirm(rec.preview_id)
-        self.assertTrue(token)
+        self.assertTrue(token.startswith("v1."))
         bound = store.consume_for_import(token)
         self.assertEqual(bound.process_number, "99")
         self.assertEqual(bound.rows, rows)
         with self.assertRaises(ConfirmationError):
             store.consume_for_import(token)
+
+    def test_portable_token_other_instance(self):
+        """Confirm en instancia A, import en B (mismo secret) → rows_pending_reload."""
+        a = ConfirmStore(secret="shared-secret")
+        b = ConfirmStore(secret="shared-secret")
+        rows = _sample_rows()
+        rec = a.create_preview(
+            process_number="42",
+            rows=rows,
+            summary={},
+            empresa="7",
+            odoo_profile="aliare",
+            erp_import_id=9,
+            erp_import_token="tok",
+        )
+        token = a.confirm(rec.preview_id)
+        bound = b.consume_for_import(token)
+        self.assertEqual(bound.process_number, "42")
+        self.assertEqual(bound.empresa, "7")
+        self.assertEqual(bound.erp_import_id, 9)
+        self.assertTrue(bound.rows_pending_reload)
 
     def test_confirm_expires(self):
         store = ConfirmStore(secret="test-secret", preview_ttl_sec=60, confirm_ttl_sec=1)

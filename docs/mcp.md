@@ -76,14 +76,17 @@ Env:
 
 | Variable | Default | Uso |
 |----------|---------|-----|
-| `FACTURIA_MATCHING_URL` | `http://127.0.0.1:8080` | Base del matching UI |
-| `FACTURIA_MCP_SECRET` | random | Firma de tokens de confirmación |
-| `FACTURIA_MCP_TRANSPORT` | `stdio` | Transporte FastMCP |
+| `FACTURIA_MATCHING_URL` | `http://127.0.0.1:8080` | Base del matching UI (en Cloud Run: URL interna/`http://127.0.0.1:8080` si el MCP va montado en el mismo proceso) |
+| `FACTURIA_MCP_SECRET` | random | Firma HMAC de tokens de confirmación (portable entre instancias) |
+| `FACTURIA_MCP_TRANSPORT` | `stdio` | `stdio` \| `streamable-http` |
+| `FACTURIA_MCP_HTTP` | off | `1` → monta MCP en el FastAPI en `/mcp` (Claude web / ChatGPT) |
+| `FACTURIA_MCP_BEARER` | — | Si set, exige `Authorization: Bearer …` en `/mcp` |
+| `FACTURIA_MCP_HOST` / `PORT` / `PATH` | `0.0.0.0` / `8081` / `/mcp` | Solo transporte standalone `streamable-http` |
 
 ## Cómo correr
 
 ```bash
-pip install -e '.[mcp]'
+pip install -e '.[mcp]'   # o requirements.txt (incluye mcp)
 export FACTURIA_MATCHING_URL=http://127.0.0.1:8080
 python -m facturia_matching.mcp
 # o: facturia-mcp
@@ -108,9 +111,21 @@ python -m facturia_matching.mcp
 
 Usá el mismo Python/venv donde está instalado el paquete.
 
-### ChatGPT
+### Claude web / ChatGPT (remoto)
 
-Hace falta un host MCP **remoto** (HTTP/SSE) o Actions que apunten a los mismos endpoints. El transporte default de este repo es **stdio** (desktop). Remote hosting es un paso aparte de deploy.
+1. Deploy matching UI con `FACTURIA_MCP_HTTP=1` y `FACTURIA_MCP_BEARER=<secreto>` (y `FACTURIA_MATCHING_URL=http://127.0.0.1:8080` en el mismo contenedor).
+2. Endpoint público: `https://<tu-matching-ui>/mcp` (Streamable HTTP).
+3. **Claude.ai** → Customize → Connectors → Add custom connector → URL `https://…/mcp` → auth con header Bearer (static credential) = `FACTURIA_MCP_BEARER`.
+4. **ChatGPT** (Business/Enterprise) → Plugins → Add custom MCP server → misma URL + auth.
+
+Standalone (otro Cloud Run solo MCP):
+
+```bash
+FACTURIA_MCP_TRANSPORT=streamable-http \
+FACTURIA_MATCHING_URL=https://matching-ui.example \
+FACTURIA_MCP_BEARER=secreto \
+facturia-mcp
+```
 
 ## Qué no hace (aún)
 

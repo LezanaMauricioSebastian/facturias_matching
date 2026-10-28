@@ -1,5 +1,7 @@
 """FastAPI application entrypoint."""
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +28,27 @@ if JS_DIR.is_dir():
     app.mount("/js", StaticFiles(directory=str(JS_DIR)), name="js")
 
 app.include_router(router)
+
+# Remote MCP for Claude web / ChatGPT (Streamable HTTP). Opt-in: FACTURIA_MCP_HTTP=1
+# Endpoint: https://<host>/mcp  — requires pip extra [mcp].
+_mcp_http = (os.environ.get("FACTURIA_MCP_HTTP") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+if _mcp_http:
+    try:
+        from facturia_matching.mcp.server import build_streamable_http_app
+
+        # Sub-app listens at "/" → public URL is https://host/mcp
+        app.mount("/mcp", build_streamable_http_app(path="/"), name="facturia_mcp")
+    except SystemExit:
+        pass
+    except Exception as exc:  # pragma: no cover
+        import logging
+
+        logging.getLogger(__name__).warning("FACTURIA_MCP_HTTP=1 but MCP failed to mount: %s", exc)
 
 
 @app.middleware("http")

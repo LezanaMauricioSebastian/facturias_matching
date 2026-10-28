@@ -23,6 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.2.0"]
+# Incluir MCP en la imagen Cloud Run si FACTURIA_MCP_HTTP=1
+all = ["mcp>=1.2.0"]
 
 [project.scripts]
 facturia-mcp = "facturia_matching.mcp.server:main"
