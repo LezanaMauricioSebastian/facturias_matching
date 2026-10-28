@@ -500,6 +500,33 @@ default_dev_mysql_env_pairs() {
     "DB_USER_MYSQL=${DINNER_DEV_DEFAULT_DB_USER_MYSQL}"
 }
 
+# odoo-dev: MCP remoto (Claude web / ChatGPT) montado en /mcp del mismo servicio.
+# Override: FACTURIA_MCP_BEARER / FACTURIA_MCP_SECRET en el entorno del shell antes de deploy.
+# Rellena DEPLOY_MCP_BEARER / DEPLOY_MCP_SECRET (globales) para el resumen post-deploy.
+ensure_dev_mcp_credentials() {
+  if [[ -z "${DEPLOY_MCP_BEARER:-}" ]]; then
+    DEPLOY_MCP_BEARER="${FACTURIA_MCP_BEARER:-}"
+  fi
+  if [[ -z "${DEPLOY_MCP_SECRET:-}" ]]; then
+    DEPLOY_MCP_SECRET="${FACTURIA_MCP_SECRET:-}"
+  fi
+  if [[ -z "${DEPLOY_MCP_BEARER}" ]]; then
+    DEPLOY_MCP_BEARER="$(openssl rand -hex 24 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(24))')"
+  fi
+  if [[ -z "${DEPLOY_MCP_SECRET}" ]]; then
+    DEPLOY_MCP_SECRET="$(openssl rand -hex 24 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(24))')"
+  fi
+}
+
+default_dev_mcp_env_pairs() {
+  ensure_dev_mcp_credentials
+  merge_env_pairs \
+    "FACTURIA_MCP_HTTP=1" \
+    "FACTURIA_MATCHING_URL=http://127.0.0.1:8080" \
+    "FACTURIA_MCP_BEARER=${DEPLOY_MCP_BEARER}" \
+    "FACTURIA_MCP_SECRET=${DEPLOY_MCP_SECRET}"
+}
+
 # matching-ui-odoo (prod): MySQL FacturIA producción (sudataco_facturia).
 default_prod_mysql_env_pairs() {
   merge_env_pairs \
@@ -713,6 +740,16 @@ build_deploy_env_vars() {
     all_pairs+=("${dev_mysql[@]}")
     IFS=',' read -r -a sudata_pairs <<< "$(default_sudata_env_pairs)"
     all_pairs+=("${sudata_pairs[@]}")
+    # Credenciales MCP en el shell actual (no en subshell) para imprimirlas al final.
+    ensure_dev_mcp_credentials
+    IFS=',' read -r -a dev_mcp <<< "$(
+      merge_env_pairs \
+        "FACTURIA_MCP_HTTP=1" \
+        "FACTURIA_MATCHING_URL=http://127.0.0.1:8080" \
+        "FACTURIA_MCP_BEARER=${DEPLOY_MCP_BEARER}" \
+        "FACTURIA_MCP_SECRET=${DEPLOY_MCP_SECRET}"
+    )"
+    all_pairs+=("${dev_mcp[@]}")
   else
     IFS=',' read -r -a prod_dinner <<< "$(default_prod_dinner_env_pairs)"
     all_pairs+=("${prod_dinner[@]}")
@@ -811,10 +848,19 @@ deploy_service() {
   gcloud "${deploy_args[@]}"
   echo ""
   echo "Deploy OK: ${SERVICE_NAME}"
-  gcloud run services describe "${SERVICE_NAME}" \
+  local service_url
+  service_url="$(gcloud run services describe "${SERVICE_NAME}" \
     --project "${PROJECT_ID}" \
     --region "${REGION}" \
-    --format='value(status.url)'
+    --format='value(status.url)')"
+  echo "${service_url}"
+  if [[ "${DEV_MODE}" -eq 1 && -n "${DEPLOY_MCP_BEARER:-}" ]]; then
+    echo ""
+    echo "MCP (Claude web / ChatGPT):"
+    echo "  URL:    ${service_url}/mcp"
+    echo "  Bearer: ${DEPLOY_MCP_BEARER}"
+    echo "  (guardá el Bearer; Connectors → custom → Authorization: Bearer …)"
+  fi
 }
 
 case "${MODE}" in
