@@ -504,15 +504,17 @@ default_dev_mysql_env_pairs() {
 # Override: FACTURIA_MCP_BEARER / FACTURIA_MCP_SECRET en el entorno del shell antes de deploy.
 # Rellena DEPLOY_MCP_BEARER / DEPLOY_MCP_SECRET (globales) para el resumen post-deploy.
 ensure_dev_mcp_credentials() {
+  # FACTURIA_MCP_BEARER=off|none|0 → sin auth (Claude Free / "sin inicio de sesión").
   if [[ -z "${DEPLOY_MCP_BEARER:-}" ]]; then
-    DEPLOY_MCP_BEARER="${FACTURIA_MCP_BEARER:-}"
+    DEPLOY_MCP_BEARER="${FACTURIA_MCP_BEARER:-off}"
   fi
   if [[ -z "${DEPLOY_MCP_SECRET:-}" ]]; then
     DEPLOY_MCP_SECRET="${FACTURIA_MCP_SECRET:-}"
   fi
-  if [[ -z "${DEPLOY_MCP_BEARER}" ]]; then
-    DEPLOY_MCP_BEARER="$(openssl rand -hex 24 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(24))')"
-  fi
+  case "${DEPLOY_MCP_BEARER}" in
+    off|none|0|false|FALSE|OFF|NONE) DEPLOY_MCP_BEARER="off" ;;
+    "") DEPLOY_MCP_BEARER="off" ;;
+  esac
   if [[ -z "${DEPLOY_MCP_SECRET}" ]]; then
     DEPLOY_MCP_SECRET="$(openssl rand -hex 24 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(24))')"
   fi
@@ -520,11 +522,11 @@ ensure_dev_mcp_credentials() {
 
 default_dev_mcp_env_pairs() {
   ensure_dev_mcp_credentials
-  merge_env_pairs \
-    "FACTURIA_MCP_HTTP=1" \
-    "FACTURIA_MATCHING_URL=http://127.0.0.1:8080" \
-    "FACTURIA_MCP_BEARER=${DEPLOY_MCP_BEARER}" \
-    "FACTURIA_MCP_SECRET=${DEPLOY_MCP_SECRET}"
+  local pairs=("FACTURIA_MCP_HTTP=1" "FACTURIA_MATCHING_URL=http://127.0.0.1:8080" "FACTURIA_MCP_SECRET=${DEPLOY_MCP_SECRET}")
+  if [[ "${DEPLOY_MCP_BEARER}" != "off" ]]; then
+    pairs+=("FACTURIA_MCP_BEARER=${DEPLOY_MCP_BEARER}")
+  fi
+  merge_env_pairs "${pairs[@]}"
 }
 
 # matching-ui-odoo (prod): MySQL FacturIA producción (sudataco_facturia).
@@ -742,13 +744,7 @@ build_deploy_env_vars() {
     all_pairs+=("${sudata_pairs[@]}")
     # Credenciales MCP en el shell actual (no en subshell) para imprimirlas al final.
     ensure_dev_mcp_credentials
-    IFS=',' read -r -a dev_mcp <<< "$(
-      merge_env_pairs \
-        "FACTURIA_MCP_HTTP=1" \
-        "FACTURIA_MATCHING_URL=http://127.0.0.1:8080" \
-        "FACTURIA_MCP_BEARER=${DEPLOY_MCP_BEARER}" \
-        "FACTURIA_MCP_SECRET=${DEPLOY_MCP_SECRET}"
-    )"
+    IFS=',' read -r -a dev_mcp <<< "$(default_dev_mcp_env_pairs)"
     all_pairs+=("${dev_mcp[@]}")
   else
     IFS=',' read -r -a prod_dinner <<< "$(default_prod_dinner_env_pairs)"
@@ -856,12 +852,17 @@ deploy_service() {
     --region "${REGION}" \
     --format='value(status.url)')"
   echo "${service_url}"
-  if [[ "${DEV_MODE}" -eq 1 && -n "${DEPLOY_MCP_BEARER:-}" ]]; then
+  if [[ "${DEV_MODE}" -eq 1 ]]; then
     echo ""
     echo "MCP (Claude web / ChatGPT):"
-    echo "  URL:    ${service_url}/mcp"
-    echo "  Bearer: ${DEPLOY_MCP_BEARER}"
-    echo "  (guardá el Bearer; Connectors → custom → Authorization: Bearer …)"
+    echo "  URL:    ${service_url}/mcp/"
+    if [[ -n "${DEPLOY_MCP_BEARER:-}" && "${DEPLOY_MCP_BEARER}" != "off" ]]; then
+      echo "  Bearer: ${DEPLOY_MCP_BEARER}"
+      echo "  (Connectors → header Authorization: Bearer …)"
+    else
+      echo "  Auth:   sin Bearer (Claude Free: elegí «sin inicio de sesión»)"
+      echo "  AVISO:  /mcp/ queda público en este entorno DEV"
+    fi
   fi
 }
 

@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from facturia_matching.api.routes import router
@@ -29,7 +30,7 @@ if _mcp_http:
     try:
         from facturia_matching.mcp.server import prepare_remote_mcp
 
-        # Sub-app at path "/" → public URL https://host/mcp (and /mcp/)
+        # Sub-app at path "/" → public URL https://host/mcp/ (and /mcp via rewrite)
         _mcp_asgi, _mcp_session_manager = prepare_remote_mcp(path="/")
         logger.info("MCP Streamable HTTP prepared for mount at /mcp")
     except SystemExit as exc:
@@ -70,6 +71,36 @@ app.include_router(router)
 
 if _mcp_asgi is not None:
     app.mount("/mcp", _mcp_asgi, name="facturia_mcp")
+
+
+@app.middleware("http")
+async def rewrite_mcp_path(request: Request, call_next):
+    """Claude hits /mcp (no slash); Starlette mount only serves /mcp/ → rewrite."""
+    if request.scope.get("path") == "/mcp":
+        request.scope["path"] = "/mcp/"
+    return await call_next(request)
+
+
+@app.get("/.well-known/oauth-protected-resource")
+@app.get("/.well-known/oauth-protected-resource/mcp")
+@app.get("/.well-known/oauth-protected-resource/mcp/")
+async def oauth_protected_resource_metadata(request: Request):
+    """Authless MCP: tell Claude there is no authorization server (no login)."""
+    base = str(request.base_url).rstrip("/")
+    return JSONResponse(
+        {
+            "resource": f"{base}/mcp/",
+            "authorization_servers": [],
+            "bearer_methods_supported": [],
+            "resource_documentation": f"{base}/docs/mcp.md",
+        }
+    )
+
+
+@app.get("/.well-known/oauth-authorization-server")
+async def oauth_authorization_server_absent():
+    """No OAuth on this host — 404 without WWW-Authenticate (authless)."""
+    return JSONResponse({"error": "not_supported", "message": "No OAuth on this MCP (authless)"}, status_code=404)
 
 
 @app.middleware("http")
