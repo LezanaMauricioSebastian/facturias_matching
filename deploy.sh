@@ -783,6 +783,8 @@ deploy_service() {
       echo "AVISO: --skip-secrets-check; no se verifican secrets." >&2
     fi
     secrets_arg="${SECRETS:-$(build_dev_secrets_arg)}"
+    # Generar/fijar Bearer en este shell (build_deploy_env_vars corre en subshell).
+    ensure_dev_mcp_credentials
     env_arg="${ENV_VARS:-$(build_deploy_env_vars)}"
     env_source="defaults odoo-dev (Dinner TEST + Aliare testct)"
   fi

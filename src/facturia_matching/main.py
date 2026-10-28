@@ -1,6 +1,11 @@
 """FastAPI application entrypoint."""
 
+from __future__ import annotations
+
+import logging
 import os
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +14,41 @@ from fastapi.staticfiles import StaticFiles
 from facturia_matching.api.routes import router
 from facturia_matching.infra.paths import CSS_DIR, HTML_DIR, JS_DIR
 
-app = FastAPI(title="FacturIA matching UI")
+logger = logging.getLogger(__name__)
+
+_mcp_http = (os.environ.get("FACTURIA_MCP_HTTP") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+_mcp_asgi: Any = None
+_mcp_session_manager: Any = None
+
+if _mcp_http:
+    try:
+        from facturia_matching.mcp.server import prepare_remote_mcp
+
+        # Sub-app at path "/" → public URL https://host/mcp (and /mcp/)
+        _mcp_asgi, _mcp_session_manager = prepare_remote_mcp(path="/")
+        logger.info("MCP Streamable HTTP prepared for mount at /mcp")
+    except SystemExit as exc:
+        logger.warning("FACTURIA_MCP_HTTP=1 but MCP unavailable: %s", exc)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("FACTURIA_MCP_HTTP=1 but MCP failed to prepare: %s", exc)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # MCP SDK requires session_manager.run() for the Streamable HTTP task group.
+    if _mcp_session_manager is not None:
+        async with _mcp_session_manager.run():
+            yield
+    else:
+        yield
+
+
+app = FastAPI(title="FacturIA matching UI", lifespan=_lifespan, redirect_slashes=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,26 +68,8 @@ if JS_DIR.is_dir():
 
 app.include_router(router)
 
-# Remote MCP for Claude web / ChatGPT (Streamable HTTP). Opt-in: FACTURIA_MCP_HTTP=1
-# Endpoint: https://<host>/mcp  — requires pip extra [mcp].
-_mcp_http = (os.environ.get("FACTURIA_MCP_HTTP") or "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
-if _mcp_http:
-    try:
-        from facturia_matching.mcp.server import build_streamable_http_app
-
-        # Sub-app listens at "/" → public URL is https://host/mcp
-        app.mount("/mcp", build_streamable_http_app(path="/"), name="facturia_mcp")
-    except SystemExit:
-        pass
-    except Exception as exc:  # pragma: no cover
-        import logging
-
-        logging.getLogger(__name__).warning("FACTURIA_MCP_HTTP=1 but MCP failed to mount: %s", exc)
+if _mcp_asgi is not None:
+    app.mount("/mcp", _mcp_asgi, name="facturia_mcp")
 
 
 @app.middleware("http")
@@ -60,4 +81,3 @@ async def no_cache_static_modules(request, call_next):
         # no-store: el grafo de ES modules no debe reutilizarse tras un deploy de UI.
         response.headers["Cache-Control"] = "no-store"
     return response
-

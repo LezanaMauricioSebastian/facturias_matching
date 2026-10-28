@@ -342,20 +342,20 @@ def _bearer_auth_asgi(app, expected: str):
     return middleware
 
 
-def build_streamable_http_app(*, path: str = "/mcp"):
+def prepare_remote_mcp(*, path: str = "/"):
     """
-    ASGI Starlette app for Claude web / ChatGPT remote MCP.
+    Build Streamable HTTP ASGI + session_manager for mounting on FastAPI.
 
-    Endpoint: ``{path}`` (default ``/mcp``). Set ``FACTURIA_MCP_BEARER`` to require
-    Authorization: Bearer … (Claude connectors support static request headers).
+    Caller must run ``async with session_manager.run():`` in the FastAPI lifespan
+    (required by the MCP SDK task group).
+
+    Returns ``(asgi_app, session_manager)``.
     """
     if os.environ.get("FACTURIA_MATCHING_URL"):
         global _client
         _client = MatchingApiClient(os.environ["FACTURIA_MATCHING_URL"])
 
     mcp = create_mcp_server()
-    # stateless_http: cada request independiente (mejor en Cloud Run multi-instancia;
-    # el confirmation_token es HMAC portable y re-carga el proceso).
     kwargs = {
         "streamable_http_path": path if path.startswith("/") else f"/{path}",
         "stateless_http": True,
@@ -366,9 +366,16 @@ def build_streamable_http_app(*, path: str = "/mcp"):
             "Tu paquete mcp no expone streamable_http_app. Actualizá: pip install 'mcp>=1.2'"
         )
     asgi = mcp.streamable_http_app(**kwargs)
+    session_manager = mcp.session_manager
     bearer = (os.environ.get("FACTURIA_MCP_BEARER") or "").strip()
     if bearer:
-        return _bearer_auth_asgi(asgi, bearer)
+        asgi = _bearer_auth_asgi(asgi, bearer)
+    return asgi, session_manager
+
+
+def build_streamable_http_app(*, path: str = "/mcp"):
+    """ASGI only (standalone). Prefer ``prepare_remote_mcp`` when mounting on FastAPI."""
+    asgi, _manager = prepare_remote_mcp(path=path)
     return asgi
 
 
