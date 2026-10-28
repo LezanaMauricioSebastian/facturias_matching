@@ -16,6 +16,11 @@ from typing import Any, Dict, Optional
 
 from facturia_matching.mcp.api_client import MatchingApiClient, MatchingApiError
 from facturia_matching.mcp.confirm import ConfirmStore, ConfirmationError
+from facturia_matching.mcp.facturia_client import (
+    FacturiaApiClient,
+    FacturiaApiError,
+    extract_init_callback,
+)
 from facturia_matching.mcp.preview import build_match_preview
 
 INSTRUCTIONS = """
@@ -25,12 +30,16 @@ Flujo obligatorio:
 2) Preguntá al contador si proveedor, montos, IVA y líneas están bien.
 3) Si corrige algo, volvé a preview. Si confirma, confirm_invoice_preview.
 4) Solo entonces import_odoo_draft con el confirmation_token.
+Opcional FacturIA: init_erp_import(process_id) obtiene import_id+token
+(GET /api/process/{id}/erp-import/init). Si están en el preview, el import
+avisa a FacturIA vía POST /api/erp-imports/webhook (mismo contrato que la UI).
 Nunca inventes impuestos ni partner_id. Nunca publiques (posted): solo borrador.
 Si falta process_number, pedilo: el OCR/extracción vive en FacturIA; este MCP carga ese proceso.
 """.strip()
 
 _store = ConfirmStore()
 _client: Optional[MatchingApiClient] = None
+_facturia: Optional[FacturiaApiClient] = None
 
 
 def _api() -> MatchingApiClient:
@@ -38,6 +47,13 @@ def _api() -> MatchingApiClient:
     if _client is None:
         _client = MatchingApiClient()
     return _client
+
+
+def _facturia_api() -> FacturiaApiClient:
+    global _facturia
+    if _facturia is None:
+        _facturia = FacturiaApiClient()
+    return _facturia
 
 
 def _err(exc: Exception) -> Dict[str, Any]:
@@ -75,15 +91,49 @@ def tool_search_proveedor(
         return _err(exc)
 
 
+def tool_init_erp_import(process_id: str) -> Dict[str, Any]:
+    """
+    Llama FacturIA GET /api/process/{id}/erp-import/init (auth requerida).
+    Devuelve import_id + token para avisar el webhook tras importar a Odoo.
+    Pasá esos valores a preview_invoice_match o import_odoo_draft.
+    """
+    try:
+        data = _facturia_api().erp_import_init(process_id)
+    except FacturiaApiError as exc:
+        return _err(exc)
+    import_id, token = extract_init_callback(data)
+    if import_id is None or not token:
+        return {
+            "ok": False,
+            "error": "init OK pero no trajo import_id/token reconocibles",
+            "raw": data,
+            "hint": "Revisá el shape de la respuesta FacturIA y avisá al equipo.",
+        }
+    return {
+        "ok": True,
+        "process_id": str(process_id).strip(),
+        "import_id": import_id,
+        "token": token,
+        "facturia_base": _facturia_api().base_url,
+        "next_step": (
+            "Usá import_id+token en preview_invoice_match o import_odoo_draft. "
+            "Tras el draft, matching UI hace POST /api/erp-imports/webhook a FacturIA."
+        ),
+    }
+
+
 def tool_preview_invoice_match(
     process_number: str,
     empresa: Optional[str] = None,
     odoo_profile: str = "default",
     regenerate: bool = False,
+    import_id: Optional[int] = None,
+    token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Carga el proceso FacturIA vía matching UI, resume matches/gaps y crea un preview_id.
     No escribe en Odoo. Mostrá el resumen al contador y pedí confirmación.
+    Opcional: import_id + token de init_erp_import / deep-link FacturIA.
     """
     pn = str(process_number or "").strip()
     if not pn:
@@ -113,12 +163,16 @@ def tool_preview_invoice_match(
         odoo_profile=str(profile),
         source=(proceso.get("source") if isinstance(proceso, dict) else None),
     )
+    erp_id = import_id if import_id is not None else None
+    erp_tok = (token or "").strip() or None
     rec = _store.create_preview(
         process_number=pn,
         rows=rows,
         summary=summary,
         empresa=empresa or (proceso.get("empresa") if isinstance(proceso, dict) else None),
         odoo_profile=str(profile),
+        erp_import_id=erp_id,
+        erp_import_token=erp_tok,
     )
     return {
         "ok": True,
@@ -128,6 +182,8 @@ def tool_preview_invoice_match(
         "odoo_profile": rec.odoo_profile,
         "empresa": rec.empresa,
         "row_count": len(rows),
+        "erp_import_id": rec.erp_import_id,
+        "erp_callback_bound": bool(rec.erp_import_id and rec.erp_import_token),
         "summary": summary,
         "next_step": (
             "Preguntá al contador si los datos son correctos. "
@@ -166,12 +222,16 @@ def tool_import_odoo_draft(
     """
     Importa a Odoo en estado borrador. Requiere confirmation_token de confirm_invoice_preview.
     Sin token válido → error (no se escribe nada).
-    Opcional: import_id + token del deep-link FacturIA (erp-imports webhook).
+    Si hay import_id+token (args o del preview vía init_erp_import), matching UI
+    notifica FacturIA POST /api/erp-imports/webhook.
     """
     try:
         rec = _store.consume_for_import(confirmation_token)
     except ConfirmationError as exc:
         return _err(exc)
+
+    erp_id = import_id if import_id is not None else rec.erp_import_id
+    erp_tok = (token or "").strip() or rec.erp_import_token
 
     try:
         result = _api().import_odoo(
@@ -179,8 +239,8 @@ def tool_import_odoo_draft(
             empresa=rec.empresa,
             odoo_profile=rec.odoo_profile,
             skip_duplicates=skip_duplicates,
-            import_id=import_id,
-            token=token,
+            import_id=erp_id,
+            token=erp_tok,
         )
     except MatchingApiError as exc:
         # Re-issue is not automatic; user must preview+confirm again.
@@ -196,6 +256,8 @@ def tool_import_odoo_draft(
         "process_number": rec.process_number,
         "odoo_profile": rec.odoo_profile,
         "target_state": "draft",
+        "erp_import_id": erp_id,
+        "facturia_webhook_requested": bool(erp_id and erp_tok),
         "import_result": result,
         "message": "Import borrador enviado a Odoo. Revisá el resultado con el contador.",
     }
@@ -218,6 +280,7 @@ def create_mcp_server():
 
     mcp.tool(description=tool_odoo_health.__doc__)(tool_odoo_health)
     mcp.tool(description=tool_search_proveedor.__doc__)(tool_search_proveedor)
+    mcp.tool(description=tool_init_erp_import.__doc__)(tool_init_erp_import)
     mcp.tool(description=tool_preview_invoice_match.__doc__)(tool_preview_invoice_match)
     mcp.tool(description=tool_confirm_invoice_preview.__doc__)(tool_confirm_invoice_preview)
     mcp.tool(description=tool_import_odoo_draft.__doc__)(tool_import_odoo_draft)

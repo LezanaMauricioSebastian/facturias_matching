@@ -170,6 +170,8 @@ Override: `FACTURIA_BASE_URL` o `FACTURIA_ERP_WEBHOOK_URL`.
 
 Código: `facturia/erp_import_webhook.py`. El fallo del webhook **no** tumba el import Odoo.
 
+El servidor MCP reusa este mismo contrato (`init_erp_import` + `import_id`/`token` en draft). Ver [mcp.md](mcp.md).
+
 ---
 
 ## Padrón

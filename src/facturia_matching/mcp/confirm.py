@@ -34,6 +34,9 @@ class PreviewRecord:
     created_at: float
     confirmation_token: Optional[str] = None
     confirmed_at: Optional[float] = None
+    # FacturIA erp-imports (GET …/erp-import/init → webhook tras import)
+    erp_import_id: Optional[int] = None
+    erp_import_token: Optional[str] = None
 
 
 @dataclass
@@ -70,6 +73,8 @@ class ConfirmStore:
         summary: Dict[str, Any],
         empresa: Optional[str] = None,
         odoo_profile: str = "default",
+        erp_import_id: Optional[int] = None,
+        erp_import_token: Optional[str] = None,
     ) -> PreviewRecord:
         now = time.time()
         with self._lock:
@@ -84,8 +89,27 @@ class ConfirmStore:
                 fingerprint=_payload_fingerprint(rows, process_number),
                 summary=dict(summary),
                 created_at=now,
+                erp_import_id=erp_import_id,
+                erp_import_token=(erp_import_token or None),
             )
             self._previews[preview_id] = rec
+            return rec
+
+    def attach_erp_callback(
+        self,
+        preview_id: str,
+        *,
+        import_id: int,
+        token: str,
+    ) -> PreviewRecord:
+        with self._lock:
+            rec = self._previews.get(preview_id)
+            if not rec:
+                raise ConfirmationError(
+                    "preview_id inválido o expirado. Volvé a preview_invoice_match."
+                )
+            rec.erp_import_id = int(import_id)
+            rec.erp_import_token = str(token).strip()
             return rec
 
     def get_preview(self, preview_id: str) -> PreviewRecord:

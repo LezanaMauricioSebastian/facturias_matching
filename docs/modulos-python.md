@@ -19,10 +19,11 @@ Servidor MCP para ChatGPT/Claude/Cursor. Doc de uso: [mcp.md](mcp.md).
 
 | Archivo | Rol |
 |---------|-----|
-| `server.py` | Tools FastMCP: `preview_invoice_match`, `confirm_invoice_preview`, `import_odoo_draft` (solo draft), `search_proveedor`, `odoo_health`. Entry `main` / `facturia-mcp`. |
+| `server.py` | Tools FastMCP: `preview_invoice_match`, `confirm_invoice_preview`, `import_odoo_draft` (solo draft), `init_erp_import`, `search_proveedor`, `odoo_health`. Entry `main` / `facturia-mcp`. |
 | `api_client.py` | HTTP contra matching UI (`FACTURIA_MATCHING_URL`). |
+| `facturia_client.py` | HTTP FacturIA: `GET /api/process/{id}/erp-import/init` (bases de `erp_import_webhook`). |
 | `preview.py` | Resumen legible + gaps por comprobante. |
-| `confirm.py` | Store in-memory: `preview_id` → `confirmation_token` de un uso. |
+| `confirm.py` | Store in-memory: `preview_id` → `confirmation_token` de un uso (+ `import_id`/`token` erp). |
 | `__main__.py` | `python -m facturia_matching.mcp`. |
 
 Extra: `pip install 'mcp>=1.2.0'` o `pip install -e '.[mcp]'`.

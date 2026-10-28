@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from facturia_matching.mcp.confirm import ConfirmStore, ConfirmationError
+from facturia_matching.mcp.facturia_client import extract_init_callback
 from facturia_matching.mcp.preview import build_match_preview
 from facturia_matching.mcp import server as mcp_server
 
@@ -102,6 +103,15 @@ class TestConfirmStore(unittest.TestCase):
         self.assertIn("expir", str(ctx.exception).lower())
 
 
+class TestFacturiaInitExtract(unittest.TestCase):
+    def test_nested_callback_token(self):
+        import_id, token = extract_init_callback(
+            {"data": {"import_id": "12", "callback_token": "abc"}}
+        )
+        self.assertEqual(import_id, 12)
+        self.assertEqual(token, "abc")
+
+
 class TestImportTool(unittest.TestCase):
     def test_blocks_without_token(self):
         out = mcp_server.tool_import_odoo_draft("")
@@ -129,13 +139,18 @@ class TestImportTool(unittest.TestCase):
                 summary=build_match_preview(rows, process_number="55"),
                 empresa="1",
                 odoo_profile="default",
+                erp_import_id=99,
+                erp_import_token="cb-tok",
             )
             conf = mcp_server.tool_confirm_invoice_preview(rec.preview_id)
             self.assertTrue(conf["ok"])
             out = mcp_server.tool_import_odoo_draft(conf["confirmation_token"])
             self.assertTrue(out["ok"])
             self.assertEqual(out["target_state"], "draft")
+            self.assertTrue(out["facturia_webhook_requested"])
             self.assertEqual(calls["kwargs"]["odoo_profile"], "default")
+            self.assertEqual(calls["kwargs"]["import_id"], 99)
+            self.assertEqual(calls["kwargs"]["token"], "cb-tok")
             self.assertEqual(calls["rows"], rows)
 
 

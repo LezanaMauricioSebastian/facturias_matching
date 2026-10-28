@@ -36,11 +36,35 @@ Sin `confirmation_token` válido, `import_odoo_draft` **no escribe** en Odoo (ga
 |------|--------|
 | `odoo_health` | `GET /api/odoo/health` |
 | `search_proveedor` | `GET /api/partners/search` |
-| `preview_invoice_match` | Carga proceso, arma resumen, emite `preview_id` |
+| `init_erp_import` | FacturIA `GET /api/process/{id}/erp-import/init` → `import_id` + `token` |
+| `preview_invoice_match` | Carga proceso, arma resumen, emite `preview_id` (opcional `import_id`/`token`) |
 | `confirm_invoice_preview` | Contador OK → `confirmation_token` (TTL corto, un uso) |
-| `import_odoo_draft` | Import **solo** `target_state=draft` con token |
+| `import_odoo_draft` | Import **solo** `target_state=draft` con token; reenvía callback FacturIA |
 
-Opcional en import: `import_id` + `token` del deep-link FacturIA (webhook erp-imports), igual que la UI.
+## Endpoints FacturIA (ya documentados / integrados)
+
+Mismo contrato que [api.md § Callback FacturIA](api.md#callback-facturia-erp-imports) y el chat de integración webhook:
+
+| Ambiente | Base | Init | Webhook |
+|----------|------|------|---------|
+| Staging | `https://facturia-staging.sudata.co` | `GET /api/process/{id}/erp-import/init` | `POST /api/erp-imports/webhook` |
+| Prod | `https://facturia.sudata.co` | igual | igual |
+
+Webhook body (matching UI → FacturIA, tras import):
+
+```json
+{ "import_id": 12, "token": "…", "status": "completed", "comprobantes_importados": 1 }
+```
+
+El MCP **no** pega al webhook directo: pasa `import_id`/`token` a `POST /api/odoo/import` del matching UI, que ya llama `notify_erp_import_webhook` ([`erp_import_webhook.py`](../src/facturia_matching/facturia/erp_import_webhook.py)).
+
+Auth para `init_erp_import`:
+
+| Env | Uso |
+|-----|-----|
+| `FACTURIA_BASE_URL` | Override base (default según `PROCESS_SCHEMA`) |
+| `FACTURIA_API_TOKEN` | `Authorization: Bearer …` |
+| `FACTURIA_API_COOKIE` | Cookie de sesión FacturIA (alternativa) |
 
 ## Requisitos
 
@@ -100,13 +124,14 @@ Hace falta un host MCP **remoto** (HTTP/SSE) o Actions que apunten a los mismos 
 |--------|-----|
 | `mcp/server.py` | Tools FastMCP + instrucciones |
 | `mcp/api_client.py` | HTTP al matching UI |
+| `mcp/facturia_client.py` | HTTP a FacturIA (`erp-import/init`) |
 | `mcp/preview.py` | Resumen / gaps |
-| `mcp/confirm.py` | Store preview + token de un uso |
+| `mcp/confirm.py` | Store preview + token de un uso (+ callback erp) |
 
 Tests: `tests/test_mcp_confirm.py`.
 
 ## Pedidos a FacturIA (si quieren “mando la foto al chat”)
 
-Con lo de hoy alcanza: **process_number** → matching → confirm → draft.
+Con lo de hoy alcanza: **process_number** (+ opcional `init_erp_import`) → matching → confirm → draft → webhook.
 
-Para UX foto-en-chat de punta a punta, conviene que FacturIA exponga (o documente) un endpoint autenticado de **alta de proceso desde archivo** y devuelva el `process_id`. El MCP ya puede encadenar preview/confirm/import sobre ese id. El webhook erp-imports existente se reutiliza si el chat trae `import_id`/`token`.
+Para UX foto-en-chat de punta a punta: endpoint autenticado de **alta de proceso desde archivo** → `process_id`. Init + webhook ya existen.
